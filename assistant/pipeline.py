@@ -42,6 +42,7 @@ from reminders.store import InMemoryReminderStore
 class _PipelineRequestContext:
     perf: PerfRecorder
     trace_id: str
+    idempotency_key: str = ""
     extracted_actions: list[PlannedAction] = field(default_factory=list)
 
 
@@ -106,10 +107,14 @@ class AssistantPipeline:
             default=None,
         )
 
-    def handle_text(self, user: UserContext, text: str) -> AssistantReply:
+    def handle_text(self, user: UserContext, text: str, *, idempotency_key: str = "") -> AssistantReply:
         recorder = PerfRecorder()
         trace_id = new_trace_id()
-        request_context = _PipelineRequestContext(perf=recorder, trace_id=trace_id)
+        request_context = _PipelineRequestContext(
+            perf=recorder,
+            trace_id=trace_id,
+            idempotency_key=idempotency_key,
+        )
         context_token = self._request_context.set(request_context)
         try:
             with recorder.track("total_response"):
@@ -134,6 +139,11 @@ class AssistantPipeline:
     def _current_trace_id(self) -> str:
         request_context = self._request_context.get()
         return request_context.trace_id if request_context is not None else ""
+
+    @property
+    def _current_idempotency_key(self) -> str:
+        request_context = self._request_context.get()
+        return request_context.idempotency_key if request_context is not None else ""
 
     def _handle_text(self, user: UserContext, text: str) -> AssistantReply:
         with self._perf.track("intent_parse"):
@@ -493,7 +503,17 @@ class AssistantPipeline:
                 intent=Intent.AGENT_DO,
                 blocked_reason="agent_goal_empty",
             )
-        job = self.agent_jobs.create(user.user_id, input_gate.safe_text, steps, trace_id=self._current_trace_id)
+        job = self.agent_jobs.create(
+            user.user_id,
+            input_gate.safe_text,
+            steps,
+            trace_id=self._current_trace_id,
+            idempotency_key=(
+                f"{self._current_idempotency_key}:job"
+                if self._current_idempotency_key
+                else None
+            ),
+        )
         if self.events is not None:
             self.events.log(
                 user.user_id,
@@ -632,7 +652,13 @@ class AssistantPipeline:
         request_context = self._request_context.get()
         if request_context is not None:
             request_context.extracted_actions[:] = route.actions
-        return self.natural_actions.execute_route(user, route, perf=self._perf, trace_id=self._current_trace_id)
+        return self.natural_actions.execute_route(
+            user,
+            route,
+            perf=self._perf,
+            trace_id=self._current_trace_id,
+            idempotency_key=self._current_idempotency_key,
+        )
 
     def _queue_direct_action(
         self,
@@ -640,7 +666,13 @@ class AssistantPipeline:
         action_type: ActionType,
         payload: dict[str, str],
     ) -> AssistantReply:
-        return self.natural_actions.queue_direct_action(user, action_type, payload, trace_id=self._current_trace_id)
+        return self.natural_actions.queue_direct_action(
+            user,
+            action_type,
+            payload,
+            trace_id=self._current_trace_id,
+            idempotency_key=self._current_idempotency_key,
+        )
 
     def execute_queued_action(self, user: UserContext, action: AgentAction) -> str:
         return self.natural_actions.execute_queued_action(user, action, perf=self._perf, trace_id=action.trace_id)
@@ -653,7 +685,7 @@ class AssistantPipeline:
             trace_id=action.trace_id,
         )
 
-    def _tool_context(self, user: UserContext) -> ToolContext:
+    def _tool_context(self, user: UserContext, idempotency_key: str = "") -> ToolContext:
         return ToolContext(
             user=user,
             memories=self.memories,
@@ -663,6 +695,7 @@ class AssistantPipeline:
             task_center=self.task_center,
             agent_jobs=self.agent_jobs,
             preferences=self.preferences.get(user.user_id),
+            idempotency_key=idempotency_key,
         )
 
     def _route_natural_text(self, user: UserContext, text: str) -> NaturalRoute:

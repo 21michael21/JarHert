@@ -41,6 +41,7 @@ def build_background_runtime(bot) -> AutomationRuntime:
             chat_id=tg_user_id,
             text=f"Напоминание #{reminder.id}: {reminder.text}",
             trace_id=f"reminder-{reminder.id}",
+            idempotency_key=f"reminder:{reminder.id}:delivery",
         )
         if service.events is not None:
             service.events.log(
@@ -73,6 +74,11 @@ def build_background_runtime(bot) -> AutomationRuntime:
             text=text,
             trace_id=action.trace_id,
             buttons=[[{"text": "Статус job", "callback_data": f"ai:status:{action.job_id}"}]] if action.job_id else [],
+            idempotency_key=(
+                f"{action.idempotency_key}:result"
+                if action.idempotency_key
+                else f"action:{action.id}:result"
+            ),
         )
         if service.events is not None:
             service.events.log(

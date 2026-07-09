@@ -52,6 +52,7 @@ class ToolContext:
     agent_jobs: object | None = None
     telegram_reply: Callable[[int, str], None] | None = None
     preferences: UserPreferences | None = None
+    idempotency_key: str = ""
 
 
 ToolHandler = Callable[[dict[str, str], ToolContext], ToolExecutionResult]
@@ -97,7 +98,13 @@ class ToolRegistry:
         spec = self.get(action.type)
         _validate_payload(action.payload, spec.input_schema)
         try:
-            return spec.handler(action.payload, context)
+            result = spec.handler(action.payload, context)
+            if not context.idempotency_key:
+                return result
+            return ToolExecutionResult(
+                result.message,
+                meta={**result.meta, "idempotency_key": context.idempotency_key},
+            )
         except Exception as exc:
             raise spec.classify_error(exc) from exc
 
@@ -314,7 +321,14 @@ def _agent_job_create(payload: dict[str, str], context: ToolContext) -> ToolExec
     steps = build_agent_plan(payload["goal"])
     if not steps:
         raise ToolExecutionError("Цель агентской задачи пустая.", kind="permanent")
-    job = context.agent_jobs.create(context.user.user_id, payload["goal"], steps)
+    job = context.agent_jobs.create(
+        context.user.user_id,
+        payload["goal"],
+        steps,
+        idempotency_key=(
+            f"{context.idempotency_key}:job" if context.idempotency_key else None
+        ),
+    )
     lines = [
         f"Поставил в очередь job #{job.id}.",
         f"Статус: {job.status}",

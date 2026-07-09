@@ -95,6 +95,7 @@ class ActionWorkerAdapter:
                 self.action_queue.mark_succeeded(
                     action.id,
                     result_meta=result.meta,
+                    result_text=result.message,
                     worker_id=self.worker_id,
                 )
             except LeaseLostError:

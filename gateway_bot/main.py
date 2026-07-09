@@ -27,6 +27,7 @@ from backend.stores import (
     SqlDailyLimitStore,
     SqlDeliveryOutboxStore,
     SqlIdeaStore,
+    SqlInboundUpdateStore,
     SqlMemoryStore,
     SqlMonitorJobStore,
     SqlProviderHealthStore,
@@ -206,6 +207,7 @@ def build_gateway_service() -> GatewayService:
         users=UserStore(get_session_factory()),
         events=event_store,
         traces=SqlTraceStore(get_session_factory()),
+        inbound_updates=SqlInboundUpdateStore(get_session_factory()),
     )
 
 

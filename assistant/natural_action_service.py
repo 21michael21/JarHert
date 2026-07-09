@@ -15,7 +15,7 @@ from assistant.tool_registry import ToolContext, ToolExecutionError, ToolExecuti
 from assistant.types import AssistantReply, Intent, ReplyButton, UserContext
 
 
-ToolContextFactory = Callable[[UserContext], ToolContext]
+ToolContextFactory = Callable[[UserContext, str], ToolContext]
 
 
 class NaturalActionService:
@@ -59,11 +59,17 @@ class NaturalActionService:
         *,
         perf: PerfRecorder,
         trace_id: str = "",
+        idempotency_key: str = "",
     ) -> AssistantReply:
         if any(action.needs_confirmation for action in route.actions):
             return self.responses.clarification_question("natural_action_needs_clarification")
         if self.action_queue is not None and any(is_heavy_action(action) for action in route.actions):
-            return self.queue_route(user, route, trace_id=trace_id)
+            return self.queue_route(
+                user,
+                route,
+                trace_id=trace_id,
+                idempotency_key=idempotency_key,
+            )
         if self.action_queue is None and any(self._needs_approval(action) for action in route.actions):
             return self.responses.clarification_question("action_needs_confirmation")
 
@@ -71,7 +77,13 @@ class NaturalActionService:
         failed: list[str] = []
         for index, action in enumerate(route.actions, start=1):
             try:
-                summary = self.execute_action(user, action, perf=perf, trace_id=trace_id)
+                summary = self.execute_action(
+                    user,
+                    action,
+                    perf=perf,
+                    trace_id=trace_id,
+                    idempotency_key=(f"{idempotency_key}:action:{index}" if idempotency_key else ""),
+                )
             except (TaskCommandError, ToolExecutionError) as exc:
                 failed.append(f"{index}. {natural_action_label(action)}: {exc}")
                 continue
@@ -94,11 +106,15 @@ class NaturalActionService:
         *,
         perf: PerfRecorder,
         trace_id: str = "",
+        idempotency_key: str = "",
     ) -> str:
         if action.type == ActionType.CALENDAR_MOVE:
             raise TaskCommandError("Перенос встреч пока требует уточнения и отдельного calendar update tool.")
         with perf.track("tool"):
-            return self.action_executor.execute(action, self.tool_context_factory(user)).message
+            return self.action_executor.execute(
+                action,
+                self.tool_context_factory(user, idempotency_key),
+            ).message
 
     def execute_action_result(
         self,
@@ -107,16 +123,34 @@ class NaturalActionService:
         *,
         perf: PerfRecorder,
         trace_id: str = "",
+        idempotency_key: str = "",
     ) -> ToolExecutionResult:
         if action.type == ActionType.CALENDAR_MOVE:
             raise TaskCommandError("Перенос встреч пока требует уточнения и отдельного calendar update tool.")
         with perf.track("tool"):
-            return self.action_executor.execute(action, self.tool_context_factory(user))
+            return self.action_executor.execute(
+                action,
+                self.tool_context_factory(user, idempotency_key),
+            )
 
-    def queue_route(self, user: UserContext, route: NaturalRoute, *, trace_id: str = "") -> AssistantReply:
+    def queue_route(
+        self,
+        user: UserContext,
+        route: NaturalRoute,
+        *,
+        trace_id: str = "",
+        idempotency_key: str = "",
+    ) -> AssistantReply:
         labels = [natural_action_label(action) for action in route.actions]
         goal = "; ".join(labels)
-        job = self.agent_jobs.create(user.user_id, goal, labels, trace_id=trace_id)
+        job_key = f"{idempotency_key}:job" if idempotency_key else None
+        job = self.agent_jobs.create(
+            user.user_id,
+            goal,
+            labels,
+            trace_id=trace_id,
+            idempotency_key=job_key,
+        )
         self._log(user.user_id, "job_created", {"job_id": job.id, "goal": goal}, trace_id)
         pending_actions = []
         previous_action_id: int | None = None
@@ -129,7 +163,11 @@ class NaturalActionService:
                 job_id=job.id,
                 trace_id=trace_id,
                 depends_on_action_id=previous_action_id,
-                idempotency_key=f"{user.user_id}:job:{job.id}:action:{index}",
+                idempotency_key=(
+                    f"{idempotency_key}:action:{index}"
+                    if idempotency_key
+                    else f"{user.user_id}:job:{job.id}:action:{index}"
+                ),
                 status=ActionStatus.NEEDS_CONFIRMATION if job_needs_confirmation else ActionStatus.QUEUED,
             )
             pending_actions.append(queued)
@@ -171,9 +209,15 @@ class NaturalActionService:
         payload: dict[str, str],
         *,
         trace_id: str = "",
+        idempotency_key: str = "",
     ) -> AssistantReply:
         route = NaturalRoute(actions=[PlannedAction(action_type, payload=payload)])
-        return self.queue_route(user, route, trace_id=trace_id)
+        return self.queue_route(
+            user,
+            route,
+            trace_id=trace_id,
+            idempotency_key=idempotency_key,
+        )
 
     def execute_queued_action(
         self,
@@ -194,7 +238,13 @@ class NaturalActionService:
         trace_id: str = "",
     ) -> ToolExecutionResult:
         planned = PlannedAction(action.type, payload=action.payload, reason="queued_action")
-        return self.execute_action_result(user, planned, perf=perf, trace_id=trace_id or action.trace_id)
+        return self.execute_action_result(
+            user,
+            planned,
+            perf=perf,
+            trace_id=trace_id or action.trace_id,
+            idempotency_key=action.idempotency_key or "",
+        )
 
     def _needs_approval(self, action: PlannedAction) -> bool:
         spec = self.action_executor.registry.get(action.type)

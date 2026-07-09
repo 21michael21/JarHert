@@ -20,13 +20,14 @@ class GatewayService:
     users: UserStore | None = None
     events: EventStore | None = None
     traces: SqlTraceStore | None = None
+    inbound_updates: object | None = None
 
     def is_allowed(self, tg_user_id: int) -> bool:
         if not self.allowed_tg_user_ids:
             return True
         return tg_user_id in self.allowed_tg_user_ids
 
-    def handle_text(self, tg_user_id: int, text: str) -> AssistantReply:
+    def handle_text(self, tg_user_id: int, text: str, *, idempotency_key: str = "") -> AssistantReply:
         if not self.is_allowed(tg_user_id):
             return AssistantReply(
                 text="Этот бот пока закрыт. Попроси владельца добавить твой Telegram ID в allowlist.",
@@ -45,7 +46,24 @@ class GatewayService:
         )
         if trace_text == "/admin_status perf":
             return self.perf_status(user)
-        reply = self.pipeline.handle_text(user, text)
+        if idempotency_key and self.inbound_updates is not None:
+            claim = self.inbound_updates.claim(user_id, idempotency_key)
+            if not claim.acquired:
+                if claim.status == "completed" and claim.response:
+                    return _reply_from_payload(claim.response)
+                return AssistantReply(
+                    text="",
+                    intent=Intent.UNKNOWN,
+                    blocked_reason="duplicate_update_in_progress",
+                    trace_id=claim.trace_id,
+                    suppress_delivery=True,
+                )
+        try:
+            reply = self.pipeline.handle_text(user, text, idempotency_key=idempotency_key)
+        except Exception:
+            if idempotency_key and self.inbound_updates is not None:
+                self.inbound_updates.mark_failed(user_id, idempotency_key)
+            raise
         if self.events is not None:
             self.events.log_assistant_response(
                 user_id,
@@ -56,6 +74,13 @@ class GatewayService:
                 model=reply.model,
                 fallback_count=reply.fallback_count,
                 perf_ms=reply.perf_ms,
+                trace_id=reply.trace_id,
+            )
+        if idempotency_key and self.inbound_updates is not None:
+            self.inbound_updates.complete(
+                user_id,
+                idempotency_key,
+                _reply_to_payload(reply),
                 trace_id=reply.trace_id,
             )
         return reply
@@ -428,3 +453,46 @@ def _compact(value: str | None, *, limit: int = 120) -> str:
     if len(clean) <= limit:
         return clean
     return clean[: limit - 1].rstrip() + "…"
+
+
+def _reply_to_payload(reply: AssistantReply) -> dict:
+    return {
+        "text": reply.text,
+        "intent": reply.intent.value,
+        "provider": reply.provider,
+        "model": reply.model,
+        "fallback_count": reply.fallback_count,
+        "blocked_reason": reply.blocked_reason,
+        "perf_ms": dict(reply.perf_ms),
+        "trace_id": reply.trace_id,
+        "buttons": [
+            [
+                {"text": button.text, "callback_data": button.callback_data}
+                for button in row
+            ]
+            for row in reply.buttons
+        ],
+    }
+
+
+def _reply_from_payload(payload: dict) -> AssistantReply:
+    return AssistantReply(
+        text=str(payload.get("text") or ""),
+        intent=Intent(str(payload.get("intent") or Intent.UNKNOWN.value)),
+        provider=payload.get("provider"),
+        model=payload.get("model"),
+        fallback_count=int(payload.get("fallback_count") or 0),
+        blocked_reason=payload.get("blocked_reason"),
+        perf_ms=dict(payload.get("perf_ms") or {}),
+        trace_id=str(payload.get("trace_id") or ""),
+        buttons=[
+            [
+                ReplyButton(
+                    text=str(button.get("text") or ""),
+                    callback_data=str(button.get("callback_data") or ""),
+                )
+                for button in row
+            ]
+            for row in payload.get("buttons") or []
+        ],
+    )

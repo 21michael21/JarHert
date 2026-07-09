@@ -6,7 +6,7 @@ from io import BytesIO
 from assistant.transcription import OpenAITranscriber, TranscriptionError
 from backend.stores import SqlDeliveryOutboxStore
 from gateway_bot.main import get_gateway_service, get_session_factory, settings
-from gateway_bot.telegram_callbacks import buttons_to_payload, handle_callback_data, reply_markup
+from gateway_bot.telegram_callbacks import buttons_to_payload, handle_callback_data
 
 
 logger = logging.getLogger(__name__)
@@ -54,14 +54,27 @@ def create_dispatcher():
         if message.from_user is None:
             await message.answer(START_TEXT)
             return
-        _enqueue_reply(outbox, message.from_user.id, message.chat.id, START_TEXT)
+        _enqueue_reply(
+            outbox,
+            message.from_user.id,
+            message.chat.id,
+            START_TEXT,
+            idempotency_key=f"{_telegram_message_key(message)}:reply",
+        )
 
     @dp.message(F.text)
     async def handle_text(message: Message) -> None:
         if message.from_user is None:
             await message.answer("Не вижу Telegram user id, поэтому не могу обработать сообщение.")
             return
-        reply = service.handle_text(message.from_user.id, message.text or "")
+        root_key = _telegram_message_key(message)
+        reply = service.handle_text(
+            message.from_user.id,
+            message.text or "",
+            idempotency_key=root_key,
+        )
+        if reply.suppress_delivery:
+            return
         _enqueue_reply(
             outbox,
             message.from_user.id,
@@ -69,6 +82,7 @@ def create_dispatcher():
             reply.text,
             trace_id=reply.trace_id,
             buttons=buttons_to_payload(reply.buttons),
+            idempotency_key=f"{root_key}:reply",
         )
 
     @dp.message(F.voice)
@@ -77,7 +91,13 @@ def create_dispatcher():
             await message.answer("Не вижу Telegram user id, поэтому не могу обработать голосовое.")
             return
         if message.voice is None:
-            _enqueue_reply(outbox, message.from_user.id, message.chat.id, "Не вижу голосовой файл.")
+            _enqueue_reply(
+                outbox,
+                message.from_user.id,
+                message.chat.id,
+                "Не вижу голосовой файл.",
+                idempotency_key=f"{_telegram_message_key(message)}:reply",
+            )
             return
         if message.voice.file_size and message.voice.file_size > settings.voice_max_bytes:
             _enqueue_reply(
@@ -85,6 +105,7 @@ def create_dispatcher():
                 message.from_user.id,
                 message.chat.id,
                 "Голосовое слишком большое. Пришли короче или текстом.",
+                idempotency_key=f"{_telegram_message_key(message)}:reply",
             )
             return
 
@@ -103,6 +124,7 @@ def create_dispatcher():
                 message.from_user.id,
                 message.chat.id,
                 "Не смог расшифровать голосовое. Пришли текстом или попробуй ещё раз.",
+                idempotency_key=f"{_telegram_message_key(message)}:reply",
             )
             return
         except Exception:
@@ -112,10 +134,14 @@ def create_dispatcher():
                 message.from_user.id,
                 message.chat.id,
                 "Не смог скачать голосовое из Telegram. Попробуй ещё раз.",
+                idempotency_key=f"{_telegram_message_key(message)}:reply",
             )
             return
 
-        reply = service.handle_text(message.from_user.id, text)
+        root_key = _telegram_message_key(message)
+        reply = service.handle_text(message.from_user.id, text, idempotency_key=root_key)
+        if reply.suppress_delivery:
+            return
         _enqueue_reply(
             outbox,
             message.from_user.id,
@@ -123,6 +149,7 @@ def create_dispatcher():
             f"Расшифровал: {text}\n\n{reply.text}",
             trace_id=reply.trace_id,
             buttons=buttons_to_payload(reply.buttons),
+            idempotency_key=f"{root_key}:reply",
         )
 
     @dp.callback_query(F.data.startswith("ai:"))
@@ -133,7 +160,15 @@ def create_dispatcher():
         reply = handle_callback_data(service, callback.from_user.id, callback.data or "")
         await callback.answer()
         if callback.message is not None:
-            await callback.message.answer(reply.text, reply_markup=reply_markup(buttons_to_payload(reply.buttons)))
+            _enqueue_reply(
+                outbox,
+                callback.from_user.id,
+                callback.message.chat.id,
+                reply.text,
+                trace_id=reply.trace_id,
+                buttons=buttons_to_payload(reply.buttons),
+                idempotency_key=f"telegram:callback:{callback.id}:reply",
+            )
 
     @dp.message()
     async def unsupported(message: Message) -> None:
@@ -145,6 +180,7 @@ def create_dispatcher():
             message.from_user.id,
             message.chat.id,
             "Я принимаю текст и голосовые. Файлы оставим читалке.",
+            idempotency_key=f"{_telegram_message_key(message)}:reply",
         )
 
     return dp
@@ -157,6 +193,7 @@ def _enqueue_reply(
     text: str,
     trace_id: str = "",
     buttons: list[list[dict[str, str]]] | None = None,
+    idempotency_key: str | None = None,
 ) -> None:
     service = get_gateway_service()
     db_user = service.users.get_or_create(tg_user_id) if service.users is not None else None
@@ -166,4 +203,9 @@ def _enqueue_reply(
         text=text,
         trace_id=trace_id,
         buttons=buttons,
+        idempotency_key=idempotency_key,
     )
+
+
+def _telegram_message_key(message: Message) -> str:
+    return f"telegram:{message.chat.id}:{message.message_id}"

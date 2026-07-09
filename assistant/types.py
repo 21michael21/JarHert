@@ -102,4 +102,5 @@ class AssistantReply:
     perf_ms: dict[str, int] = field(default_factory=dict)
     trace_id: str = ""
     buttons: list[list[ReplyButton]] = field(default_factory=list)
+    suppress_delivery: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
