@@ -11,6 +11,7 @@ COMMAND_INTENTS = {
     "/memories": Intent.MEMORIES,
     "/idea": Intent.IDEA,
     "/ideas": Intent.IDEAS,
+    "/notes": Intent.NOTES,
     "/remind": Intent.REMIND,
     "/reminders": Intent.REMINDERS,
     "/cancel_reminder": Intent.CANCEL_REMINDER,
@@ -35,6 +36,16 @@ COMMAND_INTENTS = {
 NATURAL_PATTERNS: list[tuple[re.Pattern[str], Intent]] = [
     (re.compile(r"^(?:идея|запиши\s+идею|сохрани\s+идею|запиши\s+мысль|сохрани\s+мысль)[:\s]+(?P<text>.+)$", re.IGNORECASE | re.DOTALL), Intent.IDEA),
     (re.compile(r"^(?:запомни|сохрани\s+важное|важно)[:\s]+(?P<text>.+)$", re.IGNORECASE | re.DOTALL), Intent.REMEMBER),
+    (re.compile(r"^(?:найди|покажи)\s+заметки\s+(?:про|о)[:\s]+(?P<text>.+)$", re.IGNORECASE | re.DOTALL), Intent.NOTE_SEARCH),
+    (re.compile(r"^измени\s+последн(?:юю|ее|ю)\s+(?:на\s+)?(?P<text>.+)$", re.IGNORECASE | re.DOTALL), Intent.NOTE_EDIT),
+    (re.compile(r"^удали\s+(?:её|ее|последн(?:юю|ее|ю))$", re.IGNORECASE), Intent.NOTE_DELETE),
+    (
+        re.compile(
+            r"^(?:сохрани|запиши)(?!\s+это\s+как\s+(?:идею|важное))[:\s]+(?P<text>.+)$",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        Intent.NOTE_CREATE,
+    ),
     (re.compile(r"^(?:напомни|поставь\s+напоминание)[:\s]+(?P<text>.+)$", re.IGNORECASE | re.DOTALL), Intent.REMIND),
     (re.compile(r"^(?:создай\s+задачу|добавь\s+задачу|заведи\s+задачу)[:\s]+(?P<text>.+)$", re.IGNORECASE | re.DOTALL), Intent.TASK),
     (re.compile(r"^(?:создай\s+задачи|добавь\s+задачи|заведи\s+задачи|раскидай\s+задачи|запланируй\s+задачи)[:\s]+(?P<text>.+)$", re.IGNORECASE | re.DOTALL), Intent.TASK_BATCH),
@@ -61,7 +72,8 @@ def parse_message(text: str, *, plain_text_ai_enabled: bool = False) -> ParsedMe
     for pattern, intent in NATURAL_PATTERNS:
         match = pattern.match(stripped)
         if match:
-            return ParsedMessage(intent, match.group("text").strip(), raw_text)
+            text_value = match.groupdict().get("text") or ""
+            return ParsedMessage(intent, text_value.strip(), raw_text)
 
     if _looks_like_task_batch(stripped):
         return ParsedMessage(Intent.TASK_BATCH, stripped, raw_text)

@@ -14,6 +14,7 @@ from backend.memory_store import (
     SqlUserPreferenceStore,
 )
 from backend.monitor_job_store import SqlMonitorJobStore
+from backend.personal_knowledge_store import SqlPersonalKnowledgeStore
 from backend.provider_health_store import SqlProviderHealthStore
 from backend.provider_budget_store import SqlProviderBudgetLedger
 from backend.queue_store import SqlActionQueueStore, SqlAgentJobStore, SqlDeliveryOutboxStore
@@ -35,6 +36,7 @@ __all__ = [
     "SqlInboundUpdateStore",
     "SqlMemoryStore",
     "SqlMonitorJobStore",
+    "SqlPersonalKnowledgeStore",
     "SqlProviderHealthStore",
     "SqlProviderBudgetLedger",
     "SqlReminderStore",

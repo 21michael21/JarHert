@@ -9,6 +9,7 @@ from assistant.context_store import ConversationTurn
 from assistant.delivery_outbox import DeliveryMessage, DeliveryStatus
 from assistant.ideas import Idea
 from assistant.memory import Memory
+from assistant.personal_knowledge import Note, NoteHistory
 from assistant.preferences import UserPreferences
 from assistant.provider_router import ProviderFailureKind, ProviderHealth
 from backend.models import (
@@ -18,6 +19,8 @@ from backend.models import (
     DeliveryOutboxRecord,
     IdeaRecord,
     MemoryRecord,
+    NoteHistoryRecord,
+    NoteRecord,
     ProviderHealthRecord,
     ReminderRecord,
     UserPreferencesRecord,
@@ -40,6 +43,34 @@ def idea_from_record(record: IdeaRecord) -> Idea:
         user_id=record.user_id,
         text=record.text,
         created_at=record.created_at,
+    )
+
+
+def note_from_record(record: NoteRecord) -> Note:
+    return Note(
+        id=record.id,
+        user_id=record.user_id,
+        text=record.text,
+        note_type=record.type,
+        source=record.source,
+        project=record.project,
+        contact=record.contact,
+        created_at=_aware(record.created_at) or record.created_at,
+        updated_at=_aware(record.updated_at) or record.updated_at,
+        deleted_at=_aware(record.deleted_at),
+        expires_at=_aware(record.expires_at),
+    )
+
+
+def note_history_from_record(record: NoteHistoryRecord) -> NoteHistory:
+    return NoteHistory(
+        id=record.id,
+        note_id=record.note_id,
+        user_id=record.user_id,
+        action=record.action,
+        before_text=record.before_text,
+        after_text=record.after_text,
+        created_at=_aware(record.created_at) or record.created_at,
     )
 
 

@@ -13,16 +13,13 @@ from assistant.memory import Memory
 from assistant.preferences import UserPreferences
 from backend.models import (
     ConversationTurnRecord,
-    IdeaRecord,
-    MemoryRecord,
     ReminderRecord,
     UsageDaily,
     UserPreferencesRecord,
 )
+from backend.personal_knowledge_store import SqlPersonalKnowledgeStore
 from backend.store_converters import (
     conversation_turn_from_record,
-    idea_from_record,
-    memory_from_record,
     reminder_from_record,
     user_preferences_from_record,
 )
@@ -32,47 +29,53 @@ from reminders.store import Reminder, ReminderStatus
 class SqlMemoryStore:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self.session_factory = session_factory
+        self.knowledge = SqlPersonalKnowledgeStore(session_factory)
 
     def add(self, user_id: int, text: str) -> Memory:
-        with self.session_factory() as db:
-            record = MemoryRecord(user_id=user_id, text=text.strip())
-            db.add(record)
-            db.commit()
-            db.refresh(record)
-            return memory_from_record(record)
+        note = self.knowledge.create(
+            user_id=user_id,
+            text=text,
+            note_type="memory",
+            source="legacy_memory",
+        )
+        return Memory(
+            id=note.id,
+            user_id=note.user_id,
+            text=note.text,
+            created_at=note.created_at,
+        )
 
     def list_for_user(self, user_id: int, *, limit: int = 10) -> list[Memory]:
-        with self.session_factory() as db:
-            records = db.scalars(
-                select(MemoryRecord)
-                .where(MemoryRecord.user_id == user_id)
-                .order_by(MemoryRecord.created_at.desc(), MemoryRecord.id.desc())
-                .limit(limit)
-            ).all()
-            return [memory_from_record(record) for record in records]
+        return [
+            Memory(id=note.id, user_id=note.user_id, text=note.text, created_at=note.created_at)
+            for note in self.knowledge.list_for_user(user_id, limit=limit, note_type="memory")
+        ]
 
 
 class SqlIdeaStore:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self.session_factory = session_factory
+        self.knowledge = SqlPersonalKnowledgeStore(session_factory)
 
     def add(self, user_id: int, text: str) -> Idea:
-        with self.session_factory() as db:
-            record = IdeaRecord(user_id=user_id, text=text.strip())
-            db.add(record)
-            db.commit()
-            db.refresh(record)
-            return idea_from_record(record)
+        note = self.knowledge.create(
+            user_id=user_id,
+            text=text,
+            note_type="idea",
+            source="legacy_idea",
+        )
+        return Idea(
+            id=note.id,
+            user_id=note.user_id,
+            text=note.text,
+            created_at=note.created_at,
+        )
 
     def list_for_user(self, user_id: int, *, limit: int = 10) -> list[Idea]:
-        with self.session_factory() as db:
-            records = db.scalars(
-                select(IdeaRecord)
-                .where(IdeaRecord.user_id == user_id)
-                .order_by(IdeaRecord.created_at.desc(), IdeaRecord.id.desc())
-                .limit(limit)
-            ).all()
-            return [idea_from_record(record) for record in records]
+        return [
+            Idea(id=note.id, user_id=note.user_id, text=note.text, created_at=note.created_at)
+            for note in self.knowledge.list_for_user(user_id, limit=limit, note_type="idea")
+        ]
 
 
 class SqlReminderStore:

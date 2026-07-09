@@ -74,6 +74,55 @@ class IdeaRecord(Base):
     )
 
 
+class NoteRecord(Base):
+    __tablename__ = "notes"
+    __table_args__ = (
+        Index("ix_notes_user_status_updated", "user_id", "status", "updated_at"),
+        Index("ix_notes_user_type_updated", "user_id", "type", "updated_at"),
+        Index("ix_notes_user_project", "user_id", "project"),
+        Index("ix_notes_user_contact", "user_id", "contact"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    type: Mapped[str] = mapped_column(String(30), nullable=False, default="note", server_default="note")
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(String(80), nullable=False, default="telegram", server_default="telegram")
+    project: Mapped[str | None] = mapped_column(String(120))
+    contact: Mapped[str | None] = mapped_column(String(120))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active", server_default="active")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class NoteHistoryRecord(Base):
+    __tablename__ = "note_history"
+    __table_args__ = (Index("ix_note_history_note_created", "note_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    note_id: Mapped[int] = mapped_column(ForeignKey("notes.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    action: Mapped[str] = mapped_column(String(20), nullable=False)
+    before_text: Mapped[str | None] = mapped_column(Text)
+    after_text: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
 class ReminderRecord(Base):
     __tablename__ = "reminders"
     __table_args__ = (Index("ix_reminders_status_due", "status", "remind_at"),)

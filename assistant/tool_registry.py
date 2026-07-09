@@ -50,6 +50,7 @@ class ToolContext:
     docs_sync: object
     task_center: TaskCommandCenter | None = None
     agent_jobs: object | None = None
+    knowledge: object | None = None
     telegram_reply: Callable[[int, str], None] | None = None
     preferences: UserPreferences | None = None
     idempotency_key: str = ""
@@ -222,7 +223,17 @@ def _validate_payload(payload: dict[str, str], schema: InputSchema) -> None:
 
 
 def _idea_save(payload: dict[str, str], context: ToolContext) -> ToolExecutionResult:
-    item = context.ideas.add(context.user.user_id, payload["text"])
+    if context.knowledge is not None and hasattr(context.knowledge, "create"):
+        item = context.knowledge.create(
+            user_id=context.user.user_id,
+            text=payload["text"],
+            note_type="idea",
+            source="telegram",
+        )
+        if not _store_uses_knowledge(context.ideas, context.knowledge):
+            context.ideas.add(context.user.user_id, payload["text"])
+    else:
+        item = context.ideas.add(context.user.user_id, payload["text"])
     synced = context.docs_sync.append(
         kind="idea",
         user_id=context.user.user_id,
@@ -235,8 +246,27 @@ def _idea_save(payload: dict[str, str], context: ToolContext) -> ToolExecutionRe
 
 
 def _memory_save(payload: dict[str, str], context: ToolContext) -> ToolExecutionResult:
-    item = context.memories.add(context.user.user_id, payload["text"])
+    if context.knowledge is not None and hasattr(context.knowledge, "create"):
+        item = context.knowledge.create(
+            user_id=context.user.user_id,
+            text=payload["text"],
+            note_type="memory",
+            source="telegram",
+        )
+        if not _store_uses_knowledge(context.memories, context.knowledge):
+            context.memories.add(context.user.user_id, payload["text"])
+    else:
+        item = context.memories.add(context.user.user_id, payload["text"])
     return ToolExecutionResult(f"Сохранил важное #{item.id}.")
+
+
+def _store_uses_knowledge(store: object, knowledge: object) -> bool:
+    store_knowledge = getattr(store, "knowledge", None)
+    if store_knowledge is None:
+        return False
+    if store_knowledge is knowledge:
+        return True
+    return getattr(store_knowledge, "session_factory", None) is getattr(knowledge, "session_factory", None)
 
 
 def _reminder_create(payload: dict[str, str], context: ToolContext) -> ToolExecutionResult:

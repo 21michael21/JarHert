@@ -22,6 +22,7 @@ from assistant.intents import parse_message
 from assistant.limits import DailyLimitStore
 from assistant.memory import InMemoryMemoryStore
 from assistant.natural_tasks import parse_natural_task_batch
+from assistant.personal_knowledge import InMemoryPersonalKnowledgeStore, Note
 from assistant.action_schema import ActionType, NaturalRoute, PlannedAction
 from assistant.llm_action_extractor import LlmActionExtractor
 from assistant.natural_action_service import NaturalActionService
@@ -57,6 +58,7 @@ class AssistantPipeline:
         max_output_chars: int = 2500,
         memories: InMemoryMemoryStore | None = None,
         ideas: InMemoryIdeaStore | None = None,
+        knowledge: InMemoryPersonalKnowledgeStore | None = None,
         reminders: InMemoryReminderStore | None = None,
         docs_sync: DocsSync | None = None,
         task_center: TaskCommandCenter | None = None,
@@ -80,6 +82,9 @@ class AssistantPipeline:
         self.max_output_chars = max_output_chars
         self.memories = memories or InMemoryMemoryStore()
         self.ideas = ideas or InMemoryIdeaStore()
+        self._explicit_memories = memories
+        self._explicit_ideas = ideas
+        self.knowledge = knowledge or _knowledge_from_legacy(self.memories, self.ideas) or InMemoryPersonalKnowledgeStore()
         self.reminders = reminders or InMemoryReminderStore()
         self.docs_sync = docs_sync or NullDocsSync()
         self.task_center = task_center
@@ -208,6 +213,16 @@ class AssistantPipeline:
             return self._idea(user, parsed.text)
         if parsed.intent == Intent.IDEAS:
             return self._ideas(user)
+        if parsed.intent == Intent.NOTES:
+            return self._notes(user, parsed.text)
+        if parsed.intent == Intent.NOTE_CREATE:
+            return self._note_create(user, parsed.text)
+        if parsed.intent == Intent.NOTE_SEARCH:
+            return self._note_search(user, parsed.text)
+        if parsed.intent == Intent.NOTE_EDIT:
+            return self._note_edit_last(user, parsed.text)
+        if parsed.intent == Intent.NOTE_DELETE:
+            return self._note_delete_last(user)
         if parsed.intent == Intent.REMIND:
             return self._remind(user, parsed.text)
         if parsed.intent == Intent.REMINDERS:
@@ -297,11 +312,17 @@ class AssistantPipeline:
         if not input_gate.ok:
             return self.responses.blocked_action(input_gate.reason, intent=Intent.REMEMBER)
         with self._perf.track("tool"):
-            item = self.memories.add(user.user_id, input_gate.safe_text)
+            item = self.knowledge.create(
+                user_id=user.user_id,
+                text=input_gate.safe_text,
+                note_type="memory",
+                source="telegram",
+            )
+            self._mirror_legacy_memory(user.user_id, input_gate.safe_text)
         return AssistantReply(text=f"Сохранил важное #{item.id}.", intent=Intent.REMEMBER)
 
     def _memories(self, user: UserContext) -> AssistantReply:
-        items = self.memories.list_for_user(user.user_id)
+        items = self.knowledge.list_for_user(user.user_id, note_type="memory")
         if not items:
             return AssistantReply(text="Пока нет сохранённых заметок.", intent=Intent.MEMORIES)
         lines = [f"{item.id}. {item.text}" for item in items]
@@ -312,7 +333,13 @@ class AssistantPipeline:
         if not input_gate.ok:
             return self.responses.blocked_action(input_gate.reason, intent=Intent.IDEA)
         with self._perf.track("tool"):
-            item = self.ideas.add(user.user_id, input_gate.safe_text)
+            item = self.knowledge.create(
+                user_id=user.user_id,
+                text=input_gate.safe_text,
+                note_type="idea",
+                source="telegram",
+            )
+            self._mirror_legacy_idea(user.user_id, input_gate.safe_text)
             synced = self.docs_sync.append(
                 kind="idea",
                 user_id=user.user_id,
@@ -324,11 +351,127 @@ class AssistantPipeline:
         return AssistantReply(text=f"Сохранил идею #{item.id}.{suffix}", intent=Intent.IDEA)
 
     def _ideas(self, user: UserContext) -> AssistantReply:
-        items = self.ideas.list_for_user(user.user_id)
+        items = self.knowledge.list_for_user(user.user_id, note_type="idea")
         if not items:
             return AssistantReply(text="Пока нет идей.", intent=Intent.IDEAS)
         lines = [f"{item.id}. {item.text}" for item in items]
         return AssistantReply(text="Идеи:\n" + "\n".join(lines), intent=Intent.IDEAS)
+
+    def _notes(self, user: UserContext, text: str) -> AssistantReply:
+        value = (text or "").strip()
+        if not value:
+            return self._note_list(user)
+        command, _, rest = value.partition(" ")
+        normalized = command.lower()
+        if normalized in {"search", "find", "найди", "поиск"}:
+            return self._note_search(user, rest.strip())
+        if normalized in {"edit", "update", "измени"}:
+            return self._note_edit_command(user, rest.strip())
+        if normalized in {"delete", "remove", "удали"}:
+            return self._note_delete_command(user, rest.strip())
+        return self._note_create(user, value)
+
+    def _note_create(self, user: UserContext, text: str) -> AssistantReply:
+        fields = fields_payload(text, fallback_key="text")
+        note_text = fields.get("text", "")
+        input_gate = check_input(note_text, max_chars=1500)
+        if not input_gate.ok:
+            return self.responses.blocked_action(input_gate.reason, intent=Intent.NOTE_CREATE)
+        if not input_gate.safe_text:
+            return AssistantReply(
+                text="Напиши текст заметки: /notes текст",
+                intent=Intent.NOTE_CREATE,
+                blocked_reason="note_text_empty",
+            )
+        retention_days = _parse_optional_int(fields.get("retention_days") or fields.get("retention"))
+        with self._perf.track("tool"):
+            note = self.knowledge.create(
+                user_id=user.user_id,
+                text=input_gate.safe_text,
+                note_type=fields.get("type") or "note",
+                source=fields.get("source") or "telegram",
+                project=fields.get("project"),
+                contact=fields.get("contact"),
+                retention_days=retention_days,
+            )
+        return AssistantReply(text=f"Сохранил заметку #{note.id}.", intent=Intent.NOTE_CREATE)
+
+    def _note_list(self, user: UserContext) -> AssistantReply:
+        items = self.knowledge.list_for_user(user.user_id)
+        if not items:
+            return AssistantReply(text="Заметок пока нет.", intent=Intent.NOTES)
+        return AssistantReply(text="Заметки:\n" + "\n".join(_format_note_line(note) for note in items), intent=Intent.NOTES)
+
+    def _note_search(self, user: UserContext, text: str) -> AssistantReply:
+        query = (text or "").strip()
+        if not query:
+            return AssistantReply(
+                text="Напиши, что искать: /notes search OAuth",
+                intent=Intent.NOTE_SEARCH,
+                blocked_reason="note_search_empty",
+            )
+        items = self.knowledge.search(user.user_id, query)
+        if not items:
+            return AssistantReply(text=f"Не нашёл заметки про: {query}", intent=Intent.NOTE_SEARCH)
+        return AssistantReply(
+            text="Нашёл заметки:\n" + "\n".join(_format_note_line(note) for note in items),
+            intent=Intent.NOTE_SEARCH,
+        )
+
+    def _note_edit_command(self, user: UserContext, text: str) -> AssistantReply:
+        value = (text or "").strip()
+        lowered = value.lower()
+        for prefix in ("last ", "последнюю ", "последнее ", "последнюю на ", "последнее на "):
+            if lowered.startswith(prefix):
+                return self._note_edit_last(user, value[len(prefix) :].strip())
+        if lowered.startswith("last"):
+            return self._note_edit_last(user, value[4:].strip())
+        return self._note_edit_last(user, value)
+
+    def _note_edit_last(self, user: UserContext, text: str) -> AssistantReply:
+        input_gate = check_input(text, max_chars=1500)
+        if not input_gate.ok:
+            return self.responses.blocked_action(input_gate.reason, intent=Intent.NOTE_EDIT)
+        if not input_gate.safe_text:
+            return AssistantReply(
+                text="Напиши новый текст заметки.",
+                intent=Intent.NOTE_EDIT,
+                blocked_reason="note_edit_empty",
+            )
+        latest = self.knowledge.latest_for_user(user.user_id)
+        if latest is None:
+            return AssistantReply(text="Нет заметки, которую можно изменить.", intent=Intent.NOTE_EDIT)
+        updated = self.knowledge.update(user.user_id, latest.id, text=input_gate.safe_text)
+        if updated is None:
+            return AssistantReply(text="Не нашёл заметку для изменения.", intent=Intent.NOTE_EDIT)
+        return AssistantReply(text=f"Обновил заметку #{updated.id}.", intent=Intent.NOTE_EDIT)
+
+    def _note_delete_command(self, user: UserContext, text: str) -> AssistantReply:
+        value = (text or "").strip().lower()
+        if value in {"", "last", "последнюю", "последнее", "её", "ее"}:
+            return self._note_delete_last(user)
+        if value.isdigit():
+            return self._note_delete_id(user, int(value))
+        return AssistantReply(
+            text="Укажи заметку: /notes delete last или /notes delete 3",
+            intent=Intent.NOTE_DELETE,
+            blocked_reason="note_delete_bad_id",
+        )
+
+    def _note_delete_last(self, user: UserContext) -> AssistantReply:
+        latest = self.knowledge.latest_for_user(user.user_id)
+        if latest is None:
+            return AssistantReply(text="Нет заметки, которую можно удалить.", intent=Intent.NOTE_DELETE)
+        return self._delete_note(user, latest.id)
+
+    def _note_delete_id(self, user: UserContext, note_id: int) -> AssistantReply:
+        return self._delete_note(user, note_id)
+
+    def _delete_note(self, user: UserContext, note_id: int) -> AssistantReply:
+        deleted = self.knowledge.delete(user.user_id, note_id)
+        if not deleted:
+            return AssistantReply(text=f"Не нашёл заметку #{note_id}.", intent=Intent.NOTE_DELETE)
+        return AssistantReply(text=f"Удалил заметку #{note_id}.", intent=Intent.NOTE_DELETE)
 
     def _remind(self, user: UserContext, text: str) -> AssistantReply:
         parsed = parse_reminder(text, default_time=self.preferences.get(user.user_id).default_reminder_time)
@@ -705,6 +848,7 @@ class AssistantPipeline:
             docs_sync=self.docs_sync,
             task_center=self.task_center,
             agent_jobs=self.agent_jobs,
+            knowledge=self.knowledge,
             preferences=self.preferences.get(user.user_id),
             idempotency_key=idempotency_key,
         )
@@ -721,6 +865,14 @@ class AssistantPipeline:
     def _task_text_with_preferences(self, text: str, user: UserContext | None) -> str:
         preferences = self.preferences.get(user.user_id) if user is not None else None
         return task_text_with_preferences(text, preferences)
+
+    def _mirror_legacy_memory(self, user_id: int, text: str) -> None:
+        if self._explicit_memories is not None and not _store_uses_knowledge(self._explicit_memories, self.knowledge):
+            self._explicit_memories.add(user_id, text)
+
+    def _mirror_legacy_idea(self, user_id: int, text: str) -> None:
+        if self._explicit_ideas is not None and not _store_uses_knowledge(self._explicit_ideas, self.knowledge):
+            self._explicit_ideas.add(user_id, text)
 
 
 def _parse_monitor_add_payload(text: str) -> tuple[str, str, str] | None:
@@ -749,3 +901,42 @@ def _valid_github_segment(value: str) -> bool:
     if not value or value in {".", ".."}:
         return False
     return all(char.isalnum() or char in {"-", "_", "."} for char in value)
+
+
+def _knowledge_from_legacy(memories, ideas):
+    for store in (memories, ideas):
+        knowledge = getattr(store, "knowledge", None)
+        if knowledge is not None:
+            return knowledge
+    return None
+
+
+def _store_uses_knowledge(store, knowledge) -> bool:
+    store_knowledge = getattr(store, "knowledge", None)
+    if store_knowledge is None:
+        return False
+    if store_knowledge is knowledge:
+        return True
+    return getattr(store_knowledge, "session_factory", None) is getattr(knowledge, "session_factory", None)
+
+
+def _format_note_line(note: Note) -> str:
+    meta = []
+    if note.note_type != "note":
+        meta.append(note.note_type)
+    if note.project:
+        meta.append(note.project)
+    if note.contact:
+        meta.append(note.contact)
+    suffix = f" ({', '.join(meta)})" if meta else ""
+    return f"{note.id}. {note.text}{suffix}"
+
+
+def _parse_optional_int(value: str | None) -> int | None:
+    clean = (value or "").strip()
+    if not clean:
+        return None
+    if not clean.isdigit():
+        return None
+    parsed = int(clean)
+    return parsed if parsed > 0 else None
