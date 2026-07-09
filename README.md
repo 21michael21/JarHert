@@ -807,6 +807,11 @@ item-claim этого adapter. Runtime отвечает за heartbeat, timeout,
 lifecycle logs и takeover после истечения lease. Конкретный adapter отвечает только за один
 ограниченный `run_once()` и сохранение своего бизнес-результата.
 
+Actions и delivery дополнительно имеют item-level fencing: `worker_id`, `claimed_at`, `heartbeat_at`
+и `lease_until`. Claim выполняется атомарным CAS update. Долгий tool/send call продлевает heartbeat;
+после истечения lease запись возвращается в очередь. Старый worker после takeover не может записать
+`succeeded/sent`, поэтому два процесса не завершают одну запись одновременно.
+
 При первом запуске после миграции и после stale takeover adapters восстанавливают зависшие записи:
 
 - `agent_actions.running` → `queued`;

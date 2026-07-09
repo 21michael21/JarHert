@@ -101,3 +101,6 @@ def test_alembic_creates_automation_worker_leases_on_clean_database(tmp_path) ->
     assert "automation_worker_leases" in inspector.get_table_names()
     columns = {column["name"] for column in inspector.get_columns("automation_worker_leases")}
     assert {"worker_name", "owner_id", "generation", "lease_until", "heartbeat_at", "next_run_at"} <= columns
+    item_lease_columns = {"worker_id", "lease_until", "claimed_at", "heartbeat_at"}
+    assert item_lease_columns <= {column["name"] for column in inspector.get_columns("agent_actions")}
+    assert item_lease_columns <= {column["name"] for column in inspector.get_columns("delivery_outbox")}
