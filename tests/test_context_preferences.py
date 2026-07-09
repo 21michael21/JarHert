@@ -167,7 +167,7 @@ def test_evening_preference_changes_natural_calendar_time() -> None:
     reply = pipeline.handle_text(user(), "завтра вечером созвон с Ильей")
     results = execute_confirmed_actions(pipeline, queue)
 
-    assert "Нужно подтверждение" in reply.text
+    assert "Нужно одно подтверждение" in reply.text
     assert len(results) == 1
     assert task_center.calls == [
         ("calendar", "созвон с Ильей | start=tomorrow 20:15 | end=tomorrow 20:45")

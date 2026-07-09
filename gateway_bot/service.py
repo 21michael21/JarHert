@@ -83,6 +83,48 @@ class GatewayService:
             buttons=_status_buttons(action.job_id),
         )
 
+    def confirm_job(self, tg_user_id: int, job_id: int) -> AssistantReply:
+        user = self._user_context(tg_user_id)
+        if user is None:
+            return _not_allowed_reply()
+        if self.pipeline.action_queue is None:
+            return AssistantReply(text="Очередь действий не подключена.", intent=Intent.AGENT_DO, blocked_reason="queue_disabled")
+        job = self.pipeline.agent_jobs.get_for_user(user.user_id, job_id)
+        if job is None:
+            return AssistantReply(
+                text=f"Не нашёл job #{job_id}.",
+                intent=Intent.AGENT_JOB,
+                blocked_reason="agent_job_not_found",
+            )
+        confirmed = self.pipeline.action_queue.confirm_job_for_user(user.user_id, job_id)
+        if not confirmed:
+            return AssistantReply(
+                text=f"В Job #{job_id} нет действий, которые ждут подтверждения.",
+                intent=Intent.AGENT_JOB,
+                trace_id=job.trace_id,
+                blocked_reason="job_not_confirmable",
+            )
+        if self.events is not None:
+            self.events.log(
+                user.user_id,
+                "job_confirmed",
+                {"job_id": job_id, "action_count": len(confirmed)},
+                trace_id=job.trace_id,
+            )
+            for action in confirmed:
+                self.events.log(
+                    user.user_id,
+                    "action_confirmed",
+                    {"action_id": action.id, "job_id": job_id, "type": action.type.value},
+                    trace_id=action.trace_id,
+                )
+        return AssistantReply(
+            text=f"Подтвердил Job #{job_id}: {len(confirmed)} действий. Выполняю по порядку.",
+            intent=Intent.AGENT_DO,
+            trace_id=job.trace_id,
+            buttons=_status_buttons(job_id),
+        )
+
     def cancel_action(self, tg_user_id: int, action_id: int) -> AssistantReply:
         user = self._user_context(tg_user_id)
         if user is None:
@@ -113,6 +155,48 @@ class GatewayService:
                 trace_id=trace_id,
             )
         return AssistantReply(text=f"Отменил action #{action_id}.", intent=Intent.AGENT_DO, trace_id=trace_id)
+
+    def cancel_job(self, tg_user_id: int, job_id: int) -> AssistantReply:
+        user = self._user_context(tg_user_id)
+        if user is None:
+            return _not_allowed_reply()
+        if self.pipeline.action_queue is None:
+            return AssistantReply(text="Очередь действий не подключена.", intent=Intent.AGENT_DO, blocked_reason="queue_disabled")
+        job = self.pipeline.agent_jobs.get_for_user(user.user_id, job_id)
+        if job is None:
+            return AssistantReply(
+                text=f"Не нашёл job #{job_id}.",
+                intent=Intent.AGENT_JOB,
+                blocked_reason="agent_job_not_found",
+            )
+        cancelled = self.pipeline.action_queue.cancel_job_for_user(user.user_id, job_id)
+        if not cancelled:
+            return AssistantReply(
+                text=f"В Job #{job_id} нет действий, которые можно отменить.",
+                intent=Intent.AGENT_JOB,
+                trace_id=job.trace_id,
+                blocked_reason="job_not_cancellable",
+            )
+        self.pipeline.agent_jobs.mark_status(job_id, "cancelled")
+        if self.events is not None:
+            self.events.log(
+                user.user_id,
+                "job_cancelled",
+                {"job_id": job_id, "action_count": len(cancelled)},
+                trace_id=job.trace_id,
+            )
+            for action in cancelled:
+                self.events.log(
+                    user.user_id,
+                    "action_cancelled",
+                    {"action_id": action.id, "job_id": job_id, "type": action.type.value},
+                    trace_id=action.trace_id,
+                )
+        return AssistantReply(
+            text=f"Отменил Job #{job_id}: {len(cancelled)} действий.",
+            intent=Intent.AGENT_DO,
+            trace_id=job.trace_id,
+        )
 
     def job_status(self, tg_user_id: int, job_id: int) -> AssistantReply:
         user = self._user_context(tg_user_id)
@@ -158,14 +242,13 @@ class GatewayService:
                     f"{action.id}. {action.type.value} — {action.status.value}{dependency}{compensation}{error}"
                 )
         buttons = []
-        for action in actions:
-            if action.status == ActionStatus.NEEDS_CONFIRMATION:
-                buttons.append(
-                    [
-                        ReplyButton("Подтвердить", f"ai:confirm:{action.id}"),
-                        ReplyButton("Отменить", f"ai:cancel:{action.id}"),
-                    ]
-                )
+        if any(action.status == ActionStatus.NEEDS_CONFIRMATION for action in actions):
+            buttons.append(
+                [
+                    ReplyButton("Подтвердить всё", f"ai:confirm_job:{job.id}"),
+                    ReplyButton("Отменить всё", f"ai:cancel_job:{job.id}"),
+                ]
+            )
         return AssistantReply(text="\n".join(lines), intent=Intent.AGENT_JOB, trace_id=job.trace_id, buttons=buttons)
 
     def trace_status(self, tg_user_id: int, trace_id: str) -> AssistantReply:

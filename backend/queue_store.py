@@ -210,6 +210,42 @@ class SqlActionQueueStore:
             db.refresh(record)
             return agent_action_from_record(record)
 
+    def confirm_job_for_user(self, user_id: int, job_id: int) -> list[AgentAction]:
+        with self.session_factory() as db:
+            records = db.scalars(
+                select(AgentActionRecord)
+                .where(
+                    AgentActionRecord.user_id == user_id,
+                    AgentActionRecord.job_id == job_id,
+                    AgentActionRecord.status == ActionStatus.NEEDS_CONFIRMATION.value,
+                )
+                .order_by(AgentActionRecord.created_at.asc(), AgentActionRecord.id.asc())
+            ).all()
+            for record in records:
+                record.status = ActionStatus.QUEUED.value
+            db.commit()
+            for record in records:
+                db.refresh(record)
+            return [agent_action_from_record(record) for record in records]
+
+    def cancel_job_for_user(self, user_id: int, job_id: int) -> list[AgentAction]:
+        with self.session_factory() as db:
+            records = db.scalars(
+                select(AgentActionRecord)
+                .where(
+                    AgentActionRecord.user_id == user_id,
+                    AgentActionRecord.job_id == job_id,
+                    AgentActionRecord.status.in_([ActionStatus.QUEUED.value, ActionStatus.NEEDS_CONFIRMATION.value]),
+                )
+                .order_by(AgentActionRecord.created_at.asc(), AgentActionRecord.id.asc())
+            ).all()
+            for record in records:
+                record.status = ActionStatus.CANCELLED.value
+            db.commit()
+            for record in records:
+                db.refresh(record)
+            return [agent_action_from_record(record) for record in records]
+
     def block_dependents(self, action_id: int, reason: str) -> list[AgentAction]:
         with self.session_factory() as db:
             blocked = _block_dependents(db, action_id, reason)

@@ -279,6 +279,54 @@ def test_queue_confirms_action_and_preserves_trace_id() -> None:
     assert queue.claim_next().trace_id == "trace-1"
 
 
+def test_queue_confirms_whole_job_once() -> None:
+    queue = InMemoryActionQueueStore()
+    first = queue.enqueue(
+        user_id=1,
+        action_type=ActionType.TASK_CREATE,
+        payload={"title": "первая"},
+        job_id=7,
+        status=ActionStatus.NEEDS_CONFIRMATION,
+    )
+    second = queue.enqueue(
+        user_id=1,
+        action_type=ActionType.CALENDAR_CREATE,
+        payload={"title": "вторая", "start": "tomorrow 10:00", "end": "tomorrow 10:30"},
+        job_id=7,
+        status=ActionStatus.NEEDS_CONFIRMATION,
+        depends_on_action_id=first.id,
+    )
+
+    confirmed = queue.confirm_job_for_user(1, 7)
+
+    assert [item.id for item in confirmed] == [first.id, second.id]
+    assert queue.claim_next().id == first.id
+
+
+def test_queue_cancels_whole_job_once() -> None:
+    queue = InMemoryActionQueueStore()
+    first = queue.enqueue(
+        user_id=1,
+        action_type=ActionType.TASK_CREATE,
+        payload={"title": "первая"},
+        job_id=7,
+        status=ActionStatus.NEEDS_CONFIRMATION,
+    )
+    second = queue.enqueue(
+        user_id=1,
+        action_type=ActionType.CALENDAR_CREATE,
+        payload={"title": "вторая", "start": "tomorrow 10:00", "end": "tomorrow 10:30"},
+        job_id=7,
+        status=ActionStatus.NEEDS_CONFIRMATION,
+    )
+
+    cancelled = queue.cancel_job_for_user(1, 7)
+
+    assert [item.id for item in cancelled] == [first.id, second.id]
+    assert queue.claim_next() is None
+    assert {item.status for item in queue.list_for_user(1)} == {ActionStatus.CANCELLED}
+
+
 def test_sql_queue_confirms_action_and_preserves_trace_id(tmp_path) -> None:
     factory = session_factory(tmp_path)
     user = UserStore(factory).get_or_create(9103)
@@ -297,3 +345,41 @@ def test_sql_queue_confirms_action_and_preserves_trace_id(tmp_path) -> None:
     assert confirmed.status == ActionStatus.QUEUED
     assert confirmed.trace_id == "trace-sql"
     assert queue.claim_next().trace_id == "trace-sql"
+
+
+def test_sql_queue_confirms_and_cancels_whole_job(tmp_path) -> None:
+    factory = session_factory(tmp_path)
+    user = UserStore(factory).get_or_create(9106)
+    queue = SqlActionQueueStore(factory)
+    first = queue.enqueue(
+        user_id=user.id,
+        action_type=ActionType.TASK_CREATE,
+        payload={"title": "первая"},
+        job_id=77,
+        status=ActionStatus.NEEDS_CONFIRMATION,
+    )
+    second = queue.enqueue(
+        user_id=user.id,
+        action_type=ActionType.CALENDAR_CREATE,
+        payload={"title": "вторая", "start": "tomorrow 10:00", "end": "tomorrow 10:30"},
+        job_id=77,
+        status=ActionStatus.NEEDS_CONFIRMATION,
+        depends_on_action_id=first.id,
+    )
+
+    confirmed = queue.confirm_job_for_user(user.id, 77)
+
+    assert [item.id for item in confirmed] == [first.id, second.id]
+    assert queue.claim_next().id == first.id
+
+    third = queue.enqueue(
+        user_id=user.id,
+        action_type=ActionType.TASK_CREATE,
+        payload={"title": "третья"},
+        job_id=78,
+        status=ActionStatus.NEEDS_CONFIRMATION,
+    )
+    cancelled = queue.cancel_job_for_user(user.id, 78)
+
+    assert [item.id for item in cancelled] == [third.id]
+    assert next(item for item in queue.list_for_user(user.id) if item.id == third.id).status == ActionStatus.CANCELLED

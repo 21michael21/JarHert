@@ -28,6 +28,10 @@ def handle_callback_data(service, tg_user_id: int, data: str):
     if len(parts) != 3 or parts[0] != "ai" or not parts[2].isdigit():
         return service.handle_text(tg_user_id, "/status")
     item_id = int(parts[2])
+    if parts[1] == "confirm_job":
+        return service.confirm_job(tg_user_id, item_id)
+    if parts[1] == "cancel_job":
+        return service.cancel_job(tg_user_id, item_id)
     if parts[1] == "confirm":
         return service.confirm_action(tg_user_id, item_id)
     if parts[1] == "cancel":

@@ -195,7 +195,8 @@ def test_plain_task_batch_uses_task_center() -> None:
     results = execute_confirmed_actions(pipeline, queue)
     queued = sorted(queue.list_for_user(user().user_id, limit=20), key=lambda action: action.id)
 
-    assert "Нужно подтверждение" in reply.text
+    assert "Нужно одно подтверждение" in reply.text
+    assert reply.buttons[0][0].callback_data == "ai:confirm_job:1"
     assert len(results) == 2
     assert queued[1].depends_on_action_id == queued[0].id
     assert [call[0] for call in task_center.calls] == ["task_with_calendar", "task_with_calendar"]
@@ -249,7 +250,7 @@ def test_plain_text_creates_task_and_calendar_without_tags() -> None:
     reply = pipeline.handle_text(user(), "завтра в 10 проверь сервер и завтра в 12 созвон с Ильей")
     results = execute_confirmed_actions(pipeline, queue)
 
-    assert "Нужно подтверждение" in reply.text
+    assert "Нужно одно подтверждение" in reply.text
     assert len(results) == 2
     assert [call[0] for call in task_center.calls] == ["task_with_calendar", "calendar"]
     assert task_center.calls[0][1]["title"] == "проверь сервер"
@@ -312,7 +313,7 @@ def test_plain_text_llm_extractor_creates_action_when_deterministic_router_misse
     reply = pipeline.handle_text(user(), "организуй ревью Hub ML завтра утром")
     results = execute_confirmed_actions(pipeline, queue)
 
-    assert "Нужно подтверждение" in reply.text
+    assert "Нужно одно подтверждение" in reply.text
     assert len(results) == 1
     assert task_center.calls[0][0] == "task_with_calendar"
     assert task_center.calls[0][1]["title"] == "ревью Hub ML"

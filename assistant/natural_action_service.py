@@ -107,8 +107,8 @@ class NaturalActionService:
         self._log(user.user_id, "job_created", {"job_id": job.id, "goal": goal}, trace_id)
         pending_actions = []
         previous_action_id: int | None = None
+        job_needs_confirmation = any(self._needs_approval(action) for action in route.actions)
         for index, action in enumerate(route.actions, start=1):
-            needs_confirmation = self._needs_approval(action)
             queued = self.action_queue.enqueue(
                 user_id=user.user_id,
                 action_type=action.type,
@@ -117,13 +117,13 @@ class NaturalActionService:
                 trace_id=trace_id,
                 depends_on_action_id=previous_action_id,
                 idempotency_key=f"{user.user_id}:job:{job.id}:action:{index}",
-                status=ActionStatus.NEEDS_CONFIRMATION if needs_confirmation else ActionStatus.QUEUED,
+                status=ActionStatus.NEEDS_CONFIRMATION if job_needs_confirmation else ActionStatus.QUEUED,
             )
             pending_actions.append(queued)
             previous_action_id = queued.id
             self._log(
                 user.user_id,
-                "action_needs_confirmation" if needs_confirmation else "action_queued",
+                "action_needs_confirmation" if job_needs_confirmation else "action_queued",
                 {
                     "job_id": job.id,
                     "action_id": queued.id,
@@ -134,14 +134,14 @@ class NaturalActionService:
             )
 
         if any(action.status == ActionStatus.NEEDS_CONFIRMATION for action in pending_actions):
-            lines = [f"Нужно подтверждение для Job #{job.id}:"]
+            lines = [f"Нужно одно подтверждение для Job #{job.id}:"]
             lines.extend(f"{index}. {label}" for index, label in enumerate(labels, start=1))
-            lines.append("Без подтверждения я это не выполню.")
+            lines.append("Подтверди один раз: выполню весь список по порядку.")
             return AssistantReply(
                 text="\n".join(lines),
                 intent=Intent.AGENT_DO,
                 trace_id=trace_id,
-                buttons=_approval_buttons(job.id, pending_actions),
+                buttons=_approval_buttons(job.id),
             )
 
         return AssistantReply(
@@ -182,16 +182,11 @@ class NaturalActionService:
             self.events.log(user_id, event_type, meta, trace_id=trace_id)
 
 
-def _approval_buttons(job_id: int, actions: list[AgentAction]) -> list[list[ReplyButton]]:
-    rows: list[list[ReplyButton]] = []
-    for action in actions:
-        if action.status != ActionStatus.NEEDS_CONFIRMATION:
-            continue
-        rows.append(
-            [
-                ReplyButton("Подтвердить", f"ai:confirm:{action.id}"),
-                ReplyButton("Отменить", f"ai:cancel:{action.id}"),
-            ]
-        )
-    rows.append([ReplyButton("Статус job", f"ai:status:{job_id}")])
-    return rows
+def _approval_buttons(job_id: int) -> list[list[ReplyButton]]:
+    return [
+        [
+            ReplyButton("Подтвердить всё", f"ai:confirm_job:{job_id}"),
+            ReplyButton("Отменить всё", f"ai:cancel_job:{job_id}"),
+        ],
+        [ReplyButton("Статус job", f"ai:status:{job_id}")],
+    ]

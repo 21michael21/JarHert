@@ -164,6 +164,28 @@ class InMemoryActionQueueStore:
                 return updated
         return None
 
+    def confirm_job_for_user(self, user_id: int, job_id: int) -> list[AgentAction]:
+        confirmed: list[AgentAction] = []
+        for item in sorted(self._items, key=lambda value: (value.created_at, value.id)):
+            if item.user_id != user_id or item.job_id != job_id or item.status != ActionStatus.NEEDS_CONFIRMATION:
+                continue
+            updated = replace(item, status=ActionStatus.QUEUED, updated_at=datetime.now(timezone.utc))
+            self._replace(updated)
+            confirmed.append(updated)
+        return confirmed
+
+    def cancel_job_for_user(self, user_id: int, job_id: int) -> list[AgentAction]:
+        cancelled: list[AgentAction] = []
+        for item in sorted(self._items, key=lambda value: (value.created_at, value.id)):
+            if item.user_id != user_id or item.job_id != job_id:
+                continue
+            if item.status not in {ActionStatus.QUEUED, ActionStatus.NEEDS_CONFIRMATION}:
+                continue
+            updated = replace(item, status=ActionStatus.CANCELLED, updated_at=datetime.now(timezone.utc))
+            self._replace(updated)
+            cancelled.append(updated)
+        return cancelled
+
     def block_dependents(self, action_id: int, reason: str) -> list[AgentAction]:
         blocked: list[AgentAction] = []
         for item in sorted(self._items, key=lambda value: (value.created_at, value.id)):

@@ -98,6 +98,113 @@ def test_gateway_confirms_and_cancels_own_actions() -> None:
     assert queue.claim_next().id == action.id
 
 
+def test_gateway_confirms_whole_job_with_single_button() -> None:
+    from assistant.action_queue import ActionStatus, InMemoryActionQueueStore
+    from assistant.action_schema import ActionType
+    from assistant.agent_jobs import InMemoryAgentJobStore
+
+    queue = InMemoryActionQueueStore()
+    jobs = InMemoryAgentJobStore()
+    job = jobs.create(1001, "создать две вещи", ["task", "calendar"], trace_id="trace-job-confirm")
+    first = queue.enqueue(
+        user_id=1001,
+        action_type=ActionType.TASK_CREATE,
+        payload={"title": "проверить"},
+        job_id=job.id,
+        trace_id=job.trace_id,
+        status=ActionStatus.NEEDS_CONFIRMATION,
+    )
+    second = queue.enqueue(
+        user_id=1001,
+        action_type=ActionType.CALENDAR_CREATE,
+        payload={"title": "созвон", "start": "tomorrow 10:00", "end": "tomorrow 10:30"},
+        job_id=job.id,
+        trace_id=job.trace_id,
+        status=ActionStatus.NEEDS_CONFIRMATION,
+        depends_on_action_id=first.id,
+    )
+    service = GatewayService(
+        pipeline=AssistantPipeline(
+            FakeHermesClient(),
+            DailyLimitStore(),
+            agent_jobs=jobs,
+            action_queue=queue,
+        ),
+    )
+
+    status = service.job_status(1001, job.id)
+    confirmed = service.confirm_job(1001, job.id)
+
+    assert status.buttons[0][0].callback_data == f"ai:confirm_job:{job.id}"
+    assert status.buttons[0][1].callback_data == f"ai:cancel_job:{job.id}"
+    assert "2 действий" in confirmed.text
+    assert queue.claim_next().id == first.id
+    queue.mark_succeeded(first.id)
+    assert queue.claim_next().id == second.id
+
+
+def test_gateway_cancels_whole_job_with_single_button() -> None:
+    from assistant.action_queue import ActionStatus, InMemoryActionQueueStore
+    from assistant.action_schema import ActionType
+    from assistant.agent_jobs import InMemoryAgentJobStore
+
+    queue = InMemoryActionQueueStore()
+    jobs = InMemoryAgentJobStore()
+    job = jobs.create(1001, "отменить всё", ["task", "calendar"], trace_id="trace-job-cancel")
+    queue.enqueue(
+        user_id=1001,
+        action_type=ActionType.TASK_CREATE,
+        payload={"title": "проверить"},
+        job_id=job.id,
+        trace_id=job.trace_id,
+        status=ActionStatus.NEEDS_CONFIRMATION,
+    )
+    queue.enqueue(
+        user_id=1001,
+        action_type=ActionType.CALENDAR_CREATE,
+        payload={"title": "созвон", "start": "tomorrow 10:00", "end": "tomorrow 10:30"},
+        job_id=job.id,
+        trace_id=job.trace_id,
+        status=ActionStatus.NEEDS_CONFIRMATION,
+    )
+    service = GatewayService(
+        pipeline=AssistantPipeline(
+            FakeHermesClient(),
+            DailyLimitStore(),
+            agent_jobs=jobs,
+            action_queue=queue,
+        ),
+    )
+
+    cancelled = service.cancel_job(1001, job.id)
+
+    assert "2 действий" in cancelled.text
+    assert queue.claim_next() is None
+    assert "cancelled" in service.job_status(1001, job.id).text
+
+
+def test_telegram_callback_routes_job_level_confirmation() -> None:
+    from gateway_bot.telegram_callbacks import handle_callback_data
+
+    class FakeService:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def confirm_job(self, tg_user_id: int, job_id: int):
+            self.calls.append(("confirm_job", tg_user_id, job_id))
+            return "confirmed"
+
+        def cancel_job(self, tg_user_id: int, job_id: int):
+            self.calls.append(("cancel_job", tg_user_id, job_id))
+            return "cancelled"
+
+    service = FakeService()
+
+    assert handle_callback_data(service, 1001, "ai:confirm_job:7") == "confirmed"
+    assert handle_callback_data(service, 1001, "ai:cancel_job:7") == "cancelled"
+    assert service.calls == [("confirm_job", 1001, 7), ("cancel_job", 1001, 7)]
+
+
 def test_gateway_job_status_shows_dependencies_progress_and_compensation() -> None:
     from assistant.action_queue import ActionStatus, InMemoryActionQueueStore
     from assistant.action_schema import ActionType

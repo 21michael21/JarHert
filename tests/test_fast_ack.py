@@ -48,17 +48,19 @@ def test_heavy_natural_action_returns_fast_ack_and_queues_work() -> None:
     elapsed = time.perf_counter() - started
 
     assert elapsed < 1
-    assert "Нужно подтверждение для Job #1" in reply.text
-    assert "Без подтверждения" in reply.text
+    assert "Нужно одно подтверждение для Job #1" in reply.text
+    assert "Подтверди один раз" in reply.text
     assert reply.buttons
+    assert reply.buttons[0][0].callback_data == "ai:confirm_job:1"
+    assert reply.buttons[0][1].callback_data == "ai:cancel_job:1"
     assert task_center.calls == []
     pending = queue.list_for_user(1)[0]
     assert pending.type == ActionType.TASK_CREATE
     assert pending.status == ActionStatus.NEEDS_CONFIRMATION
     assert queue.claim_next() is None
 
-    confirmed = queue.confirm_for_user(1, pending.id)
-    assert confirmed is not None
+    confirmed = queue.confirm_job_for_user(1, pending.job_id)
+    assert len(confirmed) == 1
     queued = queue.claim_next()
     assert queued is not None
     assert queued.status == ActionStatus.RUNNING
