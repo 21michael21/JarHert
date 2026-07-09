@@ -791,6 +791,41 @@ reports/provider_benchmarks/
 
 Benchmark делает реальные LLM-запросы к провайдерам из `.env`, поэтому запускай его осознанно.
 
+## Automation runtime
+
+Все фоновые процессы используют один lifecycle из `assistant/automation_runtime.py`:
+
+- `actions`;
+- `delivery_outbox`;
+- `reminders`;
+- `monitors`;
+- `telegram_trends`.
+
+`AutomationRuntime` атомарно берёт lease на тип worker через таблицу
+`automation_worker_leases`. Пока lease активен, второй bot/cron/process не входит во внутренний
+item-claim этого adapter. Runtime отвечает за heartbeat, timeout, retry budget, exponential backoff,
+lifecycle logs и takeover после истечения lease. Конкретный adapter отвечает только за один
+ограниченный `run_once()` и сохранение своего бизнес-результата.
+
+При первом запуске после миграции и после stale takeover adapters восстанавливают зависшие записи:
+
+- `agent_actions.running` → `queued`;
+- `delivery_outbox.sending` → `queued`;
+- `reminders.sending` → `pending` или `failed`, если budget уже исчерпан.
+
+Bot запускает один runtime для action/outbox/reminder. Monitor cron и trend process создают тот же
+runtime со своими adapters и используют общую SQL lease-таблицу. Перед запуском обязательно применить
+миграции:
+
+```bash
+.venv/bin/python scripts/run_migrations.py
+```
+
+Модель доставки остаётся **at-least-once**. Lease и idempotency защищают от параллельного claim и
+обычных рестартов, но внешний Trello/Calendar API теоретически может получить повтор, если процесс
+умер строго после внешнего side effect и до записи `succeeded`. Для exactly-once внешние providers
+должны поддерживать собственный idempotency key.
+
 ## Proactive monitors
 
 Proactive monitor проверяет внешний источник и пишет в Telegram только при выполнении условия. Управление идёт через команды бота, а проверка запускается отдельным cron/systemd runner.
