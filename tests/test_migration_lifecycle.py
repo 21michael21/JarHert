@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from multiprocessing import get_context
 
 import pytest
 from alembic import command
@@ -20,6 +19,13 @@ from backend.migrations import (
 from backend.stores import SqlActionQueueStore, UserStore
 from backend.db import init_db, make_session_factory
 from scripts.run_migrations import run_migrations
+
+
+def _claim_in_separate_process(database_url: str, start_event, result_queue, worker_id: str) -> None:
+    factory = make_session_factory(database_url)
+    start_event.wait(timeout=10)
+    claimed = SqlActionQueueStore(factory).claim_next(worker_id=worker_id)
+    result_queue.put(claimed.id if claimed is not None else None)
 
 
 def test_clean_database_is_created_only_by_alembic(tmp_path) -> None:
@@ -102,14 +108,22 @@ def test_migrated_sqlite_database_keeps_concurrent_worker_claim_atomic(tmp_path)
         action_type=ActionType.TASK_CREATE,
         payload={"title": "concurrent migration check"},
     )
-    barrier = Barrier(2)
+    context = get_context("spawn")
+    start_event = context.Event()
+    result_queue = context.Queue()
+    workers = [
+        context.Process(
+            target=_claim_in_separate_process,
+            args=(database_url, start_event, result_queue, worker_id),
+        )
+        for worker_id in ("worker-a", "worker-b")
+    ]
+    for worker in workers:
+        worker.start()
+    start_event.set()
+    claimed_ids = [result_queue.get(timeout=15) for _ in workers]
+    for worker in workers:
+        worker.join(timeout=15)
+        assert worker.exitcode == 0
 
-    def claim(worker_id: str):
-        barrier.wait()
-        return SqlActionQueueStore(factory).claim_next(worker_id=worker_id)
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        claimed = list(pool.map(claim, ["worker-a", "worker-b"]))
-
-    winners = [item for item in claimed if item is not None]
-    assert [item.id for item in winners] == [action.id]
+    assert [item for item in claimed_ids if item is not None] == [action.id]
