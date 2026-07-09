@@ -23,6 +23,7 @@ COMMAND_INTENTS = {
     "/do": Intent.AGENT_DO,
     "/jobs": Intent.AGENT_JOBS,
     "/job": Intent.AGENT_JOB,
+    "/monitor": Intent.MONITOR_LIST,
     "/trace": Intent.TRACE,
     "/status": Intent.STATUS,
     "/admin_status": Intent.ADMIN_STATUS,
@@ -52,6 +53,8 @@ def parse_message(text: str, *, plain_text_ai_enabled: bool = False) -> ParsedMe
 
     first, _, rest = stripped.partition(" ")
     command = first.lower()
+    if command == "/monitor":
+        return _parse_monitor_command(rest.strip(), raw_text)
     if command in COMMAND_INTENTS:
         return ParsedMessage(COMMAND_INTENTS[command], rest.strip(), raw_text)
 
@@ -75,3 +78,15 @@ def _looks_like_task_batch(text: str) -> bool:
     named_markers = len(re.findall(r"\bзадача\s+\d+", lowered))
     time_markers = len(re.findall(r"\b(?:[01]?\d|2[0-3])[:.][0-5]\d\b", lowered))
     return (task_markers >= 2 or named_markers >= 2) and time_markers >= 1
+
+
+def _parse_monitor_command(text: str, raw_text: str) -> ParsedMessage:
+    action, _, rest = (text or "").strip().partition(" ")
+    normalized = action.lower()
+    if normalized == "add":
+        return ParsedMessage(Intent.MONITOR_ADD, rest.strip(), raw_text)
+    if normalized == "remove":
+        return ParsedMessage(Intent.MONITOR_REMOVE, rest.strip(), raw_text)
+    if normalized in {"", "list"}:
+        return ParsedMessage(Intent.MONITOR_LIST, rest.strip(), raw_text)
+    return ParsedMessage(Intent.UNKNOWN, (text or "").strip(), raw_text)

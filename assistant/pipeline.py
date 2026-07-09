@@ -69,6 +69,7 @@ class AssistantPipeline:
         delivery_outbox=None,
         action_queue=None,
         events=None,
+        monitor_jobs=None,
     ) -> None:
         self.hermes = hermes
         self.limits = limits
@@ -90,6 +91,7 @@ class AssistantPipeline:
         self.delivery_outbox = delivery_outbox
         self.action_queue = action_queue
         self.events = events
+        self.monitor_jobs = monitor_jobs
         self.natural_actions = NaturalActionService(
             action_executor=self.action_executor,
             agent_jobs=self.agent_jobs,
@@ -223,7 +225,12 @@ class AssistantPipeline:
             return self._agent_jobs(user)
         if parsed.intent == Intent.AGENT_JOB:
             return self._agent_job(user, parsed.text)
-
+        if parsed.intent == Intent.MONITOR_ADD:
+            return self._monitor_add(user, parsed.text)
+        if parsed.intent == Intent.MONITOR_LIST:
+            return self._monitor_list(user)
+        if parsed.intent == Intent.MONITOR_REMOVE:
+            return self._monitor_remove(user, parsed.text)
         if parsed.intent in {Intent.ASK, Intent.UNKNOWN} and not (parsed.raw_text or "").strip().startswith("/"):
             natural_route = natural_route or self._route_natural_text(user, parsed.raw_text)
             if natural_route.actions:
@@ -539,6 +546,88 @@ class AssistantPipeline:
             lines.append(f"Ошибка: {job.error}")
         return AssistantReply(text="\n".join(lines), intent=Intent.AGENT_JOB)
 
+    def _monitor_add(self, user: UserContext, text: str) -> AssistantReply:
+        if self.monitor_jobs is None:
+            return AssistantReply(
+                text="Monitors не подключены.",
+                intent=Intent.MONITOR_ADD,
+                blocked_reason="monitor_store_disabled",
+            )
+        parsed = _parse_monitor_add_payload(text)
+        if parsed is None:
+            return AssistantReply(
+                text=(
+                    "Формат: /monitor add github_releases owner/repo | "
+                    "condition=напиши мне только если вышел важный релиз"
+                ),
+                intent=Intent.MONITOR_ADD,
+                blocked_reason="monitor_add_bad_format",
+            )
+        owner, repo, condition_text = parsed
+        input_gate = check_input(condition_text, max_chars=800)
+        if not input_gate.ok:
+            return self.responses.blocked_action(input_gate.reason, intent=Intent.MONITOR_ADD)
+        monitor = self.monitor_jobs.create(
+            user_id=user.user_id,
+            chat_id=user.tg_user_id,
+            source_type="github_releases",
+            source_config={"owner": owner, "repo": repo},
+            condition_text=input_gate.safe_text,
+        )
+        return AssistantReply(
+            text=(
+                f"Добавил monitor #{monitor.id}: github_releases {owner}/{repo}\n"
+                f"Условие: {monitor.condition_text}\n"
+                "Проверить: /monitor list"
+            ),
+            intent=Intent.MONITOR_ADD,
+        )
+
+    def _monitor_list(self, user: UserContext) -> AssistantReply:
+        if self.monitor_jobs is None:
+            return AssistantReply(
+                text="Monitors не подключены.",
+                intent=Intent.MONITOR_LIST,
+                blocked_reason="monitor_store_disabled",
+            )
+        monitors = self.monitor_jobs.list_for_user(user.user_id)
+        if not monitors:
+            return AssistantReply(
+                text="Активных proactive monitors нет. Добавить: /monitor add github_releases openai/codex | condition=важный релиз",
+                intent=Intent.MONITOR_LIST,
+            )
+        lines = ["Proactive monitors:"]
+        for monitor in monitors:
+            owner = monitor.source_config.get("owner", "?")
+            repo = monitor.source_config.get("repo", "?")
+            status = "enabled" if monitor.enabled else "disabled"
+            lines.append(f"{monitor.id}. {status} — {monitor.source_type} {owner}/{repo} — {monitor.condition_text}")
+        return AssistantReply(text="\n".join(lines), intent=Intent.MONITOR_LIST)
+
+    def _monitor_remove(self, user: UserContext, text: str) -> AssistantReply:
+        if self.monitor_jobs is None:
+            return AssistantReply(
+                text="Monitors не подключены.",
+                intent=Intent.MONITOR_REMOVE,
+                blocked_reason="monitor_store_disabled",
+            )
+        value = (text or "").strip()
+        if not value.isdigit():
+            return AssistantReply(
+                text="Укажи номер monitor: /monitor remove 1",
+                intent=Intent.MONITOR_REMOVE,
+                blocked_reason="monitor_remove_bad_id",
+            )
+        monitor_id = int(value)
+        disabled = self.monitor_jobs.disable_for_user(user.user_id, monitor_id)
+        if not disabled:
+            return AssistantReply(
+                text=f"Не нашёл monitor #{monitor_id}.",
+                intent=Intent.MONITOR_REMOVE,
+                blocked_reason="monitor_not_found",
+            )
+        return AssistantReply(text=f"Выключил monitor #{monitor_id}.", intent=Intent.MONITOR_REMOVE)
+
     def _execute_natural_route(self, user: UserContext, route: NaturalRoute) -> AssistantReply:
         request_context = self._request_context.get()
         if request_context is not None:
@@ -588,3 +677,31 @@ class AssistantPipeline:
     def _task_text_with_preferences(self, text: str, user: UserContext | None) -> str:
         preferences = self.preferences.get(user.user_id) if user is not None else None
         return task_text_with_preferences(text, preferences)
+
+
+def _parse_monitor_add_payload(text: str) -> tuple[str, str, str] | None:
+    left, separator, right = (text or "").partition("|")
+    if not separator:
+        return None
+    parts = left.strip().split()
+    if len(parts) != 2 or parts[0] != "github_releases":
+        return None
+    repo_ref = parts[1]
+    if repo_ref.count("/") != 1:
+        return None
+    owner, repo = (part.strip() for part in repo_ref.split("/", 1))
+    if not _valid_github_segment(owner) or not _valid_github_segment(repo):
+        return None
+    condition_key, condition_separator, condition = right.strip().partition("=")
+    if condition_separator != "=" or condition_key.strip().lower() != "condition":
+        return None
+    condition_text = condition.strip()
+    if not condition_text:
+        return None
+    return owner, repo, condition_text
+
+
+def _valid_github_segment(value: str) -> bool:
+    if not value or value in {".", ".."}:
+        return False
+    return all(char.isalnum() or char in {"-", "_", "."} for char in value)

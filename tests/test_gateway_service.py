@@ -1,12 +1,15 @@
 from assistant.hermes_client import FakeHermesClient
 from assistant.limits import DailyLimitStore
 from assistant.pipeline import AssistantPipeline
+from assistant.types import Intent
 from backend.db import init_db, make_session_factory
 from backend.stores import (
     EventStore,
     SqlActionQueueStore,
     SqlAgentJobStore,
+    SqlDailyLimitStore,
     SqlDeliveryOutboxStore,
+    SqlMonitorJobStore,
     SqlTraceStore,
     UserStore,
 )
@@ -290,6 +293,65 @@ def test_trace_command_requires_admin(tmp_path) -> None:
     reply = service.handle_text(1001, "/trace trace-1")
 
     assert reply.blocked_reason == "admin_required"
+
+
+def test_gateway_monitor_add_list_remove(tmp_path) -> None:
+    factory = session_factory(tmp_path)
+    users = UserStore(factory)
+    monitors = SqlMonitorJobStore(factory)
+    service = GatewayService(
+        pipeline=AssistantPipeline(
+            FakeHermesClient(),
+            SqlDailyLimitStore(factory),
+            monitor_jobs=monitors,
+        ),
+        users=users,
+        events=EventStore(factory),
+    )
+
+    created = service.handle_text(
+        7301,
+        "/monitor add github_releases openai/codex | condition=напиши если вышел важный релиз",
+    )
+    listed = service.handle_text(7301, "/monitor list")
+    removed = service.handle_text(7301, "/monitor remove 1")
+    listed_after = service.handle_text(7301, "/monitor list")
+
+    assert created.intent == Intent.MONITOR_ADD
+    assert "Добавил monitor #1" in created.text
+    assert "openai/codex" in listed.text
+    assert "enabled" in listed.text
+    assert "Выключил monitor #1" in removed.text
+    assert "disabled" in listed_after.text
+
+
+def test_gateway_monitor_remove_is_user_scoped(tmp_path) -> None:
+    factory = session_factory(tmp_path)
+    users = UserStore(factory)
+    monitors = SqlMonitorJobStore(factory)
+    user_one = users.get_or_create(7311)
+    users.get_or_create(7312)
+    monitor = monitors.create(
+        user_id=user_one.id,
+        chat_id=user_one.tg_user_id,
+        source_type="github_releases",
+        source_config={"owner": "openai", "repo": "codex"},
+        condition_text="важный релиз",
+    )
+    service = GatewayService(
+        pipeline=AssistantPipeline(
+            FakeHermesClient(),
+            SqlDailyLimitStore(factory),
+            monitor_jobs=monitors,
+        ),
+        users=users,
+        events=EventStore(factory),
+    )
+
+    reply = service.handle_text(7312, f"/monitor remove {monitor.id}")
+
+    assert reply.blocked_reason == "monitor_not_found"
+    assert monitors.get(monitor.id).enabled is True
 
 
 def test_trace_command_shows_job_action_delivery_and_events(tmp_path) -> None:

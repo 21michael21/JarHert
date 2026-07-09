@@ -28,6 +28,7 @@ from backend.stores import (
     SqlDeliveryOutboxStore,
     SqlIdeaStore,
     SqlMemoryStore,
+    SqlMonitorJobStore,
     SqlProviderHealthStore,
     SqlReminderStore,
     SqlTraceStore,
@@ -150,6 +151,7 @@ def build_pipeline() -> AssistantPipeline:
         delivery_outbox=SqlDeliveryOutboxStore(session_factory),
         action_queue=SqlActionQueueStore(session_factory),
         events=event_store,
+        monitor_jobs=SqlMonitorJobStore(session_factory),
     )
 
 

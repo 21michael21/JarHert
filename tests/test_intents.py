@@ -64,6 +64,16 @@ def test_parse_agent_commands() -> None:
     assert parse_message("/job 1").intent == Intent.AGENT_JOB
 
 
+def test_parse_monitor_commands() -> None:
+    add = parse_message(
+        "/monitor add github_releases openai/codex | condition=напиши если вышел важный релиз"
+    )
+    assert add.intent == Intent.MONITOR_ADD
+    assert add.text == "github_releases openai/codex | condition=напиши если вышел важный релиз"
+    assert parse_message("/monitor list").intent == Intent.MONITOR_LIST
+    assert parse_message("/monitor remove 12").intent == Intent.MONITOR_REMOVE
+
+
 def test_parse_natural_agent_request() -> None:
     parsed = parse_message("Гермес сделай: проверь задачи и календарь")
 
