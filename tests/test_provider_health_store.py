@@ -44,3 +44,15 @@ def test_sql_provider_health_lists_all_records(tmp_path) -> None:
     store.record_failure("openai_cheap", "gpt-5-nano", ProviderFailureKind.SERVER_ERROR, latency_ms=300)
 
     assert [item.name for item in store.list_all()] == ["openrouter_free", "openai_cheap"]
+
+
+def test_sql_provider_health_keeps_rolling_quality_score(tmp_path) -> None:
+    factory = session_factory(tmp_path)
+    store = SqlProviderHealthStore(factory)
+
+    store.record_success("openrouter_free", "openrouter/free", quality_score=80)
+    store.record_failure("openrouter_free", "openrouter/free", ProviderFailureKind.QUALITY)
+
+    health = store.get("openrouter_free")
+    assert health.quality_sample_count == 2
+    assert health.quality_score == 40

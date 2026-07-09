@@ -137,6 +137,8 @@ def provider_health_from_record(record: ProviderHealthRecord) -> ProviderHealth:
         timeout_count=record.timeout_count,
         quality_error_count=record.quality_error_count,
         other_error_count=record.other_error_count,
+        quality_score=record.quality_score,
+        quality_sample_count=record.quality_sample_count,
         cooldown_until=record.cooldown_until,
         updated_at=record.updated_at,
     )

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from assistant.provider_router import ProviderFailureKind, ProviderHealth
+from assistant.provider_router import ProviderFailureKind, ProviderHealth, rolling_quality_score
 from backend.models import ProviderHealthRecord
 from backend.store_converters import provider_counter_field, provider_health_from_record
 
@@ -28,13 +28,26 @@ class SqlProviderHealthStore:
             ).all()
             return [provider_health_from_record(record) for record in records]
 
-    def record_success(self, name: str, model: str, *, latency_ms: int | None = None) -> ProviderHealth:
+    def record_success(
+        self,
+        name: str,
+        model: str,
+        *,
+        latency_ms: int | None = None,
+        quality_score: int | None = None,
+    ) -> ProviderHealth:
         with self.session_factory() as db:
             record = _get_or_create_provider_health(db, name)
             record.model = model
             record.last_success_at = datetime.now(timezone.utc)
             record.latency_ms = latency_ms
             record.cooldown_until = None
+            if quality_score is not None:
+                record.quality_score, record.quality_sample_count = rolling_quality_score(
+                    record.quality_score,
+                    record.quality_sample_count,
+                    quality_score,
+                )
             db.commit()
             db.refresh(record)
             return provider_health_from_record(record)
@@ -56,6 +69,12 @@ class SqlProviderHealthStore:
             record.cooldown_until = cooldown_until
             counter = provider_counter_field(failure_kind)
             setattr(record, counter, getattr(record, counter) + 1)
+            if failure_kind == ProviderFailureKind.QUALITY:
+                record.quality_score, record.quality_sample_count = rolling_quality_score(
+                    record.quality_score,
+                    record.quality_sample_count,
+                    0,
+                )
             db.commit()
             db.refresh(record)
             return provider_health_from_record(record)

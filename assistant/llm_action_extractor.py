@@ -21,7 +21,7 @@ class LlmActionExtractor:
                     user=user,
                     prompt=_build_prompt(text),
                     intent=Intent.ASK,
-                    context={"mode": "action_extraction_json"},
+                    context={"mode": "action_extraction_json", "response_format": "json"},
                 )
             )
         except HermesClientError:

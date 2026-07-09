@@ -6,16 +6,11 @@ from pathlib import Path
 from assistant.google_docs_sync import GoogleDocsWebhookSync, NullDocsSync
 from assistant.google_sheets_sync import GoogleServiceAccountConfig, GoogleSheetsSync
 from assistant.pipeline import AssistantPipeline
-from assistant.provider_clients import (
-    FakeHermesClient,
-    HermesCliClient,
-    HermesClient,
-    HermesHttpClient,
-    OpenAIChatCompletionsClient,
-    OpenAIResponsesClient,
-)
-from assistant.provider_registry import ProviderKind, ProviderSpec, build_provider_registry
+from assistant.provider_clients import FakeHermesClient, HermesCliClient, HermesClient, HermesHttpClient
+from assistant.provider_policy import ProviderSelectionPolicy, require_policy_controlled_transport
+from assistant.provider_registry import build_provider_registry
 from assistant.provider_router import ProviderRouterClient
+from assistant.provider_transport import build_provider_client
 from assistant.task_command_center import TaskCommandCenter
 from backend.config import Settings
 from backend.db import make_session_factory
@@ -31,6 +26,7 @@ from backend.stores import (
     SqlInboundUpdateStore,
     SqlMemoryStore,
     SqlMonitorJobStore,
+    SqlProviderBudgetLedger,
     SqlProviderHealthStore,
     SqlReminderStore,
     SqlTraceStore,
@@ -57,6 +53,7 @@ def get_session_factory():
 def build_hermes_client() -> HermesClient:
     session_factory = get_session_factory()
     provider_health = SqlProviderHealthStore(session_factory)
+    require_policy_controlled_transport(cost_mode=settings.ai_cost_mode, hermes_mode=settings.hermes_mode)
     if settings.hermes_mode == "fake":
         return FakeHermesClient()
     if settings.hermes_mode == "http":
@@ -77,54 +74,17 @@ def build_hermes_client() -> HermesClient:
             registry=registry,
             health_store=provider_health,
             client_factory=lambda provider: build_provider_client(provider, settings),
+            policy=ProviderSelectionPolicy(
+                cost_mode=settings.ai_cost_mode,
+                deadline_seconds=settings.ai_provider_deadline_seconds,
+                max_attempts=settings.ai_provider_max_attempts,
+                cooldown_seconds=settings.ai_provider_cooldown_seconds,
+                daily_budget_micro_usd=settings.ai_provider_daily_budget_micro_usd,
+                minimum_quality_score=settings.ai_provider_min_quality_score,
+                budget_ledger=SqlProviderBudgetLedger(session_factory),
+            ),
         )
     raise ValueError(f"Unsupported HERMES_MODE: {settings.hermes_mode}")
-
-
-def build_provider_client(provider: ProviderSpec, settings: Settings) -> HermesClient:
-    if provider.kind == ProviderKind.OPENAI_RESPONSES:
-        return OpenAIResponsesClient(
-            api_key=settings.openai_api_key,
-            model=provider.model,
-            base_url=provider.base_url,
-            timeout_seconds=provider.timeout_seconds,
-            max_output_tokens=provider.max_tokens,
-        )
-    if provider.kind == ProviderKind.OPENAI_CHAT:
-        return OpenAIChatCompletionsClient(
-            api_key=_provider_api_key(provider, settings),
-            model=provider.model,
-            base_url=provider.base_url,
-            provider=provider.name,
-            timeout_seconds=provider.timeout_seconds,
-            max_output_tokens=provider.max_tokens,
-            supports_json=provider.supports_json,
-        )
-    if provider.kind == ProviderKind.HERMES_CLI:
-        return HermesCliClient(
-            provider.command_template.replace("{model}", provider.model),
-            timeout_seconds=provider.timeout_seconds,
-            provider=provider.name,
-            model=provider.model,
-        )
-    if provider.kind == ProviderKind.HERMES_HTTP:
-        return HermesHttpClient(
-            base_url=provider.base_url,
-            timeout_seconds=provider.timeout_seconds,
-        )
-    raise ValueError(f"Unsupported provider kind: {provider.kind}")
-
-
-def _provider_api_key(provider: ProviderSpec, settings: Settings) -> str:
-    if provider.credential_env == "OPENROUTER_API_KEY":
-        return settings.openrouter_api_key
-    if provider.credential_env == "GROQ_API_KEY":
-        return settings.groq_api_key
-    if provider.credential_env == "HF_API_KEY":
-        return settings.hf_api_key
-    if provider.credential_env == "OPENAI_API_KEY":
-        return settings.openai_api_key
-    return ""
 
 
 def build_pipeline() -> AssistantPipeline:

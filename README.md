@@ -612,6 +612,31 @@ Fallback срабатывает в двух случаях:
 - первая модель вернула provider error (`HTTP 400/401/429/5xx`);
 - первая модель вернула низкокачественный ответ с признаками внутренних рассуждений или raw error.
 
+### Provider policy
+
+`provider_transport` отвечает только за HTTP/CLI вызов. `provider_policy` выбирает кандидата до вызова transport: проверяет capability, JSON support, cooldown, rolling quality score, известную latency, оценочную цену и общий deadline.
+
+```env
+# Только FREE/LOCAL providers. CHEAP и PAID даже не получают transport call.
+AI_COST_MODE=free_only
+
+# FREE/LOCAL/CHEAP. Для расходов нужен явный положительный бюджет.
+# AI_COST_MODE=cheap
+
+# Может использовать PAID только если он отдельно добавлен через AI_ALLOW_PAID_FALLBACK=true.
+# AI_COST_MODE=balanced
+
+AI_PROVIDER_DEADLINE_SECONDS=15
+AI_PROVIDER_MAX_ATTEMPTS=2
+AI_PROVIDER_COOLDOWN_SECONDS=120
+AI_PROVIDER_DAILY_BUDGET_MICRO_USD=0
+AI_PROVIDER_MIN_QUALITY_SCORE=60
+```
+
+Budget ledger хранит **оценочный** расход на попытку в USD micro-units (`1_000` = `$0.001`), а не выдаёт себя за точный billing API. При `0` cheap/paid provider не резервируется; free/local request разрешён. Не-free `OPENROUTER_MODEL` или CLI model автоматически получает класс `cheap`, поэтому не может случайно пройти в `free_only`.
+
+В `free_only` используй `HERMES_MODE=provider_router` или `cli_router`. Прямые `HERMES_MODE=cli` и `http` намеренно отклоняются: policy не может доказать стоимость непрозрачного внешнего маршрута.
+
 Проверка adapter без Telegram:
 
 ```bash
@@ -648,6 +673,8 @@ AI_ALLOW_PAID_FALLBACK=false
 ```
 
 Платный fallback не используется, пока ты явно не включишь его в env.
+
+`free_only` разрешает только provider с явным классом `free` или `local`; он не зависит от порядка fallback и не вызывает OpenAI/paid CLI model. Для `cheap` и `balanced` задай положительный `AI_PROVIDER_DAILY_BUDGET_MICRO_USD`, иначе policy безопасно оставит только бесплатные кандидаты.
 
 ## Миграции базы
 

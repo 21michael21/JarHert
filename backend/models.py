@@ -221,6 +221,8 @@ class ProviderHealthRecord(Base):
     timeout_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     quality_error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     other_error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    quality_score: Mapped[int] = mapped_column(Integer, nullable=False, default=100, server_default="100")
+    quality_sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -233,6 +235,33 @@ class ProviderHealthRecord(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+
+class ProviderBudgetDailyRecord(Base):
+    __tablename__ = "provider_budget_daily"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    day: Mapped[str] = mapped_column(String(10), unique=True, nullable=False)
+    estimated_cost_micro_usd: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    request_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class ProviderBudgetEntryRecord(Base):
+    __tablename__ = "provider_budget_entries"
+    __table_args__ = (Index("ix_provider_budget_entries_day_provider", "day", "provider_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    day: Mapped[str] = mapped_column(String(10), nullable=False)
+    provider_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    estimated_cost_micro_usd: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class DeliveryOutboxRecord(Base):
