@@ -1140,7 +1140,7 @@ scripts/release_95_gate.sh
 RELEASE_GATE_SKIP_LIVE=1 scripts/release_95_gate.sh
 ```
 
-Этот режим намеренно остаётся красным: scorecard отмечает live Telegram как `skipped` и не выдаёт 9.5. Provider benchmark также не допускает пустой набор настроенных providers.
+Этот режим намеренно остаётся красным: scorecard отмечает live Telegram как `skipped` и не выдаёт 9.5. Provider benchmark также не допускает пустой набор и по умолчанию требует прохождения всех включённых providers. Временный порог `PROVIDER_GATE_MIN_PASSING_PROVIDERS` можно задать явно, но для финального 9.5 release его использовать нельзя.
 
 ## Документация для первых пользователей
 

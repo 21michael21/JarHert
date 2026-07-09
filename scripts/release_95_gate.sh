@@ -47,8 +47,8 @@ run_gate() {
     status="passed"
     exit_code=0
   else
-    status="failed"
     exit_code=$?
+    status="failed"
   fi
   finished="$(now_ms)"
   record_result "$name" "$status" "$((finished - started))" "$log" "exit_code=$exit_code"
@@ -102,13 +102,17 @@ golden_gate() {
 }
 
 provider_gate() {
-  "$PYTHON" scripts/provider_benchmark.py \
-    --gate \
-    --max-fail-rate "${PROVIDER_GATE_MAX_FAIL_RATE:-0.20}" \
-    --min-quality-score "${PROVIDER_GATE_MIN_QUALITY_SCORE:-75}" \
-    --max-avg-latency-ms "${PROVIDER_GATE_MAX_AVG_LATENCY_MS:-12000}" \
-    --max-p95-latency-ms "${PROVIDER_GATE_MAX_P95_LATENCY_MS:-20000}" \
-    --min-passing-providers "${PROVIDER_GATE_MIN_PASSING_PROVIDERS:-1}"
+  local args=(
+    --gate
+    --max-fail-rate "${PROVIDER_GATE_MAX_FAIL_RATE:-0.20}"
+    --min-quality-score "${PROVIDER_GATE_MIN_QUALITY_SCORE:-75}"
+    --max-avg-latency-ms "${PROVIDER_GATE_MAX_AVG_LATENCY_MS:-12000}"
+    --max-p95-latency-ms "${PROVIDER_GATE_MAX_P95_LATENCY_MS:-20000}"
+  )
+  if [[ -n "${PROVIDER_GATE_MIN_PASSING_PROVIDERS:-}" ]]; then
+    args+=(--min-passing-providers "$PROVIDER_GATE_MIN_PASSING_PROVIDERS")
+  fi
+  "$PYTHON" scripts/provider_benchmark.py "${args[@]}"
 }
 
 security_gate() {
