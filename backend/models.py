@@ -20,6 +20,32 @@ class User(Base):
     )
 
 
+class AutomationWorkerLeaseRecord(Base):
+    __tablename__ = "automation_worker_leases"
+    __table_args__ = (
+        Index("ix_automation_worker_status_next_run", "status", "next_run_at"),
+        Index("ix_automation_worker_lease_until", "lease_until"),
+    )
+
+    worker_name: Mapped[str] = mapped_column(String(100), primary_key=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="idle", server_default="idle")
+    owner_id: Mapped[str | None] = mapped_column(String(100))
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class MemoryRecord(Base):
     __tablename__ = "memories"
     __table_args__ = (Index("ix_memories_user_created", "user_id", "created_at"),)

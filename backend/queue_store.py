@@ -149,6 +149,16 @@ class SqlActionQueueStore:
             db.commit()
             return None
 
+    def recover_running(self) -> int:
+        with self.session_factory() as db:
+            result = db.execute(
+                update(AgentActionRecord)
+                .where(AgentActionRecord.status == ActionStatus.RUNNING.value)
+                .values(status=ActionStatus.QUEUED.value)
+            )
+            db.commit()
+            return result.rowcount
+
     def mark_succeeded(self, action_id: int, *, result_meta: dict[str, str] | None = None) -> AgentAction:
         with self.session_factory() as db:
             record = _require_agent_action(db, action_id)
@@ -343,6 +353,16 @@ class SqlDeliveryOutboxStore:
                 )
                 db.commit()
             return [delivery_message_from_record(record, status=DeliveryStatus.SENDING) for record in records]
+
+    def recover_sending(self) -> int:
+        with self.session_factory() as db:
+            result = db.execute(
+                update(DeliveryOutboxRecord)
+                .where(DeliveryOutboxRecord.status == DeliveryStatus.SENDING.value)
+                .values(status=DeliveryStatus.QUEUED.value)
+            )
+            db.commit()
+            return result.rowcount
 
     def mark_sent(self, message_id: int) -> DeliveryMessage:
         with self.session_factory() as db:

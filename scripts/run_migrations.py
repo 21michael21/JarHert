@@ -14,6 +14,7 @@ from backend.config import Settings
 
 
 APP_TABLES = {
+    "automation_worker_leases",
     "users",
     "memories",
     "ideas",
@@ -37,6 +38,7 @@ def run_migrations(database_url: str | None = None) -> None:
     url = database_url or settings.database_url
     cfg = Config(str(PROJECT_ROOT / "alembic.ini"))
     cfg.set_main_option("sqlalchemy.url", url)
+    cfg.attributes["database_url"] = url
 
     engine = create_engine(url, future=True)
     inspector = inspect(engine)

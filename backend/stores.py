@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from backend.automation_store import SqlAutomationLeaseStore
 from backend.event_store import EventStore
 from backend.message_store import CollectedMessage, SqlCollectedMessageStore
 from backend.memory_store import (
@@ -19,6 +20,7 @@ from backend.user_store import UserStore
 
 __all__ = [
     "EventStore",
+    "SqlAutomationLeaseStore",
     "CollectedMessage",
     "ReminderSender",
     "SqlActionQueueStore",

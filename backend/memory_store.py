@@ -130,6 +130,20 @@ class SqlReminderStore:
                 db.commit()
             return [reminder_from_record(record, status=ReminderStatus.SENDING) for record in records]
 
+    def recover_sending(self, *, max_attempts: int = 3) -> int:
+        with self.session_factory() as db:
+            sending = db.scalars(
+                select(ReminderRecord).where(ReminderRecord.status == ReminderStatus.SENDING.value)
+            ).all()
+            for record in sending:
+                record.status = (
+                    ReminderStatus.FAILED.value
+                    if record.attempts >= max_attempts
+                    else ReminderStatus.PENDING.value
+                )
+            db.commit()
+            return len(sending)
+
     def mark_sent(self, reminder_id: int, *, sent_at: datetime | None = None) -> None:
         value = sent_at or datetime.now(timezone.utc)
         with self.session_factory() as db:
