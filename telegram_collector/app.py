@@ -4,7 +4,8 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from backend.db import init_db, make_session_factory
+from backend.db import make_session_factory
+from backend.migrations import require_current_schema
 from backend.message_store import SqlCollectedMessageStore
 from telegram_collector.config import CollectorSettings
 from telegram_collector.health import CollectorHealth, start_health_server
@@ -21,7 +22,7 @@ async def run_collector(settings: CollectorSettings) -> None:
         raise RuntimeError("Install collector dependency: pip install -e . or pip install telethon") from exc
 
     session_factory = make_session_factory(settings.database_url)
-    init_db(session_factory)
+    require_current_schema(settings.database_url)
     store = SqlCollectedMessageStore(session_factory)
     health = CollectorHealth(tracked_chats=len(settings.chats))
     start_health_server(settings.health_host, settings.health_port, health)

@@ -15,7 +15,6 @@ from assistant.monitors.runner import MonitorWorkerAdapter
 from backend.automation_store import SqlAutomationLeaseStore
 from backend.stores import SqlDeliveryOutboxStore, SqlMonitorJobStore
 from gateway_bot.main import build_hermes_client, get_session_factory
-from scripts.run_migrations import run_migrations
 
 
 def main() -> int:
@@ -23,7 +22,6 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=50, help="Maximum monitor jobs to check.")
     args = parser.parse_args()
 
-    run_migrations()
     session_factory = get_session_factory()
     adapter = MonitorWorkerAdapter(
         monitor_jobs=SqlMonitorJobStore(session_factory),

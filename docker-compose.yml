@@ -1,4 +1,12 @@
 services:
+  migrate:
+    build: .
+    command: ["scripts/migrate.sh"]
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    restart: "no"
+
   backend:
     build: .
     command: ["scripts/docker_start_backend.sh"]
@@ -10,6 +18,9 @@ services:
     ports:
       - "8000:8000"
     restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     logging:
       driver: "json-file"
       options:
@@ -26,7 +37,10 @@ services:
       # - /opt/task-command-center:/opt/task-command-center:ro
     restart: unless-stopped
     depends_on:
-      - backend
+      migrate:
+        condition: service_completed_successfully
+      backend:
+        condition: service_started
     logging:
       driver: "json-file"
       options:
@@ -44,6 +58,9 @@ services:
     ports:
       - "8091:8091"
     restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     profiles: ["collector"]
     logging:
       driver: "json-file"
@@ -60,7 +77,10 @@ services:
     restart: unless-stopped
     profiles: ["collector"]
     depends_on:
-      - bot
+      migrate:
+        condition: service_completed_successfully
+      bot:
+        condition: service_started
     logging:
       driver: "json-file"
       options:

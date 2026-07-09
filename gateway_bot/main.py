@@ -18,7 +18,8 @@ from assistant.provider_registry import ProviderKind, ProviderSpec, build_provid
 from assistant.provider_router import ProviderRouterClient
 from assistant.task_command_center import TaskCommandCenter
 from backend.config import Settings
-from backend.db import init_db, make_session_factory
+from backend.db import make_session_factory
+from backend.migrations import require_current_schema
 from backend.stores import (
     EventStore,
     SqlAgentJobStore,
@@ -49,7 +50,7 @@ def get_session_factory():
     global _session_factory
     if _session_factory is None:
         _session_factory = make_session_factory(settings.database_url)
-        init_db(_session_factory)
+        require_current_schema(settings.database_url)
     return _session_factory
 
 

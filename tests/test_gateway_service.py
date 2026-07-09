@@ -455,20 +455,28 @@ def test_telegram_app_imports_without_aiogram_runtime() -> None:
     assert telegram_callbacks.handle_callback_data
 
 
-def test_handle_local_text_preserves_process_state() -> None:
+def test_handle_local_text_preserves_process_state(tmp_path) -> None:
     import gateway_bot.main as gateway_main
+    from scripts.run_migrations import run_migrations
 
     gateway_main._gateway_service = None
+    gateway_main._session_factory = None
+    database_url = f"sqlite:///{tmp_path / 'local-state.sqlite3'}"
+    run_migrations(database_url)
+    object.__setattr__(gateway_main.settings, "database_url", database_url)
     assert "Сохранил" in gateway_main.handle_local_text(3003, "/remember локальная память")
     assert "локальная память" in gateway_main.handle_local_text(3003, "/memories")
 
 
 def test_handle_local_plain_text_goes_to_ai_by_default(tmp_path) -> None:
     import gateway_bot.main as gateway_main
+    from scripts.run_migrations import run_migrations
 
     gateway_main._gateway_service = None
     gateway_main._session_factory = None
-    object.__setattr__(gateway_main.settings, "database_url", f"sqlite:///{tmp_path / 'gateway.sqlite3'}")
+    database_url = f"sqlite:///{tmp_path / 'gateway.sqlite3'}"
+    run_migrations(database_url)
+    object.__setattr__(gateway_main.settings, "database_url", database_url)
     object.__setattr__(gateway_main.settings, "hermes_mode", "fake")
     reply = gateway_main.handle_local_text(3004, "объясни MVP")
     assert "объясни MVP" in reply

@@ -651,13 +651,15 @@ AI_ALLOW_PAID_FALLBACK=false
 
 ## Миграции базы
 
-Новый production-flow — Alembic:
+Alembic — единственный владелец схемы. ORM не вызывает `create_all`, сервисы не делают legacy `ALTER`, а неизвестная база без `alembic_version` не получает автоматический `stamp`.
+
+Перед запуском сервисов применяй миграции отдельным шагом:
 
 ```bash
 scripts/migrate.sh
 ```
 
-`scripts/preflight.py` тоже запускает миграции перед проверкой базы. Если база уже была создана старым `init_db`, migration runner безопасно ставит `alembic_version` через `stamp head` и не пересоздаёт таблицы.
+`scripts/preflight.py` применяет Alembic migration и затем проверяет, что revision совпадает с head. Для старой непомеченной базы сначала сделай backup и установи её revision вручную после отдельной проверки. Автоматического `stamp head` нет.
 
 В Docker Compose backend и bot стартуют через:
 
@@ -666,7 +668,15 @@ scripts/docker_start_backend.sh
 scripts/docker_start_bot.sh
 ```
 
-Оба скрипта сначала запускают миграции, потом поднимают сервис. Старый `init_db` остаётся для локальных тестов и обратной совместимости.
+Compose запускает отдельный одноразовый `migrate` service. Backend, bot и collector стартуют только после его успешного завершения. `init_db` сохранён как compatibility helper для локальных тестов, но вызывает Alembic, а не ORM DDL.
+
+Для production PostgreSQL используй отдельный override:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d --build
+```
+
+Задай `POSTGRES_PASSWORD` и PostgreSQL `DATABASE_URL` через `.env`. SQLite остаётся dev adapter с WAL и `busy_timeout`; при `APP_ENV=production` preflight требует PostgreSQL URL.
 
 ## Golden eval для natural UX
 

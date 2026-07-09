@@ -19,7 +19,6 @@ from backend.config import Settings
 from backend.message_store import SqlCollectedMessageStore
 from backend.stores import SqlDeliveryOutboxStore, UserStore
 from gateway_bot.main import build_hermes_client, get_session_factory
-from scripts.run_migrations import run_migrations
 
 
 def main() -> int:
@@ -28,7 +27,6 @@ def main() -> int:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    run_migrations()
     settings = Settings()
     tg_user_id = _target_tg_user_id(settings)
     session_factory = get_session_factory()

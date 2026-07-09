@@ -13,6 +13,7 @@ dependencies = [
   "pydantic-settings>=2.3",
   "httpx>=0.27",
   "telethon>=1.36",
+  "psycopg[binary]>=3.2",
 ]
 
 [project.optional-dependencies]

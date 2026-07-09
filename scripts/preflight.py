@@ -11,7 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.config import Settings
-from backend.db import init_db, make_session_factory
+from backend.migrations import is_sqlite_url, require_current_schema
 from gateway_bot.main import build_task_center
 from scripts.run_migrations import run_migrations
 
@@ -102,12 +102,14 @@ def main() -> int:
 
     try:
         run_migrations(settings.database_url)
-        factory = make_session_factory(settings.database_url)
-        init_db(factory)
+        require_current_schema(settings.database_url)
         print("db=ok")
     except Exception as error:
         print(f"db=fail {type(error).__name__}: {error}")
         failures.append("database initialization failed")
+
+    if settings.app_env == "production" and is_sqlite_url(settings.database_url):
+        failures.append("APP_ENV=production requires PostgreSQL DATABASE_URL; SQLite is a development adapter")
 
     if settings.hermes_mode == "fake":
         print("hermes=fake mode, no external runtime required")

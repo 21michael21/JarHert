@@ -48,14 +48,14 @@ def main() -> int:
     from assistant.action_worker import run_action_worker
     from assistant.transcription import OpenAITranscriber, TranscriptionError
     from assistant.types import UserContext
-    from backend.db import init_db
     from backend.stores import EventStore, SqlActionQueueStore, SqlDeliveryOutboxStore, SqlReminderStore, UserStore
     from gateway_bot.main import get_gateway_service, get_session_factory, settings
     from reminders.worker import run_reminder_worker
+    from scripts.run_migrations import run_migrations
 
     started = time.perf_counter()
+    run_migrations()
     factory = get_session_factory()
-    init_db(factory)
     service = get_gateway_service()
     users = UserStore(factory)
     db_user = users.get_or_create(args.tg_user_id)

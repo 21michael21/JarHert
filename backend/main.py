@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from backend.config import Settings
+from backend.migrations import require_current_schema
 
 
 settings = Settings()
@@ -36,7 +39,12 @@ try:
         fallback_count: int = 0
         blocked_reason: str | None = None
 
-    app = FastAPI(title=settings.app_name)
+    @asynccontextmanager
+    async def lifespan(_app):
+        require_current_schema(settings.database_url)
+        yield
+
+    app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
     def _service_token_authorized(
         *,

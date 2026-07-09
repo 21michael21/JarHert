@@ -7,17 +7,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.config import Settings
-from backend.db import init_db, make_session_factory
+from scripts.run_migrations import run_migrations
 
 
 def main() -> int:
     settings = Settings()
-    factory = make_session_factory(settings.database_url)
-    init_db(factory)
-    print(f"DB initialized: {settings.database_url}")
+    run_migrations(settings.database_url)
+    print(f"DB migrated: {settings.database_url}")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
