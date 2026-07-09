@@ -278,6 +278,25 @@ class MonitorRunRecord(Base):
     )
 
 
+class CollectedMessageRecord(Base):
+    __tablename__ = "messages"
+    __table_args__ = (
+        UniqueConstraint("chat_id", "telegram_message_id", name="uq_messages_chat_message"),
+        Index("ix_messages_processed_timestamp", "is_processed", "timestamp"),
+        Index("ix_messages_chat_timestamp", "chat_id", "timestamp"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    telegram_message_id: Mapped[int | None] = mapped_column(Integer)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    chat_title: Mapped[str | None] = mapped_column(String(250))
+    sender_id: Mapped[int | None] = mapped_column(BigInteger)
+    sender_name: Mapped[str | None] = mapped_column(String(250))
+    text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    is_processed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
 class UsageDaily(Base):
     __tablename__ = "usage_daily"
     __table_args__ = (UniqueConstraint("user_id", "day", name="uq_usage_daily_user_day"),)
