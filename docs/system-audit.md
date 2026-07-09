@@ -48,7 +48,7 @@ Not copied directly:
 Found:
 
 ```text
-/Users/mihailkulibaba/Documents/New project/task-command-center
+TASK_COMMAND_CENTER_DIR=/opt/task-command-center
 ```
 
 It contains:
@@ -56,9 +56,9 @@ It contains:
 - `src/trello_client.py`;
 - `src/google_calendar_client.py`;
 - `taskctl.py`;
-- `.env` with Trello credentials;
-- `client_secret.json`;
-- `token.json`.
+- Task Command Center `.env` with Trello credentials;
+- Google OAuth `client_secret.json`;
+- Google OAuth `token.json`.
 
 Verification:
 

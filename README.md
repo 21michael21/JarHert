@@ -148,16 +148,18 @@ VOICE_MAX_BYTES=10485760
 AI Brooch может использовать уже настроенный соседний проект:
 
 ```text
-/Users/mihailkulibaba/Documents/New project/task-command-center
+/opt/task-command-center
 ```
 
-В нём лежат Trello `.env`, Google OAuth `client_secret.json` и `token.json`. AI Brooch не копирует эти секреты и не печатает их, а вызывает `taskctl.py` как локальный tool.
+Путь не зашит в код. AI Brooch берёт его только из `TASK_COMMAND_CENTER_DIR`. Если `TASK_COMMAND_CENTER_ENABLED=true`, но `TASK_COMMAND_CENTER_DIR` пустой или каталог не существует, `scripts/preflight.py` завершится ошибкой.
+
+Task Command Center — внешний prerequisite. Его код не лежит в этом репозитории. В нём лежат его собственные секреты: Trello `.env`, Google OAuth `client_secret.json` и `token.json`. AI Brooch не копирует эти секреты и не печатает их, а вызывает `taskctl.py` как локальный tool из каталога, указанного в env.
 
 Настройки:
 
 ```env
 TASK_COMMAND_CENTER_ENABLED=true
-TASK_COMMAND_CENTER_DIR=/Users/mihailkulibaba/Documents/New project/task-command-center
+TASK_COMMAND_CENTER_DIR=/opt/task-command-center
 TASK_COMMAND_CENTER_PYTHON=.venv/bin/python
 TASK_COMMAND_CENTER_TIMEOUT_SECONDS=45
 ```
@@ -165,7 +167,7 @@ TASK_COMMAND_CENTER_TIMEOUT_SECONDS=45
 Проверка соседнего проекта:
 
 ```bash
-cd "/Users/mihailkulibaba/Documents/New project/task-command-center"
+cd "$TASK_COMMAND_CENTER_DIR"
 .venv/bin/python taskctl.py list --list Today
 .venv/bin/python taskctl.py calendar-test
 ```
@@ -181,6 +183,12 @@ print(f"calendar_ok={health.calendar_ok} {health.calendar_detail}")
 PY
 ```
 
+Полный preflight/health-check перед запуском:
+
+```bash
+.venv/bin/python scripts/preflight.py
+```
+
 Текущий статус:
 
 - Trello real API работает: список `Today` читается.
@@ -188,12 +196,97 @@ PY
 - Если OAuth снова протухнет, обнови `token.json` так:
 
 ```bash
-cd "/Users/mihailkulibaba/Documents/New project/task-command-center"
+cd "$TASK_COMMAND_CENTER_DIR"
 mv token.json token.json.bak
 .venv/bin/python taskctl.py calendar-test
 ```
 
 После browser OAuth команда `/calendar ...` в Telegram начнёт создавать события.
+
+## Deployment on VPS
+
+Task Command Center запускается не как отдельный демон, а как локальный скрипт: AI Brooch вызывает `taskctl.py` дочерним процессом. На VPS держи JarHert и Task Command Center в разных каталогах.
+
+Пример структуры:
+
+```text
+/opt/jarhert
+/opt/task-command-center
+```
+
+В `/opt/jarhert/.env`:
+
+```env
+TASK_COMMAND_CENTER_ENABLED=true
+TASK_COMMAND_CENTER_DIR=/opt/task-command-center
+TASK_COMMAND_CENTER_PYTHON=.venv/bin/python
+TASK_COMMAND_CENTER_TIMEOUT_SECONDS=45
+```
+
+Секреты Task Command Center лежат в `/opt/task-command-center`, не в JarHert:
+
+```text
+/opt/task-command-center/.env
+/opt/task-command-center/client_secret.json
+/opt/task-command-center/token.json
+```
+
+Не храни рядом backup-файлы OAuth token вроде `token.json.bak*` дольше, чем нужно для ручного восстановления. Это такие же секреты, как основной `token.json`.
+
+Права:
+
+```bash
+sudo chown -R jarhert:jarhert /opt/jarhert /opt/task-command-center
+sudo chmod 600 /opt/jarhert/.env /opt/task-command-center/.env /opt/task-command-center/client_secret.json /opt/task-command-center/token.json
+```
+
+Systemd-вариант для polling-бота:
+
+```ini
+[Unit]
+Description=JarHert Telegram bot
+After=network-online.target
+
+[Service]
+User=jarhert
+WorkingDirectory=/opt/jarhert
+EnvironmentFile=/opt/jarhert/.env
+ExecStart=/opt/jarhert/.venv/bin/python -m gateway_bot.telegram_app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Docker-вариант: смонтируй Task Command Center в контейнеры backend и bot тем же путём, который указан в `TASK_COMMAND_CENTER_DIR`.
+В `docker-compose.yml` mount оставлен как закомментированный пример, чтобы локальный запуск не требовал `/opt/task-command-center`. На VPS раскомментируй его для `backend` и `bot`.
+
+```yaml
+services:
+  backend:
+    volumes:
+      - ./data:/app/data
+      - /opt/task-command-center:/opt/task-command-center:ro
+  bot:
+    volumes:
+      - ./data:/app/data
+      - /opt/task-command-center:/opt/task-command-center:ro
+```
+
+Проверка на сервере:
+
+```bash
+cd /opt/jarhert
+set -a
+. ./.env
+set +a
+cd "$TASK_COMMAND_CENTER_DIR"
+.venv/bin/python taskctl.py list --list Today
+.venv/bin/python taskctl.py calendar-test
+cd /opt/jarhert
+.venv/bin/python scripts/preflight.py
+```
 
 ## Telegram polling локально
 
@@ -646,6 +739,191 @@ reports/provider_benchmarks/
 - короткий preview ответа без секретов.
 
 Benchmark делает реальные LLM-запросы к провайдерам из `.env`, поэтому запускай его осознанно.
+
+## Proactive monitors
+
+Proactive monitor проверяет внешний источник и пишет в Telegram только при выполнении условия. Управление идёт через команды бота, а проверка запускается отдельным cron/systemd runner.
+
+Поддерживаемый источник сейчас один:
+
+- `github_releases` — читает latest release через публичный `api.github.com`.
+
+### Команды
+
+Добавить monitor:
+
+```text
+/monitor add github_releases openai/codex | condition=напиши мне только если вышел важный релиз
+```
+
+Показать свои monitors:
+
+```text
+/monitor list
+```
+
+Выключить monitor без физического удаления строки:
+
+```text
+/monitor remove 1
+```
+
+`/monitor remove` работает только для monitor текущего пользователя. Чужой monitor не выключается.
+
+### Как работает runner
+
+Конфиг источника хранится в `monitor_jobs.source_config`:
+
+```json
+{"owner":"openai","repo":"codex"}
+```
+
+Runner сравнивает hash нового payload с `last_state_hash`. Если hash не изменился, он пишет `monitor_runs.status=no_change` и молчит. Если payload изменился, runner отдаёт предыдущее и новое состояние в текущий Hermes/provider router и ждёт строгий JSON:
+
+```json
+{"triggered": true, "message": "Короткое сообщение для Telegram"}
+```
+
+Если `triggered=false`, Telegram-сообщение не создаётся. Если `triggered=true`, сообщение попадает в existing delivery outbox и доставляется тем же worker'ом, что и остальные отложенные ответы. Секреты для GitHub releases не нужны.
+
+Запуск одного прохода:
+
+```bash
+.venv/bin/python scripts/run_monitors_once.py --limit 50
+```
+
+Для cron можно запускать раз в 10–30 минут:
+
+```cron
+*/15 * * * * cd /opt/jarhert && .venv/bin/python scripts/run_monitors_once.py --limit 50 >> /var/log/jarhert-monitors.log 2>&1
+```
+
+Пример systemd unit:
+
+```ini
+[Unit]
+Description=JarHert proactive monitors
+
+[Service]
+WorkingDirectory=/opt/jarhert
+EnvironmentFile=/opt/jarhert/.env
+ExecStart=/opt/jarhert/.venv/bin/python scripts/run_monitors_once.py --limit 50
+Type=oneshot
+```
+
+Пример timer:
+
+```ini
+[Unit]
+Description=Run JarHert proactive monitors every 15 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+Unit=jarhert-monitors.service
+
+[Install]
+WantedBy=timers.target
+```
+
+Частоту хранит внешний scheduler, не сама таблица `monitor_jobs`.
+
+## Telegram chat collector
+
+Collector — отдельный лёгкий процесс без LLM. Он постоянно слушает выбранные Telegram-чаты/каналы через MTProto user-client и пишет сырые сообщения в SQLite-таблицу `messages`. Агент потом отдельным cron worker'ом читает необработанные сообщения, делает trendwatch summary через текущий provider router и кладёт итог в delivery outbox.
+
+Важно: collector не смешан с `gateway_bot`, не использует `BOT_TOKEN` и не делает AI-обработку.
+
+### Получить Telegram API ID/hash
+
+1. Открой [my.telegram.org/apps](https://my.telegram.org/apps).
+2. Войди под своим Telegram-аккаунтом.
+3. Создай приложение и скопируй `api_id` / `api_hash`.
+4. Не коммить эти значения и session-файл.
+
+### Настройки
+
+В `.env`:
+
+```env
+TELEGRAM_API_ID=123456
+TELEGRAM_API_HASH=...
+TELEGRAM_COLLECTOR_SESSION=/opt/jarhert/data/telegram_collector.session
+TELEGRAM_COLLECTOR_CHATS=@channel_one,-1001234567890
+TELEGRAM_COLLECTOR_HEALTH_HOST=0.0.0.0
+TELEGRAM_COLLECTOR_HEALTH_PORT=8091
+
+TELEGRAM_TREND_TG_USER_ID=<your_tg_user_id>
+TELEGRAM_TREND_INTERVAL_SECONDS=3600
+TELEGRAM_TREND_LOOKBACK_HOURS=6
+TELEGRAM_TREND_BATCH_LIMIT=300
+```
+
+Если чатов много, лучше отдельный JSON:
+
+```json
+{"chats": ["@channel_one", "-1001234567890"]}
+```
+
+И в `.env`:
+
+```env
+TELEGRAM_COLLECTOR_CHATS_FILE=/opt/jarhert/config/collector_chats.json
+```
+
+### Первый запуск session
+
+Локально:
+
+```bash
+.venv/bin/python -m telegram_collector.app
+```
+
+Telethon попросит телефон, код и, если включено, 2FA-пароль. После этого появится session-файл из `TELEGRAM_COLLECTOR_SESSION`. На VPS лучше положить session в `/opt/jarhert/data/telegram_collector.session` и выдать права только пользователю сервиса:
+
+```bash
+chmod 600 /opt/jarhert/data/telegram_collector.session
+```
+
+### VPS: отдельные процессы
+
+Collector:
+
+```bash
+cd /opt/jarhert
+set -a
+. ./.env
+set +a
+.venv/bin/python -m telegram_collector.app
+```
+
+Trend worker:
+
+```bash
+cd /opt/jarhert
+set -a
+. ./.env
+set +a
+.venv/bin/python scripts/run_telegram_trend_worker.py
+```
+
+Один tick для проверки:
+
+```bash
+.venv/bin/python scripts/run_telegram_trend_worker.py --once
+```
+
+Health collector:
+
+```bash
+curl http://127.0.0.1:8091/health
+```
+
+Docker Compose services вынесены в profile `collector`, чтобы не ломать основной bot/backend:
+
+```bash
+docker compose --profile collector up -d telegram_collector trend_worker
+```
 
 ## Production smoke
 
