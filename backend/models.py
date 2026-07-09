@@ -113,7 +113,7 @@ class AgentActionRecord(Base):
     depends_on_action_id: Mapped[int | None] = mapped_column(Integer)
     compensation_for_action_id: Mapped[int | None] = mapped_column(Integer)
     compensation_status: Mapped[str] = mapped_column(String(30), nullable=False, default="none")
-    result_meta: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
+    result_meta: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict, server_default=text("'{}'"))
     idempotency_key: Mapped[str | None] = mapped_column(String(180))
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(

@@ -259,13 +259,40 @@ def test_sql_queue_persists_result_meta_and_marks_compensation_available(tmp_pat
         job_id=21,
         depends_on_action_id=first.id,
     )
-    queue.mark_succeeded(first.id, result_meta={"calendar_event_id": "event123456"})
+    queue.mark_succeeded(first.id, result_meta={"trello_card_id": "abc"})
 
     compensated = queue.mark_compensation_skipped_for_job(21, failed.id, "manual rollback required")
 
     assert [item.id for item in compensated] == [first.id]
     first_after = next(item for item in queue.list_for_user(user.id) if item.id == first.id)
-    assert first_after.result_meta == {"calendar_event_id": "event123456"}
+    assert first_after.result_meta == {"trello_card_id": "abc"}
+    assert first_after.compensation_status == "available"
+
+
+def test_sql_queue_marks_compensation_available_for_result_url(tmp_path) -> None:
+    factory = session_factory(tmp_path)
+    user = UserStore(factory).get_or_create(9107)
+    queue = SqlActionQueueStore(factory)
+    first = queue.enqueue(
+        user_id=user.id,
+        action_type=ActionType.TASK_CREATE,
+        payload={"title": "создать"},
+        job_id=22,
+    )
+    failed = queue.enqueue(
+        user_id=user.id,
+        action_type=ActionType.CALENDAR_CREATE,
+        payload={"title": "сломать", "start": "2026-07-10 10:00", "end": "2026-07-10 10:30"},
+        job_id=22,
+        depends_on_action_id=first.id,
+    )
+    queue.mark_succeeded(first.id, result_meta={"trello_card_url": "https://trello.example/card/abc"})
+
+    compensated = queue.mark_compensation_skipped_for_job(22, failed.id, "manual rollback required")
+
+    assert [item.id for item in compensated] == [first.id]
+    first_after = next(item for item in queue.list_for_user(user.id) if item.id == first.id)
+    assert first_after.result_meta == {"trello_card_url": "https://trello.example/card/abc"}
     assert first_after.compensation_status == "available"
 
 
