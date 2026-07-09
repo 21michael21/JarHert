@@ -12,6 +12,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.config import Settings
 from backend.db import init_db, make_session_factory
+from gateway_bot.main import build_task_center
 
 
 def _check_http(url: str, timeout: float = 3) -> tuple[bool, str]:
@@ -133,6 +134,24 @@ def main() -> int:
     else:
         print(f"hermes=unsupported mode {settings.hermes_mode}")
         failures.append("unsupported HERMES_MODE")
+
+    if settings.task_command_center_enabled:
+        center = build_task_center()
+        if center is None:
+            print("task_center=disabled")
+            failures.append("Task Command Center is enabled but not configured")
+        else:
+            health = center.health_check()
+            trello = "ok" if health.trello_ok else "fail"
+            calendar = "ok" if health.calendar_ok else "fail"
+            print(f"task_center_trello={trello} {health.trello_detail}")
+            print(f"task_center_calendar={calendar} {health.calendar_detail}")
+            if not health.trello_ok:
+                failures.append("Task Command Center Trello health failed")
+            if not health.calendar_ok:
+                failures.append("Task Command Center Calendar health failed")
+    else:
+        print("task_center=disabled")
 
     if failures:
         print("preflight=fail")

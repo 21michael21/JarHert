@@ -170,10 +170,22 @@ cd "/Users/mihailkulibaba/Documents/New project/task-command-center"
 .venv/bin/python taskctl.py calendar-test
 ```
 
-Текущий статус аудита:
+Проверка из AI Brooch без создания календарных событий:
+
+```bash
+.venv/bin/python - <<'PY'
+from gateway_bot.main import build_task_center
+health = build_task_center().health_check()
+print(f"trello_ok={health.trello_ok} {health.trello_detail}")
+print(f"calendar_ok={health.calendar_ok} {health.calendar_detail}")
+PY
+```
+
+Текущий статус:
 
 - Trello real API работает: список `Today` читается.
-- Google Calendar код и OAuth-файлы есть, но текущий `token.json` недействителен/истёк. Нужно пройти OAuth заново:
+- Google Calendar OAuth сейчас проходит health-check через `list_today_events()`.
+- Если OAuth снова протухнет, обнови `token.json` так:
 
 ```bash
 cd "/Users/mihailkulibaba/Documents/New project/task-command-center"
@@ -323,7 +335,23 @@ Telegram user id -> GatewayService -> Pipeline -> LLM/provider
 
 ```bash
 ALLOWED_TG_USER_IDS= HERMES_MODE=fake TASK_COMMAND_CENTER_ENABLED=false \
-  .venv/bin/python scripts/live_e2e.py --tg-user-id <твой_telegram_id> --include-task
+  .venv/bin/python scripts/live_e2e.py --tg-user-id <твой_telegram_id>
+```
+
+Проверка очереди задач через Task Command Center:
+
+```bash
+.venv/bin/python scripts/live_e2e.py \
+  --tg-user-id <твой_telegram_id> \
+  --include-task
+```
+
+Проверка календаря через Task Command Center:
+
+```bash
+.venv/bin/python scripts/live_e2e.py \
+  --tg-user-id <твой_telegram_id> \
+  --include-calendar
 ```
 
 Реальный прогон через Telegram Bot API:
@@ -333,7 +361,8 @@ ALLOWED_TG_USER_IDS= HERMES_MODE=fake TASK_COMMAND_CENTER_ENABLED=false \
   --tg-user-id <твой_telegram_id> \
   --send-telegram \
   --require-real-llm \
-  --include-task
+  --include-task \
+  --include-calendar
 ```
 
 Условия:
@@ -341,7 +370,7 @@ ALLOWED_TG_USER_IDS= HERMES_MODE=fake TASK_COMMAND_CENTER_ENABLED=false \
 - пользователь с `<твой_telegram_id>` уже открыл бот в Telegram;
 - `BOT_TOKEN` задан в `.env`;
 - для real LLM `HERMES_MODE` не должен быть `fake`;
-- для task-проверки должен работать Task Command Center;
+- для task/calendar-проверки должен работать Task Command Center;
 - для голосового сценария передай локальный аудиофайл:
 
 ```bash

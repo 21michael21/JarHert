@@ -10,6 +10,18 @@ class TaskCommandError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class TaskCenterHealth:
+    trello_ok: bool
+    trello_detail: str
+    calendar_ok: bool
+    calendar_detail: str
+
+    @property
+    def ok(self) -> bool:
+        return self.trello_ok and self.calendar_ok
+
+
 class CommandRunner(Protocol):
     def __call__(
         self,
@@ -135,11 +147,32 @@ class TaskCommandCenter:
         _append_optional(args, "--description", fields.get("description") or fields.get("описание"))
         return self._run(args)
 
+    def health_check(self) -> TaskCenterHealth:
+        if not self.root.exists():
+            detail = f"Task Command Center не найден: {self.root}"
+            return TaskCenterHealth(
+                trello_ok=False,
+                trello_detail=detail,
+                calendar_ok=False,
+                calendar_detail=detail,
+            )
+        trello_ok, trello_detail = self._probe([*self._base_args(), "list", "--list", "Today"])
+        calendar_ok, calendar_detail = self._probe([str(self._python_path()), "-c", _CALENDAR_HEALTH_PROBE])
+        return TaskCenterHealth(
+            trello_ok=trello_ok,
+            trello_detail=trello_detail,
+            calendar_ok=calendar_ok,
+            calendar_detail=calendar_detail,
+        )
+
     def _base_args(self) -> list[str]:
+        return [str(self._python_path()), "taskctl.py"]
+
+    def _python_path(self) -> Path:
         python_path = Path(self.python_executable)
         if not python_path.is_absolute():
             python_path = self.root / python_path
-        return [str(python_path), "taskctl.py"]
+        return python_path
 
     def _run(self, args: list[str]) -> str:
         if not self.root.exists():
@@ -151,6 +184,17 @@ class TaskCommandCenter:
             message = error or output or f"taskctl exited with {result.returncode}"
             raise TaskCommandError(_truncate(message, 900))
         return _truncate(output or "Готово.", 1800)
+
+    def _probe(self, args: list[str]) -> tuple[bool, str]:
+        try:
+            result = self.runner(args, cwd=self.root, timeout=self.timeout_seconds)
+        except Exception as exc:
+            return False, _truncate(f"{type(exc).__name__}: {exc}", 300)
+        output = (result.stdout or "").strip()
+        error = (result.stderr or "").strip()
+        detail = (output or error) if result.returncode == 0 else (error or output)
+        detail = detail or f"exit={result.returncode}"
+        return result.returncode == 0, _truncate(detail, 300)
 
 
 def _parse_fields(text: str, *, allow_positional: bool = True) -> dict[str, str]:
@@ -195,3 +239,16 @@ def _truncate(value: str, limit: int) -> str:
     if len(value) <= limit:
         return value
     return value[: limit - 1].rstrip() + "…"
+
+
+_CALENDAR_HEALTH_PROBE = """
+from pathlib import Path
+from src.config import load_config
+from src.google_calendar_client import GoogleCalendarClient
+
+config = load_config(Path("."))
+calendar = GoogleCalendarClient(config, Path("."))
+calendar.validate_setup()
+events = calendar.list_today_events()
+print(f"calendar_ok events_today={len(events)}")
+""".strip()

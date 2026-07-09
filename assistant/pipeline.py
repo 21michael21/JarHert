@@ -148,6 +148,7 @@ class AssistantPipeline:
             ]
             lines.extend(self._provider_health_lines())
             lines.extend(self._delivery_health_lines())
+            lines.extend(self._task_center_health_lines())
             return AssistantReply(text="\n".join(lines), intent=parsed.intent)
         if parsed.intent == Intent.UNKNOWN:
             natural_route = natural_route or self._route_natural_text(user, parsed.raw_text)
@@ -661,6 +662,20 @@ class AssistantPipeline:
                 f"sent={stats.get('sent', 0)} "
                 f"failed={stats.get('failed', 0)}"
             ),
+        ]
+
+    def _task_center_health_lines(self) -> list[str]:
+        if self.task_center is None or not hasattr(self.task_center, "health_check"):
+            return []
+        try:
+            health = self.task_center.health_check()
+        except Exception as exc:
+            return ["Task Center:", f"health=fail detail={type(exc).__name__}: {exc}"]
+        trello = "ok" if health.trello_ok else "fail"
+        calendar = "ok" if health.calendar_ok else "fail"
+        return [
+            "Task Center:",
+            f"trello={trello} calendar={calendar}",
         ]
 
 

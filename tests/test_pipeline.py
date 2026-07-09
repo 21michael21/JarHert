@@ -8,6 +8,18 @@ from assistant.provider_router import InMemoryProviderHealthStore, ProviderFailu
 from assistant.types import HermesResponse, Intent, UserContext
 
 
+class FakeTaskCenterHealth:
+    def health_check(self):
+        class Health:
+            ok = True
+            trello_ok = True
+            trello_detail = "ok"
+            calendar_ok = True
+            calendar_detail = "ok"
+
+        return Health()
+
+
 def user() -> UserContext:
     return UserContext(user_id=1, tg_user_id=1001)
 
@@ -83,3 +95,17 @@ def test_admin_status_shows_delivery_outbox_health() -> None:
     assert "Delivery:" in reply.text
     assert "queued=1" in reply.text
     assert "failed=0" in reply.text
+
+
+def test_admin_status_shows_task_center_health() -> None:
+    pipeline = AssistantPipeline(
+        FakeHermesClient(),
+        DailyLimitStore(),
+        task_center=FakeTaskCenterHealth(),
+    )
+
+    reply = pipeline.handle_text(UserContext(user_id=1, tg_user_id=1001, is_admin=True), "/admin_status")
+
+    assert "Task Center:" in reply.text
+    assert "trello=ok" in reply.text
+    assert "calendar=ok" in reply.text

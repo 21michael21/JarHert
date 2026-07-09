@@ -36,11 +36,15 @@ class TelegramApiError(RuntimeError):
 def main() -> int:
     args = _parse_args()
     if not args.use_main_db:
-        os.environ["DATABASE_URL"] = f"sqlite:///{PROJECT_ROOT / 'data' / 'live_e2e.sqlite3'}"
+        e2e_db = PROJECT_ROOT / "data" / "live_e2e.sqlite3"
+        if not args.keep_e2e_db and e2e_db.exists():
+            e2e_db.unlink()
+        os.environ["DATABASE_URL"] = f"sqlite:///{e2e_db}"
     if not args.allow_doc_sync:
         os.environ["ENABLE_GOOGLE_SHEETS_SYNC"] = "false"
         os.environ["GOOGLE_DOCS_WEBHOOK_URL"] = ""
 
+    from assistant.action_queue import ActionStatus
     from assistant.action_worker import run_action_worker
     from assistant.transcription import OpenAITranscriber, TranscriptionError
     from assistant.types import UserContext
@@ -121,12 +125,14 @@ def main() -> int:
                 results.append(_deliver_one(outbox, message, settings.bot_token))
 
     if args.include_task:
+        before_action_ids = _action_ids(actions, db_user.id)
         task_reply = _timed("task_fast_ack", lambda: service.handle_text(args.tg_user_id, args.task_text))
+        task_action_ids = sorted(_action_ids(actions, db_user.id) - before_action_ids)
         results.append(
             StepResult(
                 "task_fast_ack",
-                task_reply.ok and "Job #" in task_reply.value.text,
-                _compact(task_reply.value.text),
+                task_reply.ok and "Job #" in task_reply.value.text and bool(task_action_ids),
+                f"{_compact(task_reply.value.text)} action_ids={','.join(map(str, task_action_ids)) or 'none'}",
                 task_reply.elapsed_ms,
             )
         )
@@ -147,16 +153,66 @@ def main() -> int:
             action_outbox_ids.append(message.id)
 
         asyncio.run(run_action_worker(actions, execute_action, deliver_action_result, stop_after_one_tick=True))
+        task_statuses = _action_statuses(actions, db_user.id, task_action_ids)
         results.append(
             StepResult(
                 "action_worker",
-                bool(action_outbox_ids),
-                f"queued_delivery_ids={','.join(map(str, action_outbox_ids)) or 'none'}",
+                bool(action_outbox_ids) and all(status == ActionStatus.SUCCEEDED.value for status in task_statuses.values()),
+                (
+                    f"statuses={task_statuses or {}} "
+                    f"queued_delivery_ids={','.join(map(str, action_outbox_ids)) or 'none'}"
+                ),
             )
         )
         if args.send_telegram:
             for message in outbox.list_recent(limit=20):
                 if message.id in action_outbox_ids:
+                    results.append(_deliver_one(outbox, message, settings.bot_token))
+
+    if args.include_calendar:
+        before_action_ids = _action_ids(actions, db_user.id)
+        calendar_reply = _timed("calendar_fast_ack", lambda: service.handle_text(args.tg_user_id, args.calendar_text))
+        calendar_action_ids = sorted(_action_ids(actions, db_user.id) - before_action_ids)
+        results.append(
+            StepResult(
+                "calendar_fast_ack",
+                calendar_reply.ok and "Job #" in calendar_reply.value.text and bool(calendar_action_ids),
+                f"{_compact(calendar_reply.value.text)} action_ids={','.join(map(str, calendar_action_ids)) or 'none'}",
+                calendar_reply.elapsed_ms,
+            )
+        )
+        calendar_outbox_ids: list[int] = []
+
+        async def execute_calendar_action(action) -> str:
+            return service.pipeline.execute_queued_action(
+                UserContext(user_id=db_user.id, tg_user_id=args.tg_user_id),
+                action,
+            )
+
+        async def deliver_calendar_result(action, text: str) -> None:
+            message = outbox.enqueue(
+                user_id=action.user_id,
+                chat_id=args.tg_user_id,
+                text=f"[live-e2e-calendar] {text}",
+            )
+            calendar_outbox_ids.append(message.id)
+
+        asyncio.run(run_action_worker(actions, execute_calendar_action, deliver_calendar_result, stop_after_one_tick=True))
+        calendar_statuses = _action_statuses(actions, db_user.id, calendar_action_ids)
+        results.append(
+            StepResult(
+                "calendar_action_worker",
+                bool(calendar_outbox_ids)
+                and all(status == ActionStatus.SUCCEEDED.value for status in calendar_statuses.values()),
+                (
+                    f"statuses={calendar_statuses or {}} "
+                    f"queued_delivery_ids={','.join(map(str, calendar_outbox_ids)) or 'none'}"
+                ),
+            )
+        )
+        if args.send_telegram:
+            for message in outbox.list_recent(limit=20):
+                if message.id in calendar_outbox_ids:
                     results.append(_deliver_one(outbox, message, settings.bot_token))
 
     if args.voice_file:
@@ -280,6 +336,19 @@ def _elapsed_ms(started: float) -> int:
     return round((time.perf_counter() - started) * 1000)
 
 
+def _action_ids(actions, user_id: int) -> set[int]:
+    return {action.id for action in actions.list_for_user(user_id, limit=100)}
+
+
+def _action_statuses(actions, user_id: int, ids: list[int]) -> dict[int, str]:
+    wanted = set(ids)
+    return {
+        action.id: action.status.value
+        for action in actions.list_for_user(user_id, limit=100)
+        if action.id in wanted
+    }
+
+
 def _print_summary(results: list[StepResult], started: float) -> None:
     print("Live e2e summary")
     for result in results:
@@ -293,14 +362,17 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a live-ish Telegram AI Brooch e2e scenario.")
     parser.add_argument("--tg-user-id", type=int, required=True, help="Telegram user/chat id that already started the bot.")
     parser.add_argument("--use-main-db", action="store_true", help="Use DATABASE_URL from .env instead of isolated data/live_e2e.sqlite3.")
+    parser.add_argument("--keep-e2e-db", action="store_true", help="Keep the isolated e2e DB instead of recreating it.")
     parser.add_argument("--send-telegram", action="store_true", help="Send outbox messages through the real Telegram Bot API.")
     parser.add_argument("--require-real-llm", action="store_true", help="Fail when HERMES_MODE=fake.")
     parser.add_argument("--include-task", action="store_true", help="Create and execute a real queued task through Task Command Center.")
+    parser.add_argument("--include-calendar", action="store_true", help="Create and execute a real queued Google Calendar event through Task Command Center.")
     parser.add_argument("--allow-doc-sync", action="store_true", help="Allow Google Docs/Sheets sync during the scenario.")
     parser.add_argument("--voice-file", help="Optional local audio file to test transcription path.")
     parser.add_argument("--ask-text", default="/ask ответь одним коротким предложением: live e2e ok?")
     parser.add_argument("--reminder-text", default="live e2e reminder")
     parser.add_argument("--task-text", default="создай задачу [live-e2e] проверить JarHert delivery")
+    parser.add_argument("--calendar-text", default="поставь в календарь [live-e2e] JarHert check | start=2026-07-10 10:00 | end=2026-07-10 10:15")
     return parser.parse_args()
 
 
