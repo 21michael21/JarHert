@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import uuid
 from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 
-from assistant.automation_runtime import AutomationRuntime, InMemoryAutomationLeaseStore, WorkerPolicy
+from assistant.automation_runtime import AutomationRuntime, InMemoryAutomationLeaseStore, LeaseLostError, WorkerPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,10 @@ class DeliveryMessage:
     attempts: int = 0
     trace_id: str = ""
     buttons: list[list[dict[str, str]]] = field(default_factory=list)
+    worker_id: str | None = None
+    lease_until: datetime | None = None
+    claimed_at: datetime | None = None
+    heartbeat_at: datetime | None = None
     last_error: str | None = None
     next_attempt_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -60,6 +65,9 @@ class DeliveryOutboxAdapter:
         limit: int = 20,
         max_attempts: int = 5,
         event_logger: DeliveryEventLogger | None = None,
+        worker_id: str | None = None,
+        item_lease_seconds: float = 60,
+        item_heartbeat_seconds: float = 12,
     ) -> None:
         self.store = store
         self.send = send
@@ -67,36 +75,88 @@ class DeliveryOutboxAdapter:
         self.limit = limit
         self.max_attempts = max_attempts
         self.event_logger = event_logger
+        self.worker_id = worker_id or f"outbox-{uuid.uuid4().hex[:12]}"
+        self.item_lease_seconds = item_lease_seconds
+        self.item_heartbeat_seconds = item_heartbeat_seconds
+        if not 0 < item_heartbeat_seconds < item_lease_seconds:
+            raise ValueError("delivery item heartbeat must be lower than item lease")
 
     async def recover_stale(self) -> int:
         recover = getattr(self.store, "recover_sending", None)
         return recover() if recover is not None else 0
 
     async def run_once(self) -> dict:
-        due = self.store.claim_due(limit=self.limit)
-        counts = {"processed": len(due), "sent": 0, "retried": 0, "failed": 0}
+        recover_expired = getattr(self.store, "recover_expired", None)
+        recovered = recover_expired() if recover_expired is not None else 0
+        due = self.store.claim_due(
+            limit=self.limit,
+            worker_id=self.worker_id,
+            lease_seconds=self.item_lease_seconds,
+        )
+        counts = {"processed": len(due), "sent": 0, "retried": 0, "failed": 0, "recovered": recovered}
+        lease_events = {message.id: asyncio.Event() for message in due}
+        heartbeat_tasks = {
+            message.id: asyncio.create_task(self._heartbeat_item(message.id, lease_events[message.id]))
+            for message in due
+        }
         for message in due:
             try:
+                if lease_events[message.id].is_set():
+                    counts["lease_lost"] = counts.get("lease_lost", 0) + 1
+                    continue
                 await self.send(message)
-                self.store.mark_sent(message.id)
+                if lease_events[message.id].is_set():
+                    counts["lease_lost"] = counts.get("lease_lost", 0) + 1
+                    continue
+                self.store.mark_sent(message.id, worker_id=self.worker_id)
                 _log_event(self.event_logger, message, "delivery_sent", {"attempts": message.attempts})
                 counts["sent"] += 1
+            except LeaseLostError:
+                counts["lease_lost"] = counts.get("lease_lost", 0) + 1
+                _log_event(self.event_logger, message, "delivery_lease_lost", {"worker_id": self.worker_id})
             except Exception as error:
+                if lease_events[message.id].is_set():
+                    counts["lease_lost"] = counts.get("lease_lost", 0) + 1
+                    continue
                 classification = classify_delivery_error(error)
                 error_text = _truncate_error(str(error) or error.__class__.__name__)
-                if classification.retryable and message.attempts < self.max_attempts:
-                    self.store.mark_retry(
-                        message.id,
-                        error_text,
-                        _next_attempt_at(attempts=message.attempts, retry_after_seconds=classification.retry_after_seconds),
-                    )
-                    _log_event(self.event_logger, message, "delivery_retry", {"error": error_text})
-                    counts["retried"] += 1
-                else:
-                    self.store.mark_failed_permanent(message.id, error_text)
-                    _log_event(self.event_logger, message, "delivery_failed", {"error": error_text})
-                    counts["failed"] += 1
+                try:
+                    if classification.retryable and message.attempts < self.max_attempts:
+                        self.store.mark_retry(
+                            message.id,
+                            error_text,
+                            _next_attempt_at(attempts=message.attempts, retry_after_seconds=classification.retry_after_seconds),
+                            worker_id=self.worker_id,
+                        )
+                        _log_event(self.event_logger, message, "delivery_retry", {"error": error_text})
+                        counts["retried"] += 1
+                    else:
+                        self.store.mark_failed_permanent(message.id, error_text, worker_id=self.worker_id)
+                        _log_event(self.event_logger, message, "delivery_failed", {"error": error_text})
+                        counts["failed"] += 1
+                except LeaseLostError:
+                    counts["lease_lost"] = counts.get("lease_lost", 0) + 1
+                    _log_event(self.event_logger, message, "delivery_lease_lost", {"worker_id": self.worker_id})
+            finally:
+                heartbeat_tasks[message.id].cancel()
+                await asyncio.gather(heartbeat_tasks[message.id], return_exceptions=True)
         return counts
+
+    async def _heartbeat_item(self, message_id: int, lease_lost: asyncio.Event) -> None:
+        while True:
+            await asyncio.sleep(self.item_heartbeat_seconds)
+            try:
+                alive = await asyncio.to_thread(
+                    self.store.heartbeat,
+                    message_id,
+                    worker_id=self.worker_id,
+                    lease_seconds=self.item_lease_seconds,
+                )
+            except Exception:
+                alive = False
+            if not alive:
+                lease_lost.set()
+                return
 
 
 class InMemoryDeliveryOutboxStore:
@@ -135,6 +195,8 @@ class InMemoryDeliveryOutboxStore:
         *,
         now: datetime | None = None,
         limit: int = 20,
+        worker_id: str | None = None,
+        lease_seconds: float = 60,
     ) -> list[DeliveryMessage]:
         due_at = now or datetime.now(timezone.utc)
         claimed: list[DeliveryMessage] = []
@@ -149,17 +211,86 @@ class InMemoryDeliveryOutboxStore:
                 item,
                 status=DeliveryStatus.SENDING,
                 attempts=item.attempts + 1,
+                worker_id=worker_id,
+                claimed_at=due_at,
+                heartbeat_at=due_at,
+                lease_until=due_at + timedelta(seconds=lease_seconds),
                 updated_at=due_at,
             )
             self._replace(updated)
             claimed.append(updated)
         return claimed
 
-    def mark_sent(self, message_id: int) -> DeliveryMessage:
+    def heartbeat(
+        self,
+        message_id: int,
+        *,
+        worker_id: str,
+        now: datetime | None = None,
+        lease_seconds: float = 60,
+    ) -> bool:
         item = self._require(message_id)
+        if item.status != DeliveryStatus.SENDING or item.worker_id != worker_id:
+            return False
+        heartbeat_at = now or datetime.now(timezone.utc)
+        self._replace(
+            replace(
+                item,
+                heartbeat_at=heartbeat_at,
+                lease_until=heartbeat_at + timedelta(seconds=lease_seconds),
+                updated_at=heartbeat_at,
+            )
+        )
+        return True
+
+    def recover_expired(self, *, now: datetime | None = None) -> int:
+        expired_at = now or datetime.now(timezone.utc)
+        recovered = 0
+        for item in list(self._items):
+            if item.status != DeliveryStatus.SENDING:
+                continue
+            if item.lease_until is not None and item.lease_until > expired_at:
+                continue
+            self._replace(
+                replace(
+                    item,
+                    status=DeliveryStatus.QUEUED,
+                    worker_id=None,
+                    lease_until=None,
+                    claimed_at=None,
+                    heartbeat_at=None,
+                    updated_at=expired_at,
+                )
+            )
+            recovered += 1
+        return recovered
+
+    def recover_sending(self) -> int:
+        recovered = 0
+        for item in list(self._items):
+            if item.status != DeliveryStatus.SENDING:
+                continue
+            self._replace(
+                replace(
+                    item,
+                    status=DeliveryStatus.QUEUED,
+                    worker_id=None,
+                    lease_until=None,
+                    claimed_at=None,
+                    heartbeat_at=None,
+                    updated_at=datetime.now(timezone.utc),
+                )
+            )
+            recovered += 1
+        return recovered
+
+    def mark_sent(self, message_id: int, *, worker_id: str | None = None) -> DeliveryMessage:
+        item = self._require(message_id)
+        _assert_delivery_owner(item, worker_id)
         updated = replace(
             item,
             status=DeliveryStatus.SENT,
+            lease_until=None,
             last_error=None,
             next_attempt_at=None,
             updated_at=datetime.now(timezone.utc),
@@ -172,11 +303,18 @@ class InMemoryDeliveryOutboxStore:
         message_id: int,
         error: str,
         next_attempt_at: datetime,
+        *,
+        worker_id: str | None = None,
     ) -> DeliveryMessage:
         item = self._require(message_id)
+        _assert_delivery_owner(item, worker_id)
         updated = replace(
             item,
             status=DeliveryStatus.QUEUED,
+            worker_id=None,
+            lease_until=None,
+            claimed_at=None,
+            heartbeat_at=None,
             last_error=_truncate_error(error),
             next_attempt_at=next_attempt_at,
             updated_at=datetime.now(timezone.utc),
@@ -184,11 +322,19 @@ class InMemoryDeliveryOutboxStore:
         self._replace(updated)
         return updated
 
-    def mark_failed_permanent(self, message_id: int, error: str) -> DeliveryMessage:
+    def mark_failed_permanent(
+        self,
+        message_id: int,
+        error: str,
+        *,
+        worker_id: str | None = None,
+    ) -> DeliveryMessage:
         item = self._require(message_id)
+        _assert_delivery_owner(item, worker_id)
         updated = replace(
             item,
             status=DeliveryStatus.FAILED,
+            lease_until=None,
             last_error=_truncate_error(error),
             next_attempt_at=None,
             updated_at=datetime.now(timezone.utc),
@@ -285,3 +431,10 @@ def _truncate_error(error: str, *, limit: int = 1000) -> str:
 def _log_event(logger_fn: DeliveryEventLogger | None, message: DeliveryMessage, event_type: str, meta: dict) -> None:
     if logger_fn is not None:
         logger_fn(message, event_type, meta)
+
+
+def _assert_delivery_owner(message: DeliveryMessage, worker_id: str | None) -> None:
+    if worker_id is None:
+        return
+    if message.status != DeliveryStatus.SENDING or message.worker_id != worker_id:
+        raise LeaseLostError(f"delivery lease lost: message_id={message.id} worker_id={worker_id}")
