@@ -499,3 +499,111 @@ AI_ALLOW_PAID_FALLBACK=false
 ```
 
 Платный fallback не используется, пока ты явно не включишь его в env.
+
+## Миграции базы
+
+Новый production-flow — Alembic:
+
+```bash
+scripts/migrate.sh
+```
+
+`scripts/preflight.py` тоже запускает миграции перед проверкой базы. Если база уже была создана старым `init_db`, migration runner безопасно ставит `alembic_version` через `stamp head` и не пересоздаёт таблицы.
+
+В Docker Compose backend и bot стартуют через:
+
+```bash
+scripts/docker_start_backend.sh
+scripts/docker_start_bot.sh
+```
+
+Оба скрипта сначала запускают миграции, потом поднимают сервис. Старый `init_db` остаётся для локальных тестов и обратной совместимости.
+
+## Golden eval для natural UX
+
+Golden-набор лежит в:
+
+```text
+tests/golden_dialogs/natural_ux.json
+```
+
+Запуск:
+
+```bash
+.venv/bin/python scripts/eval_golden.py
+```
+
+Скрипт проверяет 30+ русских фраз:
+
+- какие actions извлёк deterministic router;
+- не исполнил ли он случайное действие на непонятной фразе;
+- проходят ли базовые ответы quality gate;
+- не стали ли ответы слишком длинными.
+
+JSON-отчёт пишется в:
+
+```text
+reports/golden_eval/
+```
+
+## Provider quality benchmark
+
+Запуск:
+
+```bash
+.venv/bin/python scripts/provider_benchmark.py
+```
+
+Можно ограничить конкретным provider:
+
+```bash
+.venv/bin/python scripts/provider_benchmark.py --provider openrouter_free
+```
+
+Отчёт пишется в:
+
+```text
+reports/provider_benchmarks/
+```
+
+В отчёте есть:
+
+- provider/model;
+- latency;
+- quality gate result;
+- fallback/error summary;
+- короткий preview ответа без секретов.
+
+Benchmark делает реальные LLM-запросы к провайдерам из `.env`, поэтому запускай его осознанно.
+
+## Production smoke
+
+Один smoke-скрипт:
+
+```bash
+BASE_URL=https://your-domain.example \
+ASSISTANT_SERVICE_TOKEN=... \
+TG_USER_ID=<admin_tg_user_id> \
+scripts/production_smoke.sh
+```
+
+Он проверяет:
+
+- `/health`;
+- `/api/version`;
+- что `/api/assistant/telegram-text` без токена даёт `401`;
+- `/admin_status` через защищённый endpoint;
+- provider response metadata;
+- Trello/Calendar health внутри admin status.
+
+Telegram delivery специально выключен по умолчанию. Чтобы проверить полный live delivery:
+
+```bash
+BASE_URL=https://your-domain.example \
+ASSISTANT_SERVICE_TOKEN=... \
+TG_USER_ID=<admin_tg_user_id> \
+SEND_TELEGRAM=1 \
+scripts/production_smoke.sh
+```
+
+Это отправит реальные сообщения в Telegram и создаст тестовые task/calendar-действия через `scripts/live_e2e.py`.

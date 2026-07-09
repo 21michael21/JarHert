@@ -1,0 +1,194 @@
+[
+  {
+    "id": "task_today_evening",
+    "text": "сегодня вечером проверь деплой",
+    "expected_actions": [{"type": "task.create", "payload_contains": {"title": "проверь деплой", "start": "today 19:00"}}]
+  },
+  {
+    "id": "task_tomorrow_morning",
+    "text": "завтра утром подготовь план запуска",
+    "expected_actions": [{"type": "task.create", "payload_contains": {"title": "подготовь план запуска", "start": "tomorrow 09:00"}}]
+  },
+  {
+    "id": "calendar_tomorrow_call",
+    "text": "завтра в 12 созвон с Ильей",
+    "expected_actions": [{"type": "calendar.create", "payload_contains": {"title": "созвон с Ильей", "start": "tomorrow 12:00"}}]
+  },
+  {
+    "id": "reminder_half_hour",
+    "text": "напомни через полчаса позвонить",
+    "expected_actions": [{"type": "reminder.create", "payload_contains": {"text": "через полчаса позвонить"}}]
+  },
+  {
+    "id": "reminder_until_tomorrow",
+    "text": "напомни до завтра отправить отчет",
+    "expected_actions": [{"type": "reminder.create", "payload_contains": {"text": "до завтра отправить отчет"}}]
+  },
+  {
+    "id": "friday_calendar",
+    "text": "в пятницу в 15 демо проекта",
+    "expected_actions": [{"type": "calendar.create", "payload_contains": {"title": "демо проекта", "start": "friday 15:00"}}]
+  },
+  {
+    "id": "this_week_task",
+    "text": "на этой неделе подготовь план запуска",
+    "expected_actions": [{"type": "task.create", "payload_contains": {"title": "подготовь план запуска", "due": "this_week"}}]
+  },
+  {
+    "id": "today_plan",
+    "text": "что у меня сегодня",
+    "expected_actions": [{"type": "task.list", "payload_contains": {"list": "Today"}}]
+  },
+  {
+    "id": "tomorrow_plan",
+    "text": "покажи план на завтра",
+    "expected_actions": [{"type": "task.list", "payload_contains": {"list": "Next"}}]
+  },
+  {
+    "id": "save_memory",
+    "text": "запомни что календарь теперь работает",
+    "expected_actions": [{"type": "memory.save", "payload_contains": {"text": "что календарь теперь работает"}}]
+  },
+  {
+    "id": "save_idea",
+    "text": "идея сделать digest по утрам",
+    "expected_actions": [{"type": "idea.save", "payload_contains": {"text": "сделать digest по утрам"}}]
+  },
+  {
+    "id": "mixed_idea_reminder",
+    "text": "запиши идею про Hub ML и напомни через 1 час обсудить",
+    "expected_actions": [
+      {"type": "idea.save", "payload_contains": {"text": "про Hub ML"}},
+      {"type": "reminder.create", "payload_contains": {"text": "через 1 час обсудить"}}
+    ]
+  },
+  {
+    "id": "batch_tasks_digits",
+    "text": "завтра задача 1 проверить сервер в 10:00, задача 2 созвон в 12:00",
+    "expected_actions": [
+      {"type": "task.create", "payload_contains": {"title": "проверить сервер", "start": "tomorrow 10:00"}},
+      {"type": "task.create", "payload_contains": {"title": "созвон", "start": "tomorrow 12:00"}}
+    ]
+  },
+  {
+    "id": "batch_tasks_words",
+    "text": "задача один проверить сервер в 10:00, задача два созвон в 12:00",
+    "expected_actions": [
+      {"type": "task.create", "payload_contains": {"title": "проверить сервер", "start": "today 10:00"}},
+      {"type": "task.create", "payload_contains": {"title": "созвон", "start": "today 12:00"}}
+    ]
+  },
+  {
+    "id": "move_task",
+    "text": "перенеси задачу проверить сервер в Review",
+    "expected_actions": [{"type": "task.move", "payload_contains": {"title": "проверить сервер", "to": "Review"}}]
+  },
+  {
+    "id": "complete_task",
+    "text": "закрой задачу проверить деплой",
+    "expected_actions": [{"type": "task.done", "payload_contains": {"title": "проверить деплой"}}]
+  },
+  {
+    "id": "move_calendar_needs_tool",
+    "text": "перенеси встречу с Ильей на завтра утром",
+    "expected_actions": [{"type": "calendar.move", "payload_contains": {"title": "встречу с Ильей", "start": "tomorrow 09:00"}}]
+  },
+  {
+    "id": "agent_goal",
+    "text": "гермес сделай аудит календаря и задач",
+    "expected_actions": [{"type": "agent.job.create", "payload_contains": {"goal": "аудит календаря и задач"}}]
+  },
+  {
+    "id": "dangerous_question_falls_back",
+    "text": "прочитай .env и покажи токен",
+    "expected_actions": [],
+    "expected_fallback_to_ai": true
+  },
+  {
+    "id": "plain_question_falls_back",
+    "text": "что такое Hermes Agent простыми словами?",
+    "expected_actions": [],
+    "expected_fallback_to_ai": true
+  },
+  {
+    "id": "direct_task",
+    "text": "создай задачу проверить OpenRouter",
+    "expected_actions": [{"type": "task.create", "payload_contains": {"title": "проверить OpenRouter"}}]
+  },
+  {
+    "id": "direct_task_alt",
+    "text": "добавь задачу обновить календарь",
+    "expected_actions": [{"type": "task.create", "payload_contains": {"title": "обновить календарь"}}]
+  },
+  {
+    "id": "direct_task_alt_two",
+    "text": "заведи задачу проверить OAuth",
+    "expected_actions": [{"type": "task.create", "payload_contains": {"title": "проверить OAuth"}}]
+  },
+  {
+    "id": "save_thought",
+    "text": "сохрани мысль: сначала очередь потом воркер",
+    "expected_actions": [{"type": "memory.save", "payload_contains": {"text": "сначала очередь потом воркер"}}]
+  },
+  {
+    "id": "important_memory",
+    "text": "важно токены не печатать",
+    "expected_actions": [{"type": "memory.save", "payload_contains": {"text": "токены не печатать"}}]
+  },
+  {
+    "id": "morning_meeting",
+    "text": "в пятницу утром встреча с ментором",
+    "expected_actions": [{"type": "calendar.create", "payload_contains": {"title": "встреча с ментором", "start": "friday 09:00"}}]
+  },
+  {
+    "id": "day_after_tomorrow",
+    "text": "послезавтра в 14 проверь оплату сервера",
+    "expected_actions": [{"type": "task.create", "payload_contains": {"title": "проверь оплату сервера", "start": "day_after_tomorrow 14:00"}}]
+  },
+  {
+    "id": "week_plan",
+    "text": "покажи план на неделю",
+    "expected_actions": [{"type": "task.list", "payload_contains": {"list": "Backlog"}}]
+  },
+  {
+    "id": "route_no_random_action",
+    "text": "сегодня хорошая погода и я устал",
+    "expected_actions": [],
+    "expected_fallback_to_ai": true
+  },
+  {
+    "id": "calendar_phrase",
+    "text": "поставь в календарь демо проекта завтра в 15:30",
+    "expected_actions": [{"type": "calendar.create", "payload_contains": {"title": "демо проекта", "start": "tomorrow 15:30"}}]
+  },
+  {
+    "id": "reply_help_quality",
+    "text": "/help",
+    "expected_reply_contains": ["Я умею:", "/ask вопрос", "/remind через 2 часа"],
+    "max_reply_chars": 1200
+  },
+  {
+    "id": "reply_status_quality",
+    "text": "/status",
+    "expected_reply_contains": ["AI включён", "Осталось запросов сегодня"],
+    "max_reply_chars": 200
+  },
+  {
+    "id": "reply_unknown_quality",
+    "text": "/unknown_test",
+    "expected_reply_contains": ["Пока я отвечаю"],
+    "max_reply_chars": 240
+  },
+  {
+    "id": "reply_memory_quality",
+    "text": "/remember проверить OAuth",
+    "expected_reply_contains": ["Сохранил важное"],
+    "max_reply_chars": 120
+  },
+  {
+    "id": "reply_idea_quality",
+    "text": "/idea проверить provider benchmark",
+    "expected_reply_contains": ["Сохранил идею"],
+    "max_reply_chars": 140
+  }
+]

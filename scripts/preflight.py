@@ -13,6 +13,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from backend.config import Settings
 from backend.db import init_db, make_session_factory
 from gateway_bot.main import build_task_center
+from scripts.run_migrations import run_migrations
 
 
 def _check_http(url: str, timeout: float = 3) -> tuple[bool, str]:
@@ -87,6 +88,7 @@ def main() -> int:
         failures.append("BOT_TOKEN is required for real Telegram polling")
 
     try:
+        run_migrations(settings.database_url)
         factory = make_session_factory(settings.database_url)
         init_db(factory)
         print("db=ok")

@@ -1,0 +1,50 @@
+from __future__ import annotations
+
+from assistant.hermes_client import HermesClient
+from assistant.perf import PerfRecorder
+from assistant.quality_gates import check_output
+from assistant.response_composer import ResponseComposer
+from assistant.types import AssistantReply, GateStatus, HermesRequest, Intent, UserContext
+
+
+def answer_with_ai(
+    *,
+    hermes: HermesClient,
+    responses: ResponseComposer,
+    user: UserContext,
+    prompt: str,
+    intent: Intent,
+    style: str,
+    max_output_chars: int,
+    perf: PerfRecorder,
+) -> AssistantReply:
+    try:
+        with perf.track("llm"):
+            hermes_response = hermes.ask(
+                HermesRequest(
+                    user=user,
+                    prompt=prompt,
+                    intent=intent,
+                    context={"style": style},
+                )
+            )
+    except Exception:
+        return responses.provider_unavailable(intent=intent)
+
+    output_gate = check_output(hermes_response.text, max_chars=max_output_chars)
+    if output_gate.status == GateStatus.NEEDS_FALLBACK:
+        return responses.provider_fallback(
+            reason=output_gate.reason,
+            intent=intent,
+            provider=hermes_response.provider,
+            model=hermes_response.model,
+            fallback_count=hermes_response.fallback_count,
+        )
+
+    return AssistantReply(
+        text=output_gate.safe_text,
+        intent=intent,
+        provider=hermes_response.provider,
+        model=hermes_response.model,
+        fallback_count=hermes_response.fallback_count,
+    )

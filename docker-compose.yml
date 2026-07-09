@@ -1,7 +1,7 @@
 services:
   backend:
     build: .
-    command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["scripts/docker_start_backend.sh"]
     env_file: .env
     volumes:
       - ./data:/app/data
@@ -16,7 +16,7 @@ services:
 
   bot:
     build: .
-    command: ["python", "-m", "gateway_bot.telegram_app"]
+    command: ["scripts/docker_start_bot.sh"]
     env_file: .env
     volumes:
       - ./data:/app/data
@@ -28,4 +28,3 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-

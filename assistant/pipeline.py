@@ -5,6 +5,15 @@ from dataclasses import replace
 from assistant.action_executor import ActionExecutor
 from assistant.action_queue import AgentAction
 from assistant.agent_jobs import AgentJobStore, InMemoryAgentJobStore, build_agent_plan
+from assistant.admin_status_service import build_admin_status_text
+from assistant.ai_answer_service import answer_with_ai
+from assistant.command_handlers import (
+    fields_payload,
+    help_text,
+    should_try_llm_action_extractor,
+    task_payload,
+    task_text_with_preferences,
+)
 from assistant.context_store import InMemoryConversationStore, actions_to_dicts
 from assistant.hermes_client import HermesClient
 from assistant.google_docs_sync import DocsSync, NullDocsSync
@@ -15,14 +24,14 @@ from assistant.memory import InMemoryMemoryStore
 from assistant.natural_tasks import parse_natural_task_batch
 from assistant.action_schema import ActionType, NaturalRoute, PlannedAction
 from assistant.llm_action_extractor import LlmActionExtractor
-from assistant.natural_router import route_natural_text
+from assistant.natural_action_service import NaturalActionService
 from assistant.perf import NullPerfRecorder, PerfRecorder
 from assistant.preferences import InMemoryPreferenceStore, parse_preference_update
-from assistant.quality_gates import check_input, check_output
+from assistant.quality_gates import check_input
 from assistant.response_composer import ResponseComposer
 from assistant.task_command_center import TaskCommandCenter, TaskCommandError
-from assistant.tool_registry import ToolContext, ToolExecutionError, build_default_tool_registry
-from assistant.types import AssistantReply, GateStatus, HermesRequest, Intent, UserContext
+from assistant.tool_registry import ToolContext, build_default_tool_registry
+from assistant.types import AssistantReply, Intent, UserContext
 from reminders.parser import parse_reminder
 from reminders.store import InMemoryReminderStore
 
@@ -70,6 +79,13 @@ class AssistantPipeline:
         self.provider_health = provider_health
         self.delivery_outbox = delivery_outbox
         self.action_queue = action_queue
+        self.natural_actions = NaturalActionService(
+            action_executor=self.action_executor,
+            agent_jobs=self.agent_jobs,
+            responses=self.responses,
+            tool_context_factory=self._tool_context,
+            action_queue=self.action_queue,
+        )
         self._perf = NullPerfRecorder()
         self._current_extracted_actions: list[PlannedAction] = []
 
@@ -107,28 +123,7 @@ class AssistantPipeline:
                 return self._execute_natural_route(user, natural_route)
 
         if parsed.intent == Intent.HELP:
-            return AssistantReply(
-                text="\n".join(
-                    [
-                        "Я умею:",
-                        "/ask вопрос — спросить AI",
-                        "/idea текст — записать идею",
-                        "/ideas — показать идеи",
-                        "/remember текст — сохранить важное",
-                        "/remind через 2 часа текст — поставить напоминание",
-                        "/reminders — список напоминаний",
-                        "/task название | list=Today | project=Personal | priority=P2 — создать Trello-задачу",
-                        "Можно просто: задача 1 проверить сервер в 10:00, задача 2 созвон в 12:00",
-                        "/tasks Today — показать задачи",
-                        "/calendar название | start=2026-07-10 10:00 | end=2026-07-10 10:30 — создать событие",
-                        "/do цель — поставить агентскую задачу в очередь",
-                        "/jobs — показать очередь агента",
-                        "/job id — показать детали агентской задачи",
-                        "Можно отправить голосовое: я расшифрую и выполню команду.",
-                    ]
-                ),
-                intent=parsed.intent,
-            )
+            return AssistantReply(text=help_text(), intent=parsed.intent)
         if parsed.intent == Intent.STATUS:
             remaining = self.limits.remaining_for_user(user.user_id)
             return AssistantReply(text=f"AI включён. Осталось запросов сегодня: {remaining}.", intent=parsed.intent)
@@ -139,17 +134,16 @@ class AssistantPipeline:
                     intent=parsed.intent,
                     blocked_reason="admin_required",
                 )
-            remaining = self.limits.remaining_for_user(user.user_id)
-            lines = [
-                "Admin status",
-                f"user_id={user.user_id}",
-                f"tg_user_id={user.tg_user_id}",
-                f"remaining_today={remaining}",
-            ]
-            lines.extend(self._provider_health_lines())
-            lines.extend(self._delivery_health_lines())
-            lines.extend(self._task_center_health_lines())
-            return AssistantReply(text="\n".join(lines), intent=parsed.intent)
+            return AssistantReply(
+                text=build_admin_status_text(
+                    user=user,
+                    limits=self.limits,
+                    provider_health=self.provider_health,
+                    delivery_outbox=self.delivery_outbox,
+                    task_center=self.task_center,
+                ),
+                intent=parsed.intent,
+            )
         if parsed.intent == Intent.UNKNOWN:
             natural_route = natural_route or self._route_natural_text(user, parsed.raw_text)
             if natural_route.actions:
@@ -177,7 +171,7 @@ class AssistantPipeline:
                 return self._queue_direct_action(
                     user,
                     ActionType.TASK_CREATE,
-                    _task_payload(self._task_text_with_preferences(parsed.text, user)),
+                    task_payload(self._task_text_with_preferences(parsed.text, user)),
                 )
             return self._task(parsed.text, user)
         if parsed.intent == Intent.TASKS:
@@ -186,7 +180,7 @@ class AssistantPipeline:
             return self._tasks(parsed.text)
         if parsed.intent == Intent.TASK_MOVE:
             if self.action_queue is not None:
-                return self._queue_direct_action(user, ActionType.TASK_MOVE, _fields_payload(parsed.text, fallback_key="title"))
+                return self._queue_direct_action(user, ActionType.TASK_MOVE, fields_payload(parsed.text, fallback_key="title"))
             return self._task_move(parsed.text)
         if parsed.intent == Intent.TASK_DONE:
             if self.action_queue is not None:
@@ -196,7 +190,7 @@ class AssistantPipeline:
             return self._task_batch(parsed.text)
         if parsed.intent == Intent.CALENDAR:
             if self.action_queue is not None:
-                return self._queue_direct_action(user, ActionType.CALENDAR_CREATE, _fields_payload(parsed.text, fallback_key="title"))
+                return self._queue_direct_action(user, ActionType.CALENDAR_CREATE, fields_payload(parsed.text, fallback_key="title"))
             return self._calendar(parsed.text)
         if parsed.intent == Intent.AGENT_DO:
             return self._agent_do(user, parsed.text)
@@ -214,7 +208,7 @@ class AssistantPipeline:
         if not input_gate.ok:
             return self.responses.blocked_action(input_gate.reason, intent=parsed.intent)
 
-        if parsed.intent == Intent.ASK and _should_try_llm_action_extractor(input_gate.safe_text):
+        if parsed.intent == Intent.ASK and should_try_llm_action_extractor(input_gate.safe_text):
             if not self.limits.consume(user.user_id):
                 return self.responses.daily_limit(intent=parsed.intent)
             with self._perf.track("llm"):
@@ -232,35 +226,15 @@ class AssistantPipeline:
         if not self.limits.consume(user.user_id):
             return self.responses.daily_limit(intent=parsed.intent)
 
-        try:
-            with self._perf.track("llm"):
-                hermes_response = self.hermes.ask(
-                    HermesRequest(
-                        user=user,
-                        prompt=input_gate.safe_text,
-                        intent=parsed.intent,
-                        context={"style": self.preferences.get(user.user_id).preferred_response_style},
-                    )
-                )
-        except Exception:
-            return self.responses.provider_unavailable(intent=parsed.intent)
-
-        output_gate = check_output(hermes_response.text, max_chars=self.max_output_chars)
-        if output_gate.status == GateStatus.NEEDS_FALLBACK:
-            return self.responses.provider_fallback(
-                reason=output_gate.reason,
-                intent=parsed.intent,
-                provider=hermes_response.provider,
-                model=hermes_response.model,
-                fallback_count=hermes_response.fallback_count,
-            )
-
-        return AssistantReply(
-            text=output_gate.safe_text,
+        return answer_with_ai(
+            hermes=self.hermes,
+            responses=self.responses,
+            user=user,
+            prompt=input_gate.safe_text,
             intent=parsed.intent,
-            provider=hermes_response.provider,
-            model=hermes_response.model,
-            fallback_count=hermes_response.fallback_count,
+            style=self.preferences.get(user.user_id).preferred_response_style,
+            max_output_chars=self.max_output_chars,
+            perf=self._perf,
         )
 
     def _remember(self, user: UserContext, text: str) -> AssistantReply:
@@ -533,52 +507,7 @@ class AssistantPipeline:
 
     def _execute_natural_route(self, user: UserContext, route: NaturalRoute) -> AssistantReply:
         self._current_extracted_actions = list(route.actions)
-        if any(action.needs_confirmation for action in route.actions):
-            return self.responses.clarification_question("natural_action_needs_clarification")
-        if self.action_queue is not None and any(_is_heavy_action(action) for action in route.actions):
-            return self._queue_natural_route(user, route)
-        done: list[str] = []
-        failed: list[str] = []
-        for index, action in enumerate(route.actions, start=1):
-            try:
-                summary = self._execute_natural_action(user, action)
-            except (TaskCommandError, ToolExecutionError) as exc:
-                failed.append(f"{index}. {self._natural_action_label(action)}: {exc}")
-                continue
-            done.append(f"{index}. {summary}")
-
-        if failed and not done:
-            return self.responses.partial_failure(
-                done=[],
-                failed=failed,
-                intent=Intent.AGENT_DO,
-            )
-        if failed:
-            return self.responses.partial_failure(done=done, failed=failed, intent=Intent.AGENT_DO)
-        return self.responses.success_summary(done=done, intent=Intent.AGENT_DO)
-
-    def _execute_natural_action(self, user: UserContext, action: PlannedAction) -> str:
-        if action.type == ActionType.CALENDAR_MOVE:
-            raise TaskCommandError("Перенос встреч пока требует уточнения и отдельного calendar update tool.")
-        with self._perf.track("tool"):
-            return self.action_executor.execute(action, self._tool_context(user)).message
-
-    def _queue_natural_route(self, user: UserContext, route: NaturalRoute) -> AssistantReply:
-        labels = [self._natural_action_label(action) for action in route.actions]
-        goal = "; ".join(labels)
-        job = self.agent_jobs.create(user.user_id, goal, labels)
-        for index, action in enumerate(route.actions, start=1):
-            self.action_queue.enqueue(
-                user_id=user.user_id,
-                action_type=action.type,
-                payload=action.payload,
-                job_id=job.id,
-                idempotency_key=f"{user.user_id}:job:{job.id}:action:{index}",
-            )
-        return AssistantReply(
-            text=f"Принял, выполняю. Job #{job.id}.\nИтог пришлю отдельным сообщением.",
-            intent=Intent.AGENT_DO,
-        )
+        return self.natural_actions.execute_route(user, route, perf=self._perf)
 
     def _queue_direct_action(
         self,
@@ -586,12 +515,10 @@ class AssistantPipeline:
         action_type: ActionType,
         payload: dict[str, str],
     ) -> AssistantReply:
-        route = NaturalRoute(actions=[PlannedAction(action_type, payload=payload)])
-        return self._queue_natural_route(user, route)
+        return self.natural_actions.queue_direct_action(user, action_type, payload)
 
     def execute_queued_action(self, user: UserContext, action: AgentAction) -> str:
-        planned = PlannedAction(action.type, payload=action.payload, reason="queued_action")
-        return self._execute_natural_action(user, planned)
+        return self.natural_actions.execute_queued_action(user, action, perf=self._perf)
 
     def _tool_context(self, user: UserContext) -> ToolContext:
         return ToolContext(
@@ -606,147 +533,14 @@ class AssistantPipeline:
         )
 
     def _route_natural_text(self, user: UserContext, text: str) -> NaturalRoute:
-        with self._perf.track("route"):
-            return route_natural_text(
-                text,
-                context_text=self.conversation_turns.latest_user_text(user.user_id),
-                preferences=self.preferences.get(user.user_id),
-            )
+        return self.natural_actions.route_text(
+            user=user,
+            text=text,
+            conversation_turns=self.conversation_turns,
+            preferences=self.preferences,
+            perf=self._perf,
+        )
 
     def _task_text_with_preferences(self, text: str, user: UserContext | None) -> str:
-        if user is None:
-            return text
-        preferences = self.preferences.get(user.user_id)
-        value = (text or "").strip()
-        lowered = value.lower()
-        if preferences.default_trello_list and "list=" not in lowered and "список=" not in lowered:
-            value += f" | list={preferences.default_trello_list}"
-        if preferences.default_project and "project=" not in lowered and "проект=" not in lowered:
-            value += f" | project={preferences.default_project}"
-        return value
-
-    @staticmethod
-    def _natural_action_label(action: PlannedAction) -> str:
-        return action.payload.get("title") or action.payload.get("text") or action.payload.get("goal") or action.type.value
-
-    def _provider_health_lines(self) -> list[str]:
-        if self.provider_health is None:
-            return []
-        items = self.provider_health.list_all()
-        if not items:
-            return []
-        lines = ["Providers:"]
-        for item in items:
-            status = "cooldown" if item.in_cooldown() else "ok"
-            latency = f" {item.latency_ms}ms" if item.latency_ms is not None else ""
-            counters = (
-                f" rate={item.rate_limit_count}"
-                f" server={item.server_error_count}"
-                f" auth={item.auth_error_count}"
-            )
-            if status == "ok":
-                lines.append(f"{item.name} {item.model} ok{latency}")
-            else:
-                lines.append(f"{item.name} {item.model} cooldown{counters}")
-        return lines
-
-    def _delivery_health_lines(self) -> list[str]:
-        if self.delivery_outbox is None:
-            return []
-        stats = self.delivery_outbox.stats()
-        return [
-            "Delivery:",
-            (
-                f"queued={stats.get('queued', 0)} "
-                f"sending={stats.get('sending', 0)} "
-                f"sent={stats.get('sent', 0)} "
-                f"failed={stats.get('failed', 0)}"
-            ),
-        ]
-
-    def _task_center_health_lines(self) -> list[str]:
-        if self.task_center is None or not hasattr(self.task_center, "health_check"):
-            return []
-        try:
-            health = self.task_center.health_check()
-        except Exception as exc:
-            return ["Task Center:", f"health=fail detail={type(exc).__name__}: {exc}"]
-        trello = "ok" if health.trello_ok else "fail"
-        calendar = "ok" if health.calendar_ok else "fail"
-        return [
-            "Task Center:",
-            f"trello={trello} calendar={calendar}",
-        ]
-
-
-def _should_try_llm_action_extractor(text: str) -> bool:
-    lowered = text.lower()
-    markers = (
-        "надо",
-        "нужно",
-        "организуй",
-        "сделай",
-        "разложи",
-        "запланируй",
-        "подготовь",
-        "добавь",
-        "создай",
-        "перенеси",
-        "перемести",
-        "сохрани",
-        "запиши",
-        "напомни",
-        "поставь",
-        "задач",
-        "календар",
-    )
-    return any(marker in lowered for marker in markers)
-
-
-def _is_heavy_action(action: PlannedAction) -> bool:
-    return action.type in {
-        ActionType.TASK_CREATE,
-        ActionType.TASK_LIST,
-        ActionType.TASK_MOVE,
-        ActionType.TASK_DONE,
-        ActionType.CALENDAR_CREATE,
-        ActionType.CALENDAR_MOVE,
-    }
-
-
-def _task_payload(text: str) -> dict[str, str]:
-    fields = _fields_payload(text, fallback_key="title")
-    payload = {"title": fields.get("title", "")}
-    for key in ("start", "end", "list", "project"):
-        if fields.get(key):
-            payload[key] = fields[key]
-    return payload
-
-
-def _fields_payload(text: str, *, fallback_key: str) -> dict[str, str]:
-    chunks = [chunk.strip() for chunk in (text or "").split("|") if chunk.strip()]
-    fields: dict[str, str] = {}
-    if chunks and "=" not in chunks[0]:
-        fields[fallback_key] = chunks.pop(0)
-    for chunk in chunks:
-        if "=" not in chunk:
-            continue
-        key, value = chunk.split("=", 1)
-        normalized = _normalize_field_key(key)
-        clean_value = value.strip()
-        if normalized and clean_value:
-            fields[normalized] = clean_value
-    return fields
-
-
-def _normalize_field_key(key: str) -> str:
-    normalized = key.strip().lower()
-    return {
-        "название": "title",
-        "текст": "text",
-        "список": "list",
-        "проект": "project",
-        "куда": "to",
-        "начало": "start",
-        "конец": "end",
-    }.get(normalized, normalized)
+        preferences = self.preferences.get(user.user_id) if user is not None else None
+        return task_text_with_preferences(text, preferences)

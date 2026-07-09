@@ -12,8 +12,9 @@ COPY gateway_bot ./gateway_bot
 COPY reminders ./reminders
 COPY scripts ./scripts
 COPY hermes ./hermes
+COPY alembic.ini ./
+COPY alembic ./alembic
 
 RUN pip install --no-cache-dir -e .
 
 CMD ["python", "-m", "gateway_bot.telegram_app"]
-
