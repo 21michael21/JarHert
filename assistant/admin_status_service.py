@@ -75,3 +75,40 @@ def task_center_health_lines(task_center) -> list[str]:
         "Task Center:",
         f"trello={trello} calendar={calendar}",
     ]
+
+
+def build_perf_status_text(events, *, limit: int = 200) -> str:
+    if events is None or not hasattr(events, "recent_perf_samples"):
+        return "Perf status\nperf_events=disabled"
+    samples = events.recent_perf_samples(limit=limit)
+    lines = [
+        "Perf status",
+        f"samples={len(samples)}",
+    ]
+    if not samples:
+        lines.append("Нет свежих perf_ms событий.")
+        return "\n".join(lines)
+
+    keys = [
+        "total_response_ms",
+        "intent_parse_ms",
+        "route_ms",
+        "llm_ms",
+        "tool_ms",
+    ]
+    for key in keys:
+        values = [sample[key] for sample in samples if key in sample]
+        if not values:
+            continue
+        lines.append(
+            f"{key}: count={len(values)} p50={_percentile(values, 50)}ms p95={_percentile(values, 95)}ms"
+        )
+    return "\n".join(lines)
+
+
+def _percentile(values: list[int], percentile: int) -> int:
+    ordered = sorted(values)
+    if not ordered:
+        return 0
+    index = round((len(ordered) - 1) * (percentile / 100))
+    return ordered[max(0, min(index, len(ordered) - 1))]

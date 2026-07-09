@@ -299,13 +299,15 @@ def test_trace_command_shows_job_action_delivery_and_events(tmp_path) -> None:
     user = UserStore(factory).get_or_create(1001)
     trace_id = "trace-view-1"
     job = SqlAgentJobStore(factory).create(user.id, "создать задачу", ["создать задачу"], trace_id=trace_id)
-    action = SqlActionQueueStore(factory).enqueue(
+    queue = SqlActionQueueStore(factory)
+    action = queue.enqueue(
         user_id=user.id,
         action_type=ActionType.TASK_CREATE,
         payload={"title": "проверить trace"},
         job_id=job.id,
         trace_id=trace_id,
     )
+    queue.mark_succeeded(action.id, result_meta={"trello_card_id": "card123456"})
     SqlDeliveryOutboxStore(factory).enqueue(user_id=user.id, chat_id=user.tg_user_id, text="готово", trace_id=trace_id)
     EventStore(factory).log(
         user.id,
@@ -329,6 +331,39 @@ def test_trace_command_shows_job_action_delivery_and_events(tmp_path) -> None:
     assert "Delivery:" in reply.text
     assert "Events:" in reply.text
     assert "action_started" in reply.text
+    assert "trello_card_id=card123456" in reply.text
+
+
+def test_admin_status_perf_shows_latency_percentiles(tmp_path) -> None:
+    factory = session_factory(tmp_path)
+    user = UserStore(factory).get_or_create(1001)
+    events = EventStore(factory)
+    events.log_assistant_response(
+        user.id,
+        "assistant_ai_answer",
+        intent="ai_answer",
+        perf_ms={"total_response_ms": 100, "llm_ms": 40, "tool_ms": 10},
+    )
+    events.log_assistant_response(
+        user.id,
+        "assistant_agent_do",
+        intent="agent_do",
+        perf_ms={"total_response_ms": 300, "llm_ms": 80, "tool_ms": 20},
+    )
+    service = GatewayService(
+        pipeline=AssistantPipeline(FakeHermesClient(), DailyLimitStore()),
+        admin_tg_user_ids={1001},
+        users=UserStore(factory),
+        events=events,
+    )
+
+    reply = service.handle_text(1001, "/admin_status perf")
+
+    assert reply.blocked_reason is None
+    assert "Perf status" in reply.text
+    assert "samples=2" in reply.text
+    assert "total_response_ms:" in reply.text
+    assert "llm_ms:" in reply.text
 
 
 def test_trace_command_handles_missing_trace(tmp_path) -> None:

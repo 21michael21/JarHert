@@ -25,11 +25,11 @@ class FakeTaskCenter:
 
     def create_task(self, text):
         self.calls.append(("create_task", text))
-        return "task created"
+        return "task created card_id=trello123456 https://trello.com/c/abcd1234/task"
 
     def create_task_with_calendar(self, **kwargs):
         self.calls.append(("create_task_with_calendar", kwargs))
-        return "task and calendar created"
+        return "task and calendar created card_id=trello123456 calendar_event_id=event123456"
 
     def list_tasks(self, text):
         self.calls.append(("list_tasks", text))
@@ -45,7 +45,7 @@ class FakeTaskCenter:
 
     def create_calendar_event(self, text):
         self.calls.append(("create_calendar_event", text))
-        return "calendar event"
+        return "calendar event calendar_event_id=event123456"
 
 
 def make_context(task_center=None) -> ToolContext:
@@ -119,6 +119,8 @@ def test_executor_routes_task_create_to_registered_tool() -> None:
             {"title": "проверить Trello", "start": "tomorrow 10:00", "end": "tomorrow 10:30"},
         )
     ]
+    assert result.meta["trello_card_id"] == "trello123456"
+    assert result.meta["calendar_event_id"] == "event123456"
 
 
 def test_tool_registry_classifies_external_task_errors() -> None:

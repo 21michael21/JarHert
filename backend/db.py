@@ -58,6 +58,14 @@ def _upgrade_existing_schema(engine) -> None:
         "compensation_status",
         "VARCHAR(30) NOT NULL DEFAULT 'none'",
     )
+    _add_column_if_missing(
+        engine,
+        inspector,
+        table_names,
+        "agent_actions",
+        "result_meta",
+        "JSON NOT NULL DEFAULT '{}'",
+    )
     _add_nullable_column_if_missing(engine, inspector, table_names, "delivery_outbox", "trace_id", "VARCHAR(40)")
     _add_nullable_column_if_missing(engine, inspector, table_names, "delivery_outbox", "buttons", "JSON")
     _add_nullable_column_if_missing(engine, inspector, table_names, "events", "trace_id", "VARCHAR(40)")

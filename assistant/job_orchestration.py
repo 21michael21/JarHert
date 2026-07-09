@@ -6,6 +6,7 @@ from assistant.action_queue import ActionStatus, AgentAction
 
 
 COMPENSATION_NONE = "none"
+COMPENSATION_AVAILABLE = "available"
 COMPENSATION_NOT_SUPPORTED = "not_supported"
 
 
@@ -20,6 +21,7 @@ class JobStatusSummary:
     queued: int = 0
     needs_confirmation: int = 0
     cancelled: int = 0
+    compensation_available: int = 0
     compensation_not_supported: int = 0
     next_action_id: int | None = None
 
@@ -32,11 +34,14 @@ def compute_job_status(actions: list[AgentAction]) -> JobStatusSummary:
     ordered = sorted(actions, key=lambda action: (action.created_at, action.id))
     total = len(ordered)
     counts = {status: 0 for status in ActionStatus}
+    compensation_available = 0
     compensation_not_supported = 0
     next_action_id: int | None = None
 
     for action in ordered:
         counts[action.status] += 1
+        if action.compensation_status == COMPENSATION_AVAILABLE:
+            compensation_available += 1
         if action.compensation_status == COMPENSATION_NOT_SUPPORTED:
             compensation_not_supported += 1
         if next_action_id is None and action.status in {
@@ -83,6 +88,7 @@ def compute_job_status(actions: list[AgentAction]) -> JobStatusSummary:
         queued=queued,
         needs_confirmation=needs_confirmation,
         cancelled=cancelled,
+        compensation_available=compensation_available,
         compensation_not_supported=compensation_not_supported,
         next_action_id=next_action_id,
     )

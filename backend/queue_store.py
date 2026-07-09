@@ -149,10 +149,12 @@ class SqlActionQueueStore:
             db.commit()
             return None
 
-    def mark_succeeded(self, action_id: int) -> AgentAction:
+    def mark_succeeded(self, action_id: int, *, result_meta: dict[str, str] | None = None) -> AgentAction:
         with self.session_factory() as db:
             record = _require_agent_action(db, action_id)
             record.status = ActionStatus.SUCCEEDED.value
+            if result_meta is not None:
+                record.result_meta = dict(result_meta)
             record.last_error = None
             _unblock_dependents_after_success(db, action_id)
             db.commit()
@@ -265,8 +267,15 @@ class SqlActionQueueStore:
                 .order_by(AgentActionRecord.created_at.asc(), AgentActionRecord.id.asc())
             ).all()
             for record in records:
-                record.compensation_status = "not_supported"
-                record.last_error = truncate_error(reason)
+                result_meta = dict(record.result_meta or {})
+                if _has_external_result_ids(result_meta):
+                    record.compensation_status = "available"
+                    record.last_error = truncate_error(
+                        "Rollback identifiers are available, but no safe rollback tool is configured."
+                    )
+                else:
+                    record.compensation_status = "not_supported"
+                    record.last_error = truncate_error(reason)
             db.commit()
             for record in records:
                 db.refresh(record)
@@ -433,6 +442,10 @@ def _unblock_dependents_after_success(db: Session, action_id: int) -> None:
     for record in records:
         record.status = ActionStatus.QUEUED.value
         record.last_error = None
+
+
+def _has_external_result_ids(meta: dict[str, str]) -> bool:
+    return any(key.endswith("_id") or key.endswith("_url") for key in meta)
 
 
 def _require_delivery_message(db: Session, message_id: int) -> DeliveryOutboxRecord:

@@ -82,6 +82,7 @@ def agent_action_from_record(record: AgentActionRecord) -> AgentAction:
         depends_on_action_id=record.depends_on_action_id,
         compensation_for_action_id=record.compensation_for_action_id,
         compensation_status=record.compensation_status or "none",
+        result_meta=dict(record.result_meta or {}),
         idempotency_key=record.idempotency_key,
         last_error=record.last_error,
         created_at=record.created_at,

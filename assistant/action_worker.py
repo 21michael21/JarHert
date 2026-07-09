@@ -5,13 +5,13 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from assistant.action_queue import AgentAction
-from assistant.tool_registry import ToolExecutionError
+from assistant.tool_registry import ToolExecutionError, ToolExecutionResult
 
 
 logger = logging.getLogger(__name__)
 
 
-AsyncActionExecutor = Callable[[AgentAction], Awaitable[str]]
+AsyncActionExecutor = Callable[[AgentAction], Awaitable[str | ToolExecutionResult]]
 AsyncActionResultDelivery = Callable[[AgentAction, str], Awaitable[None]]
 ActionEventLogger = Callable[[AgentAction, str, dict], None]
 JobStatusUpdater = Callable[[AgentAction], None]
@@ -38,7 +38,8 @@ async def run_action_worker(
 
         try:
             _log_event(event_logger, action, "action_started", {"attempts": action.attempts})
-            result = await execute(action)
+            raw_result = await execute(action)
+            result = _coerce_result(raw_result)
         except Exception as error:
             retryable = isinstance(error, ToolExecutionError) and error.retryable
             if retryable and action.attempts < max_attempts:
@@ -57,10 +58,15 @@ async def run_action_worker(
             await asyncio.sleep(interval_seconds)
             continue
 
-        action_queue.mark_succeeded(action.id)
-        _log_event(event_logger, action, "action_succeeded", {"result_chars": len(result)})
+        action_queue.mark_succeeded(action.id, result_meta=result.meta)
+        _log_event(
+            event_logger,
+            action,
+            "action_succeeded",
+            {"result_chars": len(result.message), "result_meta": dict(result.meta)},
+        )
         _update_job_status(job_status_updater, action)
-        await deliver(action, _success_text(action, result))
+        await deliver(action, _success_text(action, result.message))
         if stop_after_one_tick:
             return
         await asyncio.sleep(interval_seconds)
@@ -74,6 +80,12 @@ def _success_text(action: AgentAction, result: str) -> str:
 def _failure_text(action: AgentAction, error: Exception) -> str:
     prefix = f"Job #{action.job_id}" if action.job_id is not None else f"Action #{action.id}"
     return f"{prefix}: не выполнил действие. Причина: {error}"
+
+
+def _coerce_result(result: str | ToolExecutionResult) -> ToolExecutionResult:
+    if isinstance(result, ToolExecutionResult):
+        return result
+    return ToolExecutionResult(str(result))
 
 
 def _log_event(logger_fn: ActionEventLogger | None, action: AgentAction, event_type: str, meta: dict) -> None:
@@ -99,11 +111,17 @@ def _mark_compensation_skipped(action_queue, logger_fn: ActionEventLogger | None
         return
     reason = "Rollback tool is not available for this action type."
     for compensated in action_queue.mark_compensation_skipped_for_job(action.job_id, action.id, reason):
+        event_type = "compensation_available" if compensated.compensation_status == "available" else "compensation_skipped"
         _log_event(
             logger_fn,
             compensated,
-            "compensation_skipped",
-            {"failed_action_id": action.id, "job_id": action.job_id, "reason": reason},
+            event_type,
+            {
+                "failed_action_id": action.id,
+                "job_id": action.job_id,
+                "reason": reason,
+                "result_meta": dict(compensated.result_meta),
+            },
         )
 
 

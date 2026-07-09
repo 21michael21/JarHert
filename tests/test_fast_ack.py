@@ -10,6 +10,7 @@ from assistant.delivery_outbox import InMemoryDeliveryOutboxStore
 from assistant.hermes_client import FakeHermesClient
 from assistant.limits import DailyLimitStore
 from assistant.pipeline import AssistantPipeline
+from assistant.tool_registry import ToolExecutionResult
 from assistant.types import UserContext
 
 
@@ -176,3 +177,42 @@ def test_action_worker_blocks_dependents_and_marks_compensation_on_failure() -> 
     assert "action_blocked" in [event[1] for event in events]
     assert "compensation_skipped" in [event[1] for event in events]
     assert updated_jobs == [12]
+
+
+def test_action_worker_persists_tool_result_meta() -> None:
+    queue = InMemoryActionQueueStore()
+    action = queue.enqueue(
+        user_id=1,
+        action_type=ActionType.TASK_CREATE,
+        payload={"title": "сохранить id"},
+        job_id=13,
+        trace_id="trace-result-meta",
+    )
+    delivered = []
+    events = []
+
+    async def execute(_claimed):
+        return ToolExecutionResult("Создал задачу.", meta={"trello_card_id": "card123456"})
+
+    async def deliver(_claimed, text: str) -> None:
+        delivered.append(text)
+
+    def log_event(claimed, event_type, meta) -> None:
+        events.append((claimed.id, event_type, meta))
+
+    asyncio.run(
+        run_action_worker(
+            queue,
+            execute,
+            deliver,
+            stop_after_one_tick=True,
+            event_logger=log_event,
+        )
+    )
+
+    saved = next(item for item in queue.list_for_user(1) if item.id == action.id)
+    assert saved.result_meta == {"trello_card_id": "card123456"}
+    assert "Создал задачу" in delivered[0]
+    assert ("action_succeeded", {"trello_card_id": "card123456"}) in [
+        (event_type, meta.get("result_meta")) for _, event_type, meta in events
+    ]

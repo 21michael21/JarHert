@@ -40,11 +40,11 @@ async def start_background_workers(bot) -> None:
     async def send_delivery(message: DeliveryMessage) -> None:
         await bot.send_message(message.chat_id, message.text, reply_markup=reply_markup(message.buttons))
 
-    async def execute_action(action: AgentAction) -> str:
+    async def execute_action(action: AgentAction):
         tg_user_id = _tg_user_id_for_internal_user(action.user_id)
         if tg_user_id is None:
             raise RuntimeError(f"Telegram user not found for internal user {action.user_id}")
-        return service.pipeline.execute_queued_action(
+        return service.pipeline.execute_queued_action_result(
             UserContext(user_id=action.user_id, tg_user_id=tg_user_id),
             action,
         )

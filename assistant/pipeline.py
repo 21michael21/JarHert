@@ -30,7 +30,7 @@ from assistant.provider_clients import HermesClient
 from assistant.quality_gates import check_input
 from assistant.response_composer import ResponseComposer
 from assistant.task_command_center import TaskCommandCenter, TaskCommandError
-from assistant.tool_registry import ToolContext, build_default_tool_registry
+from assistant.tool_registry import ToolContext, ToolExecutionResult, build_default_tool_registry
 from assistant.tracing import new_trace_id
 from assistant.types import AssistantReply, Intent, UserContext
 from reminders.parser import parse_reminder
@@ -537,6 +537,14 @@ class AssistantPipeline:
 
     def execute_queued_action(self, user: UserContext, action: AgentAction) -> str:
         return self.natural_actions.execute_queued_action(user, action, perf=self._perf, trace_id=action.trace_id)
+
+    def execute_queued_action_result(self, user: UserContext, action: AgentAction) -> ToolExecutionResult:
+        return self.natural_actions.execute_queued_action_result(
+            user,
+            action,
+            perf=self._perf,
+            trace_id=action.trace_id,
+        )
 
     def _tool_context(self, user: UserContext) -> ToolContext:
         return ToolContext(

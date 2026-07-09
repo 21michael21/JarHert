@@ -10,6 +10,7 @@ from assistant.agent_jobs import build_agent_plan
 from assistant.preferences import UserPreferences
 from assistant.quality_gates import check_input
 from assistant.task_command_center import TaskCommandCenter, TaskCommandError
+from assistant.tool_result_ids import extract_tool_result_ids
 from assistant.types import UserContext
 from reminders.parser import parse_reminder
 
@@ -263,15 +264,15 @@ def _task_create(payload: dict[str, str], context: ToolContext) -> ToolExecution
             kwargs["list_name"] = list_name
         if project:
             kwargs["project"] = project
-        center.create_task_with_calendar(**kwargs)
-        return ToolExecutionResult(f"Создал задачу «{title}» на {start}.")
+        output = center.create_task_with_calendar(**kwargs)
+        return ToolExecutionResult(f"Создал задачу «{title}» на {start}.", meta=extract_tool_result_ids(output))
     command = title
     if list_name:
         command += f" | list={list_name}"
     if project:
         command += f" | project={project}"
-    center.create_task(command)
-    return ToolExecutionResult(f"Создал задачу «{title}».")
+    output = center.create_task(command)
+    return ToolExecutionResult(f"Создал задачу «{title}».", meta=extract_tool_result_ids(output))
 
 
 def _task_list(payload: dict[str, str], context: ToolContext) -> ToolExecutionResult:
@@ -283,13 +284,13 @@ def _task_list(payload: dict[str, str], context: ToolContext) -> ToolExecutionRe
 def _task_move(payload: dict[str, str], context: ToolContext) -> ToolExecutionResult:
     center = _require_task_center(context)
     output = center.move_task(f"{payload['title']} | to={payload['to']}")
-    return ToolExecutionResult("Переместил задачу:\n" + output)
+    return ToolExecutionResult("Переместил задачу:\n" + output, meta=extract_tool_result_ids(output))
 
 
 def _task_done(payload: dict[str, str], context: ToolContext) -> ToolExecutionResult:
     center = _require_task_center(context)
     output = center.complete_task(payload["title"])
-    return ToolExecutionResult("Закрыл задачу:\n" + output)
+    return ToolExecutionResult("Закрыл задачу:\n" + output, meta=extract_tool_result_ids(output))
 
 
 def _calendar_create(payload: dict[str, str], context: ToolContext) -> ToolExecutionResult:
@@ -297,7 +298,7 @@ def _calendar_create(payload: dict[str, str], context: ToolContext) -> ToolExecu
     output = center.create_calendar_event(
         f"{payload['title']} | start={payload['start']} | end={payload['end']}"
     )
-    return ToolExecutionResult("Создал событие:\n" + output)
+    return ToolExecutionResult("Создал событие:\n" + output, meta=extract_tool_result_ids(output))
 
 
 def _telegram_reply(payload: dict[str, str], context: ToolContext) -> ToolExecutionResult:

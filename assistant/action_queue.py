@@ -30,6 +30,7 @@ class AgentAction:
     depends_on_action_id: int | None = None
     compensation_for_action_id: int | None = None
     compensation_status: str = "none"
+    result_meta: dict[str, str] = field(default_factory=dict)
     idempotency_key: str | None = None
     last_error: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -110,11 +111,12 @@ class InMemoryActionQueueStore:
             return updated
         return None
 
-    def mark_succeeded(self, action_id: int) -> AgentAction:
+    def mark_succeeded(self, action_id: int, *, result_meta: dict[str, str] | None = None) -> AgentAction:
         item = self._require(action_id)
         updated = replace(
             item,
             status=ActionStatus.SUCCEEDED,
+            result_meta=dict(result_meta or item.result_meta),
             last_error=None,
             updated_at=datetime.now(timezone.utc),
         )
@@ -211,10 +213,16 @@ class InMemoryActionQueueStore:
                 continue
             if item.status != ActionStatus.SUCCEEDED or item.compensation_status != "none":
                 continue
+            compensation_status = "available" if _has_external_result_ids(item.result_meta) else "not_supported"
+            compensation_error = (
+                "Rollback identifiers are available, but no safe rollback tool is configured."
+                if compensation_status == "available"
+                else reason
+            )
             updated = replace(
                 item,
-                compensation_status="not_supported",
-                last_error=_truncate_error(reason),
+                compensation_status=compensation_status,
+                last_error=_truncate_error(compensation_error),
                 updated_at=datetime.now(timezone.utc),
             )
             self._replace(updated)
@@ -277,3 +285,7 @@ def _truncate_error(error: str, *, limit: int = 1000) -> str:
     if len(value) <= limit:
         return value
     return value[: limit - 1].rstrip() + "…"
+
+
+def _has_external_result_ids(meta: dict[str, str]) -> bool:
+    return any(key.endswith("_id") or key.endswith("_url") for key in meta)

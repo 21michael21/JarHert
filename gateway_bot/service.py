@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from assistant.admin_status_service import build_perf_status_text
 from assistant.action_queue import ActionStatus
 from assistant.job_orchestration import compute_job_status
 from assistant.pipeline import AssistantPipeline
+from assistant.tool_result_ids import compact_result_meta
 from assistant.types import AssistantReply, Intent, ReplyButton, UserContext
 from backend.stores import EventStore, UserStore
 from backend.trace_store import SqlTraceStore, TraceSnapshot
@@ -41,6 +43,8 @@ class GatewayService:
             tg_user_id=tg_user_id,
             is_admin=tg_user_id in (self.admin_tg_user_ids or set()),
         )
+        if trace_text == "/admin_status perf":
+            return self.perf_status(user)
         reply = self.pipeline.handle_text(user, text)
         if self.events is not None:
             self.events.log_assistant_response(
@@ -55,6 +59,18 @@ class GatewayService:
                 trace_id=reply.trace_id,
             )
         return reply
+
+    def perf_status(self, user: UserContext) -> AssistantReply:
+        if not user.is_admin:
+            return AssistantReply(
+                text="Эта команда доступна только владельцу бота.",
+                intent=Intent.ADMIN_STATUS,
+                blocked_reason="admin_required",
+            )
+        return AssistantReply(
+            text=build_perf_status_text(self.events),
+            intent=Intent.ADMIN_STATUS,
+        )
 
     def confirm_action(self, tg_user_id: int, action_id: int) -> AssistantReply:
         user = self._user_context(tg_user_id)
@@ -226,6 +242,8 @@ class GatewayService:
         ]
         if summary.next_action_id is not None:
             lines.append(f"Следующее действие: action #{summary.next_action_id}")
+        if summary.compensation_available:
+            lines.append(f"Компенсация: {summary.compensation_available} шаг(ов) готовы к rollback по external ids.")
         if summary.compensation_not_supported:
             lines.append(f"Компенсация: {summary.compensation_not_supported} шаг(ов) требуют ручной проверки.")
         if actions:
@@ -237,9 +255,10 @@ class GatewayService:
                     if action.compensation_status != "none"
                     else ""
                 )
+                ids = f" ids={compact_result_meta(action.result_meta)}" if action.result_meta else ""
                 error = f" error={_compact(action.last_error, limit=80)}" if action.last_error else ""
                 lines.append(
-                    f"{action.id}. {action.type.value} — {action.status.value}{dependency}{compensation}{error}"
+                    f"{action.id}. {action.type.value} — {action.status.value}{dependency}{compensation}{ids}{error}"
                 )
         buttons = []
         if any(action.status == ActionStatus.NEEDS_CONFIRMATION for action in actions):
@@ -327,9 +346,10 @@ def _format_trace(snapshot: TraceSnapshot) -> str:
                 if action.compensation_status != "none"
                 else ""
             )
+            ids = f" ids={compact_result_meta(action.result_meta)}" if action.result_meta else ""
             lines.append(
                 f"- #{action.id} job={action.job_id or '-'} {action.type} "
-                f"{action.status} attempts={action.attempts}{dependency}{compensation}{suffix}"
+                f"{action.status} attempts={action.attempts}{dependency}{compensation}{ids}{suffix}"
             )
     if snapshot.deliveries:
         lines.append("Delivery:")
@@ -365,6 +385,7 @@ def _event_meta_summary(meta: dict) -> str:
         "depends_on_action_id",
         "blocked_by_action_id",
         "failed_action_id",
+        "result_meta",
     )
     parts = []
     for key in allowed_keys:
@@ -392,6 +413,7 @@ def _computed_job_status(job_id: int, snapshot: TraceSnapshot) -> str:
             created_at=action.created_at,
             depends_on_action_id=action.depends_on_action_id,
             compensation_status=action.compensation_status,
+            result_meta=action.result_meta,
         )
         for action in snapshot.actions
         if action.job_id == job_id

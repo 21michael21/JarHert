@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.models import Event
@@ -47,3 +48,24 @@ class EventStore:
             },
             trace_id=trace_id,
         )
+
+    def recent_perf_samples(self, *, limit: int = 200) -> list[dict[str, int]]:
+        with self.session_factory() as db:
+            records = db.scalars(
+                select(Event)
+                .where(Event.type.like("assistant_%"))
+                .order_by(Event.created_at.desc(), Event.id.desc())
+                .limit(limit)
+            ).all()
+            samples: list[dict[str, int]] = []
+            for record in records:
+                perf_ms = (record.meta or {}).get("perf_ms") if record.meta else None
+                if not isinstance(perf_ms, dict) or not perf_ms:
+                    continue
+                clean: dict[str, int] = {}
+                for key, value in perf_ms.items():
+                    if isinstance(key, str) and isinstance(value, int):
+                        clean[key] = value
+                if clean:
+                    samples.append(clean)
+            return samples

@@ -185,6 +185,31 @@ def test_in_memory_queue_marks_compensation_skipped_for_successful_previous_acti
     assert first_after.last_error == "no rollback"
 
 
+def test_in_memory_queue_persists_result_meta_and_marks_compensation_available() -> None:
+    queue = InMemoryActionQueueStore()
+    first = queue.enqueue(
+        user_id=1,
+        action_type=ActionType.TASK_CREATE,
+        payload={"title": "уже сделано"},
+        job_id=10,
+    )
+    failed = queue.enqueue(
+        user_id=1,
+        action_type=ActionType.CALENDAR_CREATE,
+        payload={"title": "сломалось", "start": "2026-07-10 10:00", "end": "2026-07-10 10:30"},
+        job_id=10,
+        depends_on_action_id=first.id,
+    )
+    queue.mark_succeeded(first.id, result_meta={"trello_card_id": "card123456"})
+
+    compensated = queue.mark_compensation_skipped_for_job(10, failed.id, "no rollback")
+
+    assert [item.id for item in compensated] == [first.id]
+    first_after = next(item for item in queue.list_for_user(1) if item.id == first.id)
+    assert first_after.result_meta == {"trello_card_id": "card123456"}
+    assert first_after.compensation_status == "available"
+
+
 def test_sql_action_queue_respects_dependencies_and_compensation(tmp_path) -> None:
     factory = session_factory(tmp_path)
     user = UserStore(factory).get_or_create(9104)
@@ -215,6 +240,33 @@ def test_sql_action_queue_respects_dependencies_and_compensation(tmp_path) -> No
     first_after = next(item for item in queue.list_for_user(user.id) if item.id == first.id)
     assert first_after.depends_on_action_id is None
     assert first_after.compensation_status == "not_supported"
+
+
+def test_sql_queue_persists_result_meta_and_marks_compensation_available(tmp_path) -> None:
+    factory = session_factory(tmp_path)
+    user = UserStore(factory).get_or_create(9106)
+    queue = SqlActionQueueStore(factory)
+    first = queue.enqueue(
+        user_id=user.id,
+        action_type=ActionType.TASK_CREATE,
+        payload={"title": "создать"},
+        job_id=21,
+    )
+    failed = queue.enqueue(
+        user_id=user.id,
+        action_type=ActionType.CALENDAR_CREATE,
+        payload={"title": "сломать", "start": "2026-07-10 10:00", "end": "2026-07-10 10:30"},
+        job_id=21,
+        depends_on_action_id=first.id,
+    )
+    queue.mark_succeeded(first.id, result_meta={"calendar_event_id": "event123456"})
+
+    compensated = queue.mark_compensation_skipped_for_job(21, failed.id, "manual rollback required")
+
+    assert [item.id for item in compensated] == [first.id]
+    first_after = next(item for item in queue.list_for_user(user.id) if item.id == first.id)
+    assert first_after.result_meta == {"calendar_event_id": "event123456"}
+    assert first_after.compensation_status == "available"
 
 
 def test_sql_action_queue_unblocks_dependent_after_retry_success(tmp_path) -> None:

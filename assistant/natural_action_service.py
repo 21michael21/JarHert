@@ -11,7 +11,7 @@ from assistant.natural_router import route_natural_text
 from assistant.perf import PerfRecorder
 from assistant.response_composer import ResponseComposer
 from assistant.task_command_center import TaskCommandError
-from assistant.tool_registry import ToolContext, ToolExecutionError, ToolRisk
+from assistant.tool_registry import ToolContext, ToolExecutionError, ToolExecutionResult, ToolRisk
 from assistant.types import AssistantReply, Intent, ReplyButton, UserContext
 
 
@@ -100,6 +100,19 @@ class NaturalActionService:
         with perf.track("tool"):
             return self.action_executor.execute(action, self.tool_context_factory(user)).message
 
+    def execute_action_result(
+        self,
+        user: UserContext,
+        action: PlannedAction,
+        *,
+        perf: PerfRecorder,
+        trace_id: str = "",
+    ) -> ToolExecutionResult:
+        if action.type == ActionType.CALENDAR_MOVE:
+            raise TaskCommandError("Перенос встреч пока требует уточнения и отдельного calendar update tool.")
+        with perf.track("tool"):
+            return self.action_executor.execute(action, self.tool_context_factory(user))
+
     def queue_route(self, user: UserContext, route: NaturalRoute, *, trace_id: str = "") -> AssistantReply:
         labels = [natural_action_label(action) for action in route.actions]
         goal = "; ".join(labels)
@@ -170,8 +183,18 @@ class NaturalActionService:
         perf: PerfRecorder,
         trace_id: str = "",
     ) -> str:
+        return self.execute_queued_action_result(user, action, perf=perf, trace_id=trace_id).message
+
+    def execute_queued_action_result(
+        self,
+        user: UserContext,
+        action: AgentAction,
+        *,
+        perf: PerfRecorder,
+        trace_id: str = "",
+    ) -> ToolExecutionResult:
         planned = PlannedAction(action.type, payload=action.payload, reason="queued_action")
-        return self.execute_action(user, planned, perf=perf, trace_id=trace_id or action.trace_id)
+        return self.execute_action_result(user, planned, perf=perf, trace_id=trace_id or action.trace_id)
 
     def _needs_approval(self, action: PlannedAction) -> bool:
         spec = self.action_executor.registry.get(action.type)
