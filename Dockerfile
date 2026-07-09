@@ -10,6 +10,7 @@ COPY assistant ./assistant
 COPY backend ./backend
 COPY gateway_bot ./gateway_bot
 COPY reminders ./reminders
+COPY telegram_collector ./telegram_collector
 COPY scripts ./scripts
 COPY hermes ./hermes
 COPY alembic.ini ./

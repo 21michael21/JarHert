@@ -28,3 +28,21 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  telegram_collector:
+    build: .
+    command: ["scripts/docker_start_collector.sh"]
+    env_file: .env
+    environment:
+      TELEGRAM_COLLECTOR_HEALTH_HOST: 0.0.0.0
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8091:8091"
+    restart: unless-stopped
+    profiles: ["collector"]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
