@@ -106,6 +106,7 @@ class NaturalActionService:
         job = self.agent_jobs.create(user.user_id, goal, labels, trace_id=trace_id)
         self._log(user.user_id, "job_created", {"job_id": job.id, "goal": goal}, trace_id)
         pending_actions = []
+        previous_action_id: int | None = None
         for index, action in enumerate(route.actions, start=1):
             needs_confirmation = self._needs_approval(action)
             queued = self.action_queue.enqueue(
@@ -114,14 +115,21 @@ class NaturalActionService:
                 payload=action.payload,
                 job_id=job.id,
                 trace_id=trace_id,
+                depends_on_action_id=previous_action_id,
                 idempotency_key=f"{user.user_id}:job:{job.id}:action:{index}",
                 status=ActionStatus.NEEDS_CONFIRMATION if needs_confirmation else ActionStatus.QUEUED,
             )
             pending_actions.append(queued)
+            previous_action_id = queued.id
             self._log(
                 user.user_id,
                 "action_needs_confirmation" if needs_confirmation else "action_queued",
-                {"job_id": job.id, "action_id": queued.id, "type": action.type.value},
+                {
+                    "job_id": job.id,
+                    "action_id": queued.id,
+                    "type": action.type.value,
+                    "depends_on_action_id": queued.depends_on_action_id,
+                },
                 trace_id,
             )
 

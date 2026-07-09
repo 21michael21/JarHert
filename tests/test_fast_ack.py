@@ -113,3 +113,64 @@ def test_action_worker_emits_lifecycle_events() -> None:
 
     assert [event[1] for event in events] == ["action_started", "action_succeeded"]
     assert all(event[0] == "trace-action" for event in events)
+
+
+def test_action_worker_blocks_dependents_and_marks_compensation_on_failure() -> None:
+    queue = InMemoryActionQueueStore()
+    first = queue.enqueue(
+        user_id=1,
+        action_type=ActionType.IDEA_SAVE,
+        payload={"text": "сделано"},
+        job_id=12,
+        trace_id="trace-job",
+    )
+    second = queue.enqueue(
+        user_id=1,
+        action_type=ActionType.TASK_CREATE,
+        payload={"title": "сломать"},
+        job_id=12,
+        trace_id="trace-job",
+        depends_on_action_id=first.id,
+    )
+    third = queue.enqueue(
+        user_id=1,
+        action_type=ActionType.MEMORY_SAVE,
+        payload={"text": "не запускать"},
+        job_id=12,
+        trace_id="trace-job",
+        depends_on_action_id=second.id,
+    )
+    queue.mark_succeeded(first.id)
+    events = []
+    updated_jobs = []
+
+    async def execute(_claimed):
+        raise RuntimeError("tool exploded")
+
+    async def deliver(_claimed, _text: str) -> None:
+        return None
+
+    def log_event(claimed, event_type, meta) -> None:
+        events.append((claimed.id, event_type, meta))
+
+    def update_job(claimed) -> None:
+        updated_jobs.append(claimed.job_id)
+
+    asyncio.run(
+        run_action_worker(
+            queue,
+            execute,
+            deliver,
+            stop_after_one_tick=True,
+            event_logger=log_event,
+            job_status_updater=update_job,
+        )
+    )
+
+    items = {item.id: item for item in queue.list_for_user(1, limit=10)}
+    assert items[second.id].status == ActionStatus.FAILED
+    assert items[third.id].status == ActionStatus.BLOCKED
+    assert items[first.id].compensation_status == "not_supported"
+    assert "action_blocked" in [event[1] for event in events]
+    assert "compensation_skipped" in [event[1] for event in events]
+    assert updated_jobs == [12]

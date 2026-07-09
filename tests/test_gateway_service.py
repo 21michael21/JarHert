@@ -98,6 +98,49 @@ def test_gateway_confirms_and_cancels_own_actions() -> None:
     assert queue.claim_next().id == action.id
 
 
+def test_gateway_job_status_shows_dependencies_progress_and_compensation() -> None:
+    from assistant.action_queue import ActionStatus, InMemoryActionQueueStore
+    from assistant.action_schema import ActionType
+    from assistant.agent_jobs import InMemoryAgentJobStore
+
+    queue = InMemoryActionQueueStore()
+    jobs = InMemoryAgentJobStore()
+    job = jobs.create(1001, "сделать цепочку", ["сохранить", "создать задачу"], trace_id="trace-chain")
+    first = queue.enqueue(
+        user_id=1001,
+        action_type=ActionType.IDEA_SAVE,
+        payload={"text": "сохранить"},
+        job_id=job.id,
+        trace_id=job.trace_id,
+    )
+    second = queue.enqueue(
+        user_id=1001,
+        action_type=ActionType.TASK_CREATE,
+        payload={"title": "создать задачу"},
+        job_id=job.id,
+        trace_id=job.trace_id,
+        depends_on_action_id=first.id,
+    )
+    queue.mark_succeeded(first.id)
+    queue.mark_failed(second.id, "task failed")
+    queue.mark_compensation_skipped_for_job(job.id, second.id, "manual rollback required")
+    service = GatewayService(
+        pipeline=AssistantPipeline(
+            FakeHermesClient(),
+            DailyLimitStore(),
+            agent_jobs=jobs,
+            action_queue=queue,
+        ),
+    )
+
+    reply = service.job_status(1001, job.id)
+
+    assert "computed=partial_failure" in reply.text
+    assert "Прогресс: 1/2" in reply.text
+    assert f"{second.id}. task.create — failed after #{first.id}" in reply.text
+    assert "compensation=not_supported" in reply.text
+
+
 def test_gateway_cancels_own_action_with_trace() -> None:
     from assistant.action_queue import ActionStatus, InMemoryActionQueueStore
     from assistant.action_schema import ActionType

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from assistant.action_queue import ActionStatus
+from assistant.job_orchestration import compute_job_status
 from assistant.pipeline import AssistantPipeline
 from assistant.types import AssistantReply, Intent, ReplyButton, UserContext
 from backend.stores import EventStore, UserStore
@@ -131,10 +132,31 @@ class GatewayService:
                 for action in self.pipeline.action_queue.list_for_user(user.user_id, limit=100)
                 if action.job_id == job.id
             ]
-        lines = [f"Job #{job.id}", f"Статус: {job.status}", f"Trace: {job.trace_id or 'none'}"]
+        summary = compute_job_status(actions)
+        stored_status = job.status if job.status == summary.status else f"{job.status} computed={summary.status}"
+        lines = [
+            f"Job #{job.id}",
+            f"Статус: {stored_status}",
+            f"Прогресс: {summary.progress_text}",
+            f"Trace: {job.trace_id or 'none'}",
+        ]
+        if summary.next_action_id is not None:
+            lines.append(f"Следующее действие: action #{summary.next_action_id}")
+        if summary.compensation_not_supported:
+            lines.append(f"Компенсация: {summary.compensation_not_supported} шаг(ов) требуют ручной проверки.")
         if actions:
             lines.append("Actions:")
-            lines.extend(f"{action.id}. {action.type.value} — {action.status.value}" for action in actions)
+            for action in sorted(actions, key=lambda item: (item.created_at, item.id)):
+                dependency = f" after #{action.depends_on_action_id}" if action.depends_on_action_id else ""
+                compensation = (
+                    f" compensation={action.compensation_status}"
+                    if action.compensation_status != "none"
+                    else ""
+                )
+                error = f" error={_compact(action.last_error, limit=80)}" if action.last_error else ""
+                lines.append(
+                    f"{action.id}. {action.type.value} — {action.status.value}{dependency}{compensation}{error}"
+                )
         buttons = []
         for action in actions:
             if action.status == ActionStatus.NEEDS_CONFIRMATION:
@@ -216,9 +238,15 @@ def _format_trace(snapshot: TraceSnapshot) -> str:
         lines.append("Actions:")
         for action in snapshot.actions[:12]:
             suffix = f" error={_compact(action.last_error, limit=80)}" if action.last_error else ""
+            dependency = f" after={action.depends_on_action_id}" if action.depends_on_action_id else ""
+            compensation = (
+                f" compensation={action.compensation_status}"
+                if action.compensation_status != "none"
+                else ""
+            )
             lines.append(
                 f"- #{action.id} job={action.job_id or '-'} {action.type} "
-                f"{action.status} attempts={action.attempts}{suffix}"
+                f"{action.status} attempts={action.attempts}{dependency}{compensation}{suffix}"
             )
     if snapshot.deliveries:
         lines.append("Delivery:")
@@ -247,6 +275,13 @@ def _event_meta_summary(meta: dict) -> str:
         "type",
         "retryable",
         "attempts",
+        "status",
+        "progress",
+        "blocked",
+        "failed",
+        "depends_on_action_id",
+        "blocked_by_action_id",
+        "failed_action_id",
     )
     parts = []
     for key in allowed_keys:
@@ -258,23 +293,29 @@ def _event_meta_summary(meta: dict) -> str:
 
 
 def _computed_job_status(job_id: int, snapshot: TraceSnapshot) -> str:
-    actions = [action for action in snapshot.actions if action.job_id == job_id]
+    from assistant.action_queue import AgentAction
+    from assistant.action_schema import ActionType
+
+    actions = [
+        AgentAction(
+            id=action.id,
+            user_id=action.user_id,
+            job_id=action.job_id,
+            type=ActionType(action.type),
+            payload={},
+            status=ActionStatus(action.status),
+            attempts=action.attempts,
+            last_error=action.last_error,
+            created_at=action.created_at,
+            depends_on_action_id=action.depends_on_action_id,
+            compensation_status=action.compensation_status,
+        )
+        for action in snapshot.actions
+        if action.job_id == job_id
+    ]
     if not actions:
         return "unknown"
-    statuses = {action.status for action in actions}
-    if statuses == {"succeeded"}:
-        return "succeeded"
-    if "failed" in statuses:
-        return "failed"
-    if "running" in statuses:
-        return "running"
-    if "needs_confirmation" in statuses:
-        return "needs_confirmation"
-    if "queued" in statuses:
-        return "queued"
-    if statuses == {"cancelled"}:
-        return "cancelled"
-    return "partial"
+    return compute_job_status(actions).status
 
 
 def _compact(value: str | None, *, limit: int = 120) -> str:

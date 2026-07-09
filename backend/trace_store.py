@@ -26,6 +26,8 @@ class TraceAction:
     type: str
     status: str
     attempts: int
+    depends_on_action_id: int | None
+    compensation_status: str
     last_error: str | None
     created_at: datetime
 
@@ -97,6 +99,8 @@ class SqlTraceStore:
                     type=record.type,
                     status=record.status,
                     attempts=record.attempts,
+                    depends_on_action_id=record.depends_on_action_id,
+                    compensation_status=record.compensation_status or "none",
                     last_error=record.last_error,
                     created_at=record.created_at,
                 )

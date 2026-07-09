@@ -48,12 +48,26 @@ def _upgrade_existing_schema(engine) -> None:
                 connection.execute(text("ALTER TABLE reminders ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"))
     _add_nullable_column_if_missing(engine, inspector, table_names, "agent_jobs", "trace_id", "VARCHAR(40)")
     _add_nullable_column_if_missing(engine, inspector, table_names, "agent_actions", "trace_id", "VARCHAR(40)")
+    _add_nullable_column_if_missing(engine, inspector, table_names, "agent_actions", "depends_on_action_id", "INTEGER")
+    _add_nullable_column_if_missing(engine, inspector, table_names, "agent_actions", "compensation_for_action_id", "INTEGER")
+    _add_column_if_missing(
+        engine,
+        inspector,
+        table_names,
+        "agent_actions",
+        "compensation_status",
+        "VARCHAR(30) NOT NULL DEFAULT 'none'",
+    )
     _add_nullable_column_if_missing(engine, inspector, table_names, "delivery_outbox", "trace_id", "VARCHAR(40)")
     _add_nullable_column_if_missing(engine, inspector, table_names, "delivery_outbox", "buttons", "JSON")
     _add_nullable_column_if_missing(engine, inspector, table_names, "events", "trace_id", "VARCHAR(40)")
 
 
 def _add_nullable_column_if_missing(engine, inspector, table_names: set[str], table: str, column: str, sql_type: str) -> None:
+    _add_column_if_missing(engine, inspector, table_names, table, column, sql_type)
+
+
+def _add_column_if_missing(engine, inspector, table_names: set[str], table: str, column: str, sql_type: str) -> None:
     if table not in table_names:
         return
     columns = {item["name"] for item in inspector.get_columns(table)}

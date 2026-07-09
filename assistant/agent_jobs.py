@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Protocol
 
@@ -26,6 +26,9 @@ class AgentJobStore(Protocol):
         ...
 
     def get_for_user(self, user_id: int, job_id: int) -> AgentJob | None:
+        ...
+
+    def mark_status(self, job_id: int, status: str, *, error: str | None = None) -> AgentJob:
         ...
 
 
@@ -59,6 +62,20 @@ class InMemoryAgentJobStore:
             if item.user_id == user_id and item.id == job_id:
                 return item
         return None
+
+    def mark_status(self, job_id: int, status: str, *, error: str | None = None) -> AgentJob:
+        for index, item in enumerate(self._items):
+            if item.id != job_id:
+                continue
+            updated = replace(
+                item,
+                status=status,
+                error=error,
+                updated_at=datetime.now(timezone.utc),
+            )
+            self._items[index] = updated
+            return updated
+        raise KeyError(f"job not found: {job_id}")
 
 
 def build_agent_plan(goal: str) -> list[str]:

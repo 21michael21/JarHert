@@ -193,9 +193,11 @@ def test_plain_task_batch_uses_task_center() -> None:
         "завтра задача 1 проверить сервер в 10:00, задача 2 созвон в 12:00",
     )
     results = execute_confirmed_actions(pipeline, queue)
+    queued = sorted(queue.list_for_user(user().user_id, limit=20), key=lambda action: action.id)
 
     assert "Нужно подтверждение" in reply.text
     assert len(results) == 2
+    assert queued[1].depends_on_action_id == queued[0].id
     assert [call[0] for call in task_center.calls] == ["task_with_calendar", "task_with_calendar"]
     assert task_center.calls[0][1]["title"] == "проверить сервер"
     assert task_center.calls[0][1]["start"] == "tomorrow 10:00"

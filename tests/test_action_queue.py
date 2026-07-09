@@ -102,6 +102,151 @@ def test_sql_action_queue_claims_and_retries_failed_action(tmp_path) -> None:
     assert queue.claim_next().attempts == 2
 
 
+def test_in_memory_queue_respects_dependencies_and_blocks_downstream() -> None:
+    queue = InMemoryActionQueueStore()
+    first = queue.enqueue(
+        user_id=1,
+        action_type=ActionType.IDEA_SAVE,
+        payload={"text": "подготовить"},
+        job_id=10,
+    )
+    second = queue.enqueue(
+        user_id=1,
+        action_type=ActionType.MEMORY_SAVE,
+        payload={"text": "зависит от первого"},
+        job_id=10,
+        depends_on_action_id=first.id,
+    )
+
+    claimed = queue.claim_next()
+    assert claimed.id == first.id
+    assert queue.claim_next() is None
+
+    queue.mark_failed(first.id, "primary failed")
+    blocked = queue.block_dependents(first.id, "Upstream action failed.")
+
+    assert [item.id for item in blocked] == [second.id]
+    second_after = next(item for item in queue.list_for_user(1) if item.id == second.id)
+    assert second_after.status == ActionStatus.BLOCKED
+    assert "Upstream" in second_after.last_error
+
+
+def test_in_memory_queue_unblocks_dependent_after_retry_success() -> None:
+    queue = InMemoryActionQueueStore()
+    first = queue.enqueue(
+        user_id=1,
+        action_type=ActionType.IDEA_SAVE,
+        payload={"text": "upstream"},
+        job_id=10,
+    )
+    second = queue.enqueue(
+        user_id=1,
+        action_type=ActionType.MEMORY_SAVE,
+        payload={"text": "downstream"},
+        job_id=10,
+        depends_on_action_id=first.id,
+    )
+    queue.mark_failed(first.id, "temporary")
+    queue.block_dependents(first.id, "Upstream action failed.")
+
+    queue.retry_failed(first.id)
+    claimed = queue.claim_next()
+    assert claimed.id == first.id
+    queue.mark_succeeded(first.id)
+
+    second_after = next(item for item in queue.list_for_user(1) if item.id == second.id)
+    assert second_after.status == ActionStatus.QUEUED
+    assert second_after.last_error is None
+    assert queue.claim_next().id == second.id
+
+
+def test_in_memory_queue_marks_compensation_skipped_for_successful_previous_actions() -> None:
+    queue = InMemoryActionQueueStore()
+    first = queue.enqueue(
+        user_id=1,
+        action_type=ActionType.IDEA_SAVE,
+        payload={"text": "уже сделано"},
+        job_id=10,
+    )
+    failed = queue.enqueue(
+        user_id=1,
+        action_type=ActionType.TASK_CREATE,
+        payload={"title": "сломалось"},
+        job_id=10,
+        depends_on_action_id=first.id,
+    )
+    queue.mark_succeeded(first.id)
+
+    compensated = queue.mark_compensation_skipped_for_job(10, failed.id, "no rollback")
+
+    assert [item.id for item in compensated] == [first.id]
+    first_after = next(item for item in queue.list_for_user(1) if item.id == first.id)
+    assert first_after.compensation_status == "not_supported"
+    assert first_after.last_error == "no rollback"
+
+
+def test_sql_action_queue_respects_dependencies_and_compensation(tmp_path) -> None:
+    factory = session_factory(tmp_path)
+    user = UserStore(factory).get_or_create(9104)
+    queue = SqlActionQueueStore(factory)
+    first = queue.enqueue(
+        user_id=user.id,
+        action_type=ActionType.IDEA_SAVE,
+        payload={"text": "подготовить"},
+        job_id=20,
+    )
+    second = queue.enqueue(
+        user_id=user.id,
+        action_type=ActionType.MEMORY_SAVE,
+        payload={"text": "после первого"},
+        job_id=20,
+        depends_on_action_id=first.id,
+    )
+
+    assert queue.claim_next().id == first.id
+    assert queue.claim_next() is None
+    queue.mark_succeeded(first.id)
+    assert queue.claim_next().id == second.id
+    queue.mark_failed(second.id, "tool failed")
+
+    compensated = queue.mark_compensation_skipped_for_job(20, second.id, "manual rollback required")
+
+    assert [item.id for item in compensated] == [first.id]
+    first_after = next(item for item in queue.list_for_user(user.id) if item.id == first.id)
+    assert first_after.depends_on_action_id is None
+    assert first_after.compensation_status == "not_supported"
+
+
+def test_sql_action_queue_unblocks_dependent_after_retry_success(tmp_path) -> None:
+    factory = session_factory(tmp_path)
+    user = UserStore(factory).get_or_create(9105)
+    queue = SqlActionQueueStore(factory)
+    first = queue.enqueue(
+        user_id=user.id,
+        action_type=ActionType.IDEA_SAVE,
+        payload={"text": "upstream"},
+        job_id=30,
+    )
+    second = queue.enqueue(
+        user_id=user.id,
+        action_type=ActionType.MEMORY_SAVE,
+        payload={"text": "downstream"},
+        job_id=30,
+        depends_on_action_id=first.id,
+    )
+    queue.mark_failed(first.id, "temporary")
+    queue.block_dependents(first.id, "Upstream action failed.")
+
+    queue.retry_failed(first.id)
+    assert queue.claim_next().id == first.id
+    queue.mark_succeeded(first.id)
+
+    second_after = next(item for item in queue.list_for_user(user.id) if item.id == second.id)
+    assert second_after.status == ActionStatus.QUEUED
+    assert second_after.last_error is None
+    assert queue.claim_next().id == second.id
+
+
 def test_queue_can_hold_confirmation_actions() -> None:
     queue = InMemoryActionQueueStore()
 

@@ -5,6 +5,7 @@ import asyncio
 from assistant.action_queue import AgentAction
 from assistant.action_worker import run_action_worker
 from assistant.delivery_outbox import DeliveryMessage, run_delivery_outbox_worker
+from assistant.job_orchestration import compute_job_status
 from assistant.types import UserContext
 from backend.stores import SqlActionQueueStore, SqlDeliveryOutboxStore, SqlReminderStore
 from gateway_bot.main import get_gateway_service, get_session_factory
@@ -85,9 +86,43 @@ async def start_background_workers(bot) -> None:
                 trace_id=message.trace_id,
             )
 
+    def update_job_status(action: AgentAction) -> None:
+        if action.job_id is None:
+            return
+        actions = [
+            item
+            for item in action_queue.list_for_user(action.user_id, limit=100)
+            if item.job_id == action.job_id
+        ]
+        summary = compute_job_status(actions)
+        service.pipeline.agent_jobs.mark_status(
+            action.job_id,
+            summary.status,
+            error=_job_error(actions),
+        )
+        if service.events is not None:
+            service.events.log(
+                action.user_id,
+                "job_status_changed",
+                {
+                    "job_id": action.job_id,
+                    "status": summary.status,
+                    "progress": summary.progress_text,
+                    "blocked": summary.blocked,
+                    "failed": summary.failed,
+                },
+                trace_id=action.trace_id,
+            )
+
     asyncio.create_task(run_reminder_worker(reminder_store, enqueue_reminder))
     asyncio.create_task(
-        run_action_worker(action_queue, execute_action, deliver_action_result, event_logger=log_action_event)
+        run_action_worker(
+            action_queue,
+            execute_action,
+            deliver_action_result,
+            event_logger=log_action_event,
+            job_status_updater=update_job_status,
+        )
     )
     asyncio.create_task(run_delivery_outbox_worker(outbox, send_delivery, event_logger=log_delivery_event))
 
@@ -99,3 +134,10 @@ def _tg_user_id_for_internal_user(user_id: int) -> int | None:
 
     with get_session_factory()() as db:
         return db.scalar(select(User.tg_user_id).where(User.id == user_id))
+
+
+def _job_error(actions: list[AgentAction]) -> str | None:
+    for action in sorted(actions, key=lambda item: (item.created_at, item.id)):
+        if action.status.value in {"failed", "blocked"} and action.last_error:
+            return f"Action #{action.id}: {action.last_error}"
+    return None

@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 AsyncActionExecutor = Callable[[AgentAction], Awaitable[str]]
 AsyncActionResultDelivery = Callable[[AgentAction, str], Awaitable[None]]
 ActionEventLogger = Callable[[AgentAction, str, dict], None]
+JobStatusUpdater = Callable[[AgentAction], None]
 
 
 async def run_action_worker(
@@ -25,6 +26,7 @@ async def run_action_worker(
     stop_after_one_tick: bool = False,
     max_attempts: int = 3,
     event_logger: ActionEventLogger | None = None,
+    job_status_updater: JobStatusUpdater | None = None,
 ) -> None:
     while True:
         action = action_queue.claim_next()
@@ -46,6 +48,9 @@ async def run_action_worker(
             else:
                 action_queue.mark_failed(action.id, str(error) or error.__class__.__name__)
                 _log_event(event_logger, action, "tool_failed", {"retryable": False, "error": str(error)})
+                _block_downstream(action_queue, event_logger, action)
+                _mark_compensation_skipped(action_queue, event_logger, action)
+                _update_job_status(job_status_updater, action)
                 await deliver(action, _failure_text(action, error))
             if stop_after_one_tick:
                 return
@@ -54,6 +59,7 @@ async def run_action_worker(
 
         action_queue.mark_succeeded(action.id)
         _log_event(event_logger, action, "action_succeeded", {"result_chars": len(result)})
+        _update_job_status(job_status_updater, action)
         await deliver(action, _success_text(action, result))
         if stop_after_one_tick:
             return
@@ -73,3 +79,34 @@ def _failure_text(action: AgentAction, error: Exception) -> str:
 def _log_event(logger_fn: ActionEventLogger | None, action: AgentAction, event_type: str, meta: dict) -> None:
     if logger_fn is not None:
         logger_fn(action, event_type, meta)
+
+
+def _block_downstream(action_queue, logger_fn: ActionEventLogger | None, action: AgentAction) -> None:
+    if not hasattr(action_queue, "block_dependents"):
+        return
+    reason = f"Upstream action #{action.id} failed."
+    for blocked in action_queue.block_dependents(action.id, reason):
+        _log_event(
+            logger_fn,
+            blocked,
+            "action_blocked",
+            {"blocked_by_action_id": action.id, "job_id": blocked.job_id, "reason": reason},
+        )
+
+
+def _mark_compensation_skipped(action_queue, logger_fn: ActionEventLogger | None, action: AgentAction) -> None:
+    if action.job_id is None or not hasattr(action_queue, "mark_compensation_skipped_for_job"):
+        return
+    reason = "Rollback tool is not available for this action type."
+    for compensated in action_queue.mark_compensation_skipped_for_job(action.job_id, action.id, reason):
+        _log_event(
+            logger_fn,
+            compensated,
+            "compensation_skipped",
+            {"failed_action_id": action.id, "job_id": action.job_id, "reason": reason},
+        )
+
+
+def _update_job_status(updater: JobStatusUpdater | None, action: AgentAction) -> None:
+    if updater is not None:
+        updater(action)

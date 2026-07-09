@@ -58,6 +58,17 @@ class SqlAgentJobStore:
                 return None
             return agent_job_from_record(record)
 
+    def mark_status(self, job_id: int, status: str, *, error: str | None = None) -> AgentJob:
+        with self.session_factory() as db:
+            record = db.get(AgentJobRecord, job_id)
+            if record is None:
+                raise KeyError(f"job not found: {job_id}")
+            record.status = status
+            record.error = truncate_error(error or "") if error else None
+            db.commit()
+            db.refresh(record)
+            return agent_job_from_record(record)
+
 
 class SqlActionQueueStore:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
@@ -71,6 +82,9 @@ class SqlActionQueueStore:
         payload: dict[str, str],
         job_id: int | None = None,
         trace_id: str = "",
+        depends_on_action_id: int | None = None,
+        compensation_for_action_id: int | None = None,
+        compensation_status: str = "none",
         idempotency_key: str | None = None,
         status: ActionStatus = ActionStatus.QUEUED,
     ) -> AgentAction:
@@ -91,6 +105,9 @@ class SqlActionQueueStore:
                 payload=dict(payload),
                 status=status.value,
                 trace_id=trace_id or None,
+                depends_on_action_id=depends_on_action_id,
+                compensation_for_action_id=compensation_for_action_id,
+                compensation_status=compensation_status,
                 idempotency_key=idempotency_key,
             )
             db.add(record)
@@ -110,25 +127,34 @@ class SqlActionQueueStore:
 
     def claim_next(self) -> AgentAction | None:
         with self.session_factory() as db:
-            record = db.scalar(
+            records = db.scalars(
                 select(AgentActionRecord)
                 .where(AgentActionRecord.status == ActionStatus.QUEUED.value)
                 .order_by(AgentActionRecord.created_at.asc(), AgentActionRecord.id.asc())
-                .limit(1)
-            )
-            if record is None:
-                return None
-            record.status = ActionStatus.RUNNING.value
-            record.attempts += 1
+                .limit(50)
+            ).all()
+            for record in records:
+                dependency_error = _dependency_error(db, record)
+                if dependency_error == "":
+                    continue
+                if dependency_error:
+                    record.status = ActionStatus.BLOCKED.value
+                    record.last_error = truncate_error(dependency_error)
+                    continue
+                record.status = ActionStatus.RUNNING.value
+                record.attempts += 1
+                db.commit()
+                db.refresh(record)
+                return agent_action_from_record(record)
             db.commit()
-            db.refresh(record)
-            return agent_action_from_record(record)
+            return None
 
     def mark_succeeded(self, action_id: int) -> AgentAction:
         with self.session_factory() as db:
             record = _require_agent_action(db, action_id)
             record.status = ActionStatus.SUCCEEDED.value
             record.last_error = None
+            _unblock_dependents_after_success(db, action_id)
             db.commit()
             db.refresh(record)
             return agent_action_from_record(record)
@@ -146,6 +172,7 @@ class SqlActionQueueStore:
         with self.session_factory() as db:
             record = _require_agent_action(db, action_id)
             record.status = ActionStatus.QUEUED.value
+            record.last_error = None
             db.commit()
             db.refresh(record)
             return agent_action_from_record(record)
@@ -182,6 +209,32 @@ class SqlActionQueueStore:
             db.commit()
             db.refresh(record)
             return agent_action_from_record(record)
+
+    def block_dependents(self, action_id: int, reason: str) -> list[AgentAction]:
+        with self.session_factory() as db:
+            blocked = _block_dependents(db, action_id, reason)
+            db.commit()
+            return [agent_action_from_record(record) for record in blocked]
+
+    def mark_compensation_skipped_for_job(self, job_id: int, failed_action_id: int, reason: str) -> list[AgentAction]:
+        with self.session_factory() as db:
+            records = db.scalars(
+                select(AgentActionRecord)
+                .where(
+                    AgentActionRecord.job_id == job_id,
+                    AgentActionRecord.id != failed_action_id,
+                    AgentActionRecord.status == ActionStatus.SUCCEEDED.value,
+                    AgentActionRecord.compensation_status == "none",
+                )
+                .order_by(AgentActionRecord.created_at.asc(), AgentActionRecord.id.asc())
+            ).all()
+            for record in records:
+                record.compensation_status = "not_supported"
+                record.last_error = truncate_error(reason)
+            db.commit()
+            for record in records:
+                db.refresh(record)
+            return [agent_action_from_record(record) for record in records]
 
 
 class SqlDeliveryOutboxStore:
@@ -301,6 +354,49 @@ def _require_agent_action(db: Session, action_id: int) -> AgentActionRecord:
     if record is None:
         raise KeyError(f"action not found: {action_id}")
     return record
+
+
+def _dependency_error(db: Session, record: AgentActionRecord) -> str | None:
+    if record.depends_on_action_id is None:
+        return None
+    dependency = db.get(AgentActionRecord, record.depends_on_action_id)
+    if dependency is None:
+        return f"Dependency action #{record.depends_on_action_id} is missing."
+    if dependency.status == ActionStatus.SUCCEEDED.value:
+        return None
+    if dependency.status in {ActionStatus.FAILED.value, ActionStatus.BLOCKED.value, ActionStatus.CANCELLED.value}:
+        return f"Dependency action #{dependency.id} is {dependency.status}."
+    return ""
+
+
+def _block_dependents(db: Session, action_id: int, reason: str) -> list[AgentActionRecord]:
+    records = db.scalars(
+        select(AgentActionRecord)
+        .where(
+            AgentActionRecord.depends_on_action_id == action_id,
+            AgentActionRecord.status.in_([ActionStatus.QUEUED.value, ActionStatus.NEEDS_CONFIRMATION.value]),
+        )
+        .order_by(AgentActionRecord.created_at.asc(), AgentActionRecord.id.asc())
+    ).all()
+    blocked: list[AgentActionRecord] = []
+    for record in records:
+        record.status = ActionStatus.BLOCKED.value
+        record.last_error = truncate_error(reason)
+        blocked.append(record)
+        blocked.extend(_block_dependents(db, record.id, reason))
+    return blocked
+
+
+def _unblock_dependents_after_success(db: Session, action_id: int) -> None:
+    records = db.scalars(
+        select(AgentActionRecord).where(
+            AgentActionRecord.depends_on_action_id == action_id,
+            AgentActionRecord.status == ActionStatus.BLOCKED.value,
+        )
+    ).all()
+    for record in records:
+        record.status = ActionStatus.QUEUED.value
+        record.last_error = None
 
 
 def _require_delivery_message(db: Session, message_id: int) -> DeliveryOutboxRecord:

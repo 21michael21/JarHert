@@ -14,6 +14,7 @@ class ActionStatus(str, Enum):
     FAILED = "failed"
     NEEDS_CONFIRMATION = "needs_confirmation"
     CANCELLED = "cancelled"
+    BLOCKED = "blocked"
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,9 @@ class AgentAction:
     attempts: int = 0
     job_id: int | None = None
     trace_id: str = ""
+    depends_on_action_id: int | None = None
+    compensation_for_action_id: int | None = None
+    compensation_status: str = "none"
     idempotency_key: str | None = None
     last_error: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -45,6 +49,9 @@ class InMemoryActionQueueStore:
         payload: dict[str, str],
         job_id: int | None = None,
         trace_id: str = "",
+        depends_on_action_id: int | None = None,
+        compensation_for_action_id: int | None = None,
+        compensation_status: str = "none",
         idempotency_key: str | None = None,
         status: ActionStatus = ActionStatus.QUEUED,
     ) -> AgentAction:
@@ -58,6 +65,9 @@ class InMemoryActionQueueStore:
             user_id=user_id,
             job_id=job_id,
             trace_id=trace_id,
+            depends_on_action_id=depends_on_action_id,
+            compensation_for_action_id=compensation_for_action_id,
+            compensation_status=compensation_status,
             type=action_type,
             payload=dict(payload),
             status=status,
@@ -76,6 +86,19 @@ class InMemoryActionQueueStore:
     def claim_next(self) -> AgentAction | None:
         for item in sorted(self._items, key=lambda item: (item.created_at, item.id)):
             if item.status != ActionStatus.QUEUED:
+                continue
+            dependency_error = self._dependency_error(item)
+            if dependency_error == "":
+                continue
+            if dependency_error:
+                self._replace(
+                    replace(
+                        item,
+                        status=ActionStatus.BLOCKED,
+                        last_error=_truncate_error(dependency_error),
+                        updated_at=datetime.now(timezone.utc),
+                    )
+                )
                 continue
             updated = replace(
                 item,
@@ -96,6 +119,7 @@ class InMemoryActionQueueStore:
             updated_at=datetime.now(timezone.utc),
         )
         self._replace(updated)
+        self._unblock_dependents_after_success(updated.id)
         return updated
 
     def mark_failed(self, action_id: int, error: str) -> AgentAction:
@@ -114,6 +138,7 @@ class InMemoryActionQueueStore:
         updated = replace(
             item,
             status=ActionStatus.QUEUED,
+            last_error=None,
             updated_at=datetime.now(timezone.utc),
         )
         self._replace(updated)
@@ -139,6 +164,41 @@ class InMemoryActionQueueStore:
                 return updated
         return None
 
+    def block_dependents(self, action_id: int, reason: str) -> list[AgentAction]:
+        blocked: list[AgentAction] = []
+        for item in sorted(self._items, key=lambda value: (value.created_at, value.id)):
+            if item.depends_on_action_id != action_id:
+                continue
+            if item.status not in {ActionStatus.QUEUED, ActionStatus.NEEDS_CONFIRMATION}:
+                continue
+            updated = replace(
+                item,
+                status=ActionStatus.BLOCKED,
+                last_error=_truncate_error(reason),
+                updated_at=datetime.now(timezone.utc),
+            )
+            self._replace(updated)
+            blocked.append(updated)
+            blocked.extend(self.block_dependents(updated.id, reason))
+        return blocked
+
+    def mark_compensation_skipped_for_job(self, job_id: int, failed_action_id: int, reason: str) -> list[AgentAction]:
+        updated_items: list[AgentAction] = []
+        for item in sorted(self._items, key=lambda value: (value.created_at, value.id)):
+            if item.job_id != job_id or item.id == failed_action_id:
+                continue
+            if item.status != ActionStatus.SUCCEEDED or item.compensation_status != "none":
+                continue
+            updated = replace(
+                item,
+                compensation_status="not_supported",
+                last_error=_truncate_error(reason),
+                updated_at=datetime.now(timezone.utc),
+            )
+            self._replace(updated)
+            updated_items.append(updated)
+        return updated_items
+
     def _find_by_idempotency(self, user_id: int, idempotency_key: str) -> AgentAction | None:
         for item in self._items:
             if item.user_id == user_id and item.idempotency_key == idempotency_key:
@@ -150,6 +210,37 @@ class InMemoryActionQueueStore:
             if item.id == action_id:
                 return item
         raise KeyError(f"action not found: {action_id}")
+
+    def _find(self, action_id: int) -> AgentAction | None:
+        for item in self._items:
+            if item.id == action_id:
+                return item
+        return None
+
+    def _dependency_error(self, item: AgentAction) -> str | None:
+        if item.depends_on_action_id is None:
+            return None
+        dependency = self._find(item.depends_on_action_id)
+        if dependency is None:
+            return f"Dependency action #{item.depends_on_action_id} is missing."
+        if dependency.status == ActionStatus.SUCCEEDED:
+            return None
+        if dependency.status in {ActionStatus.FAILED, ActionStatus.BLOCKED, ActionStatus.CANCELLED}:
+            return f"Dependency action #{dependency.id} is {dependency.status.value}."
+        return ""
+
+    def _unblock_dependents_after_success(self, action_id: int) -> None:
+        for item in list(self._items):
+            if item.depends_on_action_id != action_id or item.status != ActionStatus.BLOCKED:
+                continue
+            self._replace(
+                replace(
+                    item,
+                    status=ActionStatus.QUEUED,
+                    last_error=None,
+                    updated_at=datetime.now(timezone.utc),
+                )
+            )
 
     def _replace(self, updated: AgentAction) -> None:
         for index, item in enumerate(self._items):

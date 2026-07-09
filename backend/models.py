@@ -110,6 +110,9 @@ class AgentActionRecord(Base):
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="queued")
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     trace_id: Mapped[str | None] = mapped_column(String(40))
+    depends_on_action_id: Mapped[int | None] = mapped_column(Integer)
+    compensation_for_action_id: Mapped[int | None] = mapped_column(Integer)
+    compensation_status: Mapped[str] = mapped_column(String(30), nullable=False, default="none")
     idempotency_key: Mapped[str | None] = mapped_column(String(180))
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
