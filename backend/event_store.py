@@ -9,9 +9,16 @@ class EventStore:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self.session_factory = session_factory
 
-    def log(self, user_id: int, event_type: str, meta: dict | None = None) -> None:
+    def log(
+        self,
+        user_id: int,
+        event_type: str,
+        meta: dict | None = None,
+        *,
+        trace_id: str = "",
+    ) -> None:
         with self.session_factory() as db:
-            db.add(Event(user_id=user_id, type=event_type, meta=meta))
+            db.add(Event(user_id=user_id, type=event_type, trace_id=trace_id or None, meta=meta))
             db.commit()
 
     def log_assistant_response(
@@ -25,6 +32,7 @@ class EventStore:
         model: str | None = None,
         fallback_count: int = 0,
         perf_ms: dict[str, int] | None = None,
+        trace_id: str = "",
     ) -> None:
         self.log(
             user_id,
@@ -37,4 +45,5 @@ class EventStore:
                 "fallback_count": fallback_count,
                 "perf_ms": dict(perf_ms or {}),
             },
+            trace_id=trace_id,
         )

@@ -68,13 +68,17 @@ class ReminderRecord(Base):
 
 class AgentJobRecord(Base):
     __tablename__ = "agent_jobs"
-    __table_args__ = (Index("ix_agent_jobs_user_status_created", "user_id", "status", "created_at"),)
+    __table_args__ = (
+        Index("ix_agent_jobs_user_status_created", "user_id", "status", "created_at"),
+        Index("ix_agent_jobs_trace", "trace_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     goal: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
     steps: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    trace_id: Mapped[str | None] = mapped_column(String(40))
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -95,6 +99,7 @@ class AgentActionRecord(Base):
         UniqueConstraint("user_id", "idempotency_key", name="uq_agent_actions_user_idempotency"),
         Index("ix_agent_actions_status_created", "status", "created_at"),
         Index("ix_agent_actions_user_status_created", "user_id", "status", "created_at"),
+        Index("ix_agent_actions_trace", "trace_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -104,6 +109,7 @@ class AgentActionRecord(Base):
     payload: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="queued")
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    trace_id: Mapped[str | None] = mapped_column(String(40))
     idempotency_key: Mapped[str | None] = mapped_column(String(180))
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
@@ -196,6 +202,7 @@ class DeliveryOutboxRecord(Base):
     __table_args__ = (
         Index("ix_delivery_outbox_status_next_attempt", "status", "next_attempt_at"),
         Index("ix_delivery_outbox_user_status_created", "user_id", "status", "created_at"),
+        Index("ix_delivery_outbox_trace", "trace_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -204,6 +211,8 @@ class DeliveryOutboxRecord(Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    trace_id: Mapped[str | None] = mapped_column(String(40))
+    buttons: Mapped[list[dict] | None] = mapped_column(JSON)
     last_error: Mapped[str | None] = mapped_column(Text)
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
@@ -231,11 +240,15 @@ class UsageDaily(Base):
 
 class Event(Base):
     __tablename__ = "events"
-    __table_args__ = (Index("ix_events_user_type_created", "user_id", "type", "created_at"),)
+    __table_args__ = (
+        Index("ix_events_user_type_created", "user_id", "type", "created_at"),
+        Index("ix_events_trace", "trace_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     type: Mapped[str] = mapped_column(String(80), nullable=False)
+    trace_id: Mapped[str | None] = mapped_column(String(40))
     meta: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

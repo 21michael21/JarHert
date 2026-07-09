@@ -12,13 +12,14 @@ class AgentJob:
     goal: str
     status: str
     steps: list[str] = field(default_factory=list)
+    trace_id: str = ""
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     error: str | None = None
 
 
 class AgentJobStore(Protocol):
-    def create(self, user_id: int, goal: str, steps: list[str]) -> AgentJob:
+    def create(self, user_id: int, goal: str, steps: list[str], *, trace_id: str = "") -> AgentJob:
         ...
 
     def list_for_user(self, user_id: int, *, limit: int = 10) -> list[AgentJob]:
@@ -33,7 +34,7 @@ class InMemoryAgentJobStore:
         self._items: list[AgentJob] = []
         self._next_id = 1
 
-    def create(self, user_id: int, goal: str, steps: list[str]) -> AgentJob:
+    def create(self, user_id: int, goal: str, steps: list[str], *, trace_id: str = "") -> AgentJob:
         now = datetime.now(timezone.utc)
         job = AgentJob(
             id=self._next_id,
@@ -41,6 +42,7 @@ class InMemoryAgentJobStore:
             goal=goal.strip(),
             status="queued",
             steps=list(steps),
+            trace_id=trace_id,
             created_at=now,
             updated_at=now,
         )

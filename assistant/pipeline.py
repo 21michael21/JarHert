@@ -31,6 +31,7 @@ from assistant.quality_gates import check_input
 from assistant.response_composer import ResponseComposer
 from assistant.task_command_center import TaskCommandCenter, TaskCommandError
 from assistant.tool_registry import ToolContext, build_default_tool_registry
+from assistant.tracing import new_trace_id
 from assistant.types import AssistantReply, Intent, UserContext
 from reminders.parser import parse_reminder
 from reminders.store import InMemoryReminderStore
@@ -59,6 +60,7 @@ class AssistantPipeline:
         provider_health=None,
         delivery_outbox=None,
         action_queue=None,
+        events=None,
     ) -> None:
         self.hermes = hermes
         self.limits = limits
@@ -79,25 +81,31 @@ class AssistantPipeline:
         self.provider_health = provider_health
         self.delivery_outbox = delivery_outbox
         self.action_queue = action_queue
+        self.events = events
         self.natural_actions = NaturalActionService(
             action_executor=self.action_executor,
             agent_jobs=self.agent_jobs,
             responses=self.responses,
             tool_context_factory=self._tool_context,
             action_queue=self.action_queue,
+            events=self.events,
         )
         self._perf = NullPerfRecorder()
+        self._current_trace_id = ""
         self._current_extracted_actions: list[PlannedAction] = []
 
     def handle_text(self, user: UserContext, text: str) -> AssistantReply:
         self._current_extracted_actions = []
         previous_perf = self._perf
+        previous_trace_id = self._current_trace_id
         recorder = PerfRecorder()
+        trace_id = new_trace_id()
         self._perf = recorder
+        self._current_trace_id = trace_id
         try:
             with recorder.track("total_response"):
                 reply = self._handle_text(user, text)
-            reply = replace(reply, perf_ms=recorder.snapshot_ms())
+            reply = replace(reply, perf_ms=recorder.snapshot_ms(), trace_id=reply.trace_id or trace_id)
             self.conversation_turns.add(
                 user_id=user.user_id,
                 user_text=text,
@@ -107,6 +115,7 @@ class AssistantPipeline:
             return reply
         finally:
             self._perf = previous_perf
+            self._current_trace_id = previous_trace_id
 
     def _handle_text(self, user: UserContext, text: str) -> AssistantReply:
         with self._perf.track("intent_parse"):
@@ -235,6 +244,8 @@ class AssistantPipeline:
             style=self.preferences.get(user.user_id).preferred_response_style,
             max_output_chars=self.max_output_chars,
             perf=self._perf,
+            trace_id=self._current_trace_id,
+            events=self.events,
         )
 
     def _remember(self, user: UserContext, text: str) -> AssistantReply:
@@ -459,7 +470,14 @@ class AssistantPipeline:
                 intent=Intent.AGENT_DO,
                 blocked_reason="agent_goal_empty",
             )
-        job = self.agent_jobs.create(user.user_id, input_gate.safe_text, steps)
+        job = self.agent_jobs.create(user.user_id, input_gate.safe_text, steps, trace_id=self._current_trace_id)
+        if self.events is not None:
+            self.events.log(
+                user.user_id,
+                "job_created",
+                {"job_id": job.id, "goal": job.goal},
+                trace_id=self._current_trace_id,
+            )
         lines = [
             f"Поставил в очередь job #{job.id}.",
             f"Статус: {job.status}",
@@ -507,7 +525,7 @@ class AssistantPipeline:
 
     def _execute_natural_route(self, user: UserContext, route: NaturalRoute) -> AssistantReply:
         self._current_extracted_actions = list(route.actions)
-        return self.natural_actions.execute_route(user, route, perf=self._perf)
+        return self.natural_actions.execute_route(user, route, perf=self._perf, trace_id=self._current_trace_id)
 
     def _queue_direct_action(
         self,
@@ -515,10 +533,10 @@ class AssistantPipeline:
         action_type: ActionType,
         payload: dict[str, str],
     ) -> AssistantReply:
-        return self.natural_actions.queue_direct_action(user, action_type, payload)
+        return self.natural_actions.queue_direct_action(user, action_type, payload, trace_id=self._current_trace_id)
 
     def execute_queued_action(self, user: UserContext, action: AgentAction) -> str:
-        return self.natural_actions.execute_queued_action(user, action, perf=self._perf)
+        return self.natural_actions.execute_queued_action(user, action, perf=self._perf, trace_id=action.trace_id)
 
     def _tool_context(self, user: UserContext) -> ToolContext:
         return ToolContext(

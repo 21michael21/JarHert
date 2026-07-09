@@ -136,6 +136,8 @@ def main() -> int:
                 task_reply.elapsed_ms,
             )
         )
+        confirm_result = _confirm_actions(service, args.tg_user_id, actions, db_user.id, task_action_ids)
+        results.append(confirm_result)
         action_outbox_ids: list[int] = []
 
         async def execute_action(action) -> str:
@@ -181,6 +183,8 @@ def main() -> int:
                 calendar_reply.elapsed_ms,
             )
         )
+        confirm_result = _confirm_actions(service, args.tg_user_id, actions, db_user.id, calendar_action_ids)
+        results.append(StepResult("calendar_action_confirm", confirm_result.ok, confirm_result.detail, confirm_result.elapsed_ms))
         calendar_outbox_ids: list[int] = []
 
         async def execute_calendar_action(action) -> str:
@@ -347,6 +351,27 @@ def _action_statuses(actions, user_id: int, ids: list[int]) -> dict[int, str]:
         for action in actions.list_for_user(user_id, limit=100)
         if action.id in wanted
     }
+
+
+def _confirm_actions(service, tg_user_id: int, actions, user_id: int, ids: list[int]) -> StepResult:
+    from assistant.action_queue import ActionStatus
+
+    started = time.perf_counter()
+    confirmed = []
+    for action_id, status in _action_statuses(actions, user_id, ids).items():
+        if status == ActionStatus.NEEDS_CONFIRMATION.value:
+            reply = service.confirm_action(tg_user_id, action_id)
+            if reply.blocked_reason:
+                return StepResult("action_confirm", False, f"action_id={action_id} blocked={reply.blocked_reason}", _elapsed_ms(started))
+            confirmed.append(action_id)
+    statuses = _action_statuses(actions, user_id, ids)
+    ok = all(status in {ActionStatus.QUEUED.value, ActionStatus.RUNNING.value, ActionStatus.SUCCEEDED.value} for status in statuses.values())
+    return StepResult(
+        "action_confirm",
+        ok,
+        f"confirmed={','.join(map(str, confirmed)) or 'none'} statuses={statuses}",
+        _elapsed_ms(started),
+    )
 
 
 def _print_summary(results: list[StepResult], started: float) -> None:

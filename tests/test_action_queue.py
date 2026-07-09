@@ -114,3 +114,41 @@ def test_queue_can_hold_confirmation_actions() -> None:
 
     assert action.status == ActionStatus.NEEDS_CONFIRMATION
     assert queue.claim_next() is None
+
+
+def test_queue_confirms_action_and_preserves_trace_id() -> None:
+    queue = InMemoryActionQueueStore()
+    action = queue.enqueue(
+        user_id=1,
+        action_type=ActionType.TASK_CREATE,
+        payload={"title": "проверить approval"},
+        status=ActionStatus.NEEDS_CONFIRMATION,
+        trace_id="trace-1",
+    )
+
+    confirmed = queue.confirm_for_user(1, action.id)
+
+    assert confirmed is not None
+    assert confirmed.status == ActionStatus.QUEUED
+    assert confirmed.trace_id == "trace-1"
+    assert queue.claim_next().trace_id == "trace-1"
+
+
+def test_sql_queue_confirms_action_and_preserves_trace_id(tmp_path) -> None:
+    factory = session_factory(tmp_path)
+    user = UserStore(factory).get_or_create(9103)
+    queue = SqlActionQueueStore(factory)
+    action = queue.enqueue(
+        user_id=user.id,
+        action_type=ActionType.CALENDAR_CREATE,
+        payload={"title": "созвон", "start": "tomorrow 10:00", "end": "tomorrow 10:30"},
+        status=ActionStatus.NEEDS_CONFIRMATION,
+        trace_id="trace-sql",
+    )
+
+    confirmed = queue.confirm_for_user(user.id, action.id)
+
+    assert confirmed is not None
+    assert confirmed.status == ActionStatus.QUEUED
+    assert confirmed.trace_id == "trace-sql"
+    assert queue.claim_next().trace_id == "trace-sql"

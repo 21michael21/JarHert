@@ -25,6 +25,7 @@ class AgentAction:
     status: ActionStatus = ActionStatus.QUEUED
     attempts: int = 0
     job_id: int | None = None
+    trace_id: str = ""
     idempotency_key: str | None = None
     last_error: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -43,6 +44,7 @@ class InMemoryActionQueueStore:
         action_type: ActionType,
         payload: dict[str, str],
         job_id: int | None = None,
+        trace_id: str = "",
         idempotency_key: str | None = None,
         status: ActionStatus = ActionStatus.QUEUED,
     ) -> AgentAction:
@@ -55,6 +57,7 @@ class InMemoryActionQueueStore:
             id=self._next_id,
             user_id=user_id,
             job_id=job_id,
+            trace_id=trace_id,
             type=action_type,
             payload=dict(payload),
             status=status,
@@ -127,6 +130,14 @@ class InMemoryActionQueueStore:
                 )
                 return True
         return False
+
+    def confirm_for_user(self, user_id: int, action_id: int) -> AgentAction | None:
+        for item in self._items:
+            if item.id == action_id and item.user_id == user_id and item.status == ActionStatus.NEEDS_CONFIRMATION:
+                updated = replace(item, status=ActionStatus.QUEUED, updated_at=datetime.now(timezone.utc))
+                self._replace(updated)
+                return updated
+        return None
 
     def _find_by_idempotency(self, user_id: int, idempotency_key: str) -> AgentAction | None:
         for item in self._items:

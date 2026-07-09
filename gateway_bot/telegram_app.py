@@ -19,12 +19,15 @@ logger = logging.getLogger(__name__)
 try:
     from aiogram import Bot, Dispatcher, F
     from aiogram.filters import CommandStart
-    from aiogram.types import Message
+    from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 except ModuleNotFoundError:  # pragma: no cover - exercised by import smoke without deps.
     Bot = None  # type: ignore[assignment]
     Dispatcher = None  # type: ignore[assignment]
     F = None  # type: ignore[assignment]
     CommandStart = None  # type: ignore[assignment]
+    CallbackQuery = object  # type: ignore[assignment,misc]
+    InlineKeyboardButton = None  # type: ignore[assignment]
+    InlineKeyboardMarkup = None  # type: ignore[assignment]
     Message = object  # type: ignore[assignment,misc]
 
 
@@ -67,7 +70,14 @@ def create_dispatcher():
             await message.answer("Не вижу Telegram user id, поэтому не могу обработать сообщение.")
             return
         reply = service.handle_text(message.from_user.id, message.text or "")
-        _enqueue_reply(outbox, message.from_user.id, message.chat.id, reply.text)
+        _enqueue_reply(
+            outbox,
+            message.from_user.id,
+            message.chat.id,
+            reply.text,
+            trace_id=reply.trace_id,
+            buttons=_buttons_to_payload(reply.buttons),
+        )
 
     @dp.message(F.voice)
     async def handle_voice(message: Message) -> None:
@@ -114,7 +124,24 @@ def create_dispatcher():
             return
 
         reply = service.handle_text(message.from_user.id, text)
-        _enqueue_reply(outbox, message.from_user.id, message.chat.id, f"Расшифровал: {text}\n\n{reply.text}")
+        _enqueue_reply(
+            outbox,
+            message.from_user.id,
+            message.chat.id,
+            f"Расшифровал: {text}\n\n{reply.text}",
+            trace_id=reply.trace_id,
+            buttons=_buttons_to_payload(reply.buttons),
+        )
+
+    @dp.callback_query(F.data.startswith("ai:"))
+    async def handle_ai_callback(callback: CallbackQuery) -> None:
+        if callback.from_user is None:
+            await callback.answer("Не вижу Telegram user id.", show_alert=True)
+            return
+        reply = _handle_callback_data(service, callback.from_user.id, callback.data or "")
+        await callback.answer()
+        if callback.message is not None:
+            await callback.message.answer(reply.text, reply_markup=_reply_markup(_buttons_to_payload(reply.buttons)))
 
     @dp.message()
     async def unsupported(message: Message) -> None:
@@ -145,14 +172,18 @@ async def start_background_workers(bot: Bot) -> None:
             user_id=reminder.user_id,
             chat_id=tg_user_id,
             text=f"Напоминание #{reminder.id}: {reminder.text}",
+            trace_id=f"reminder-{reminder.id}",
         )
         if service.events is not None:
-            service.events.log(reminder.user_id, "assistant_reminder_queued", {"reminder_id": reminder.id})
+            service.events.log(
+                reminder.user_id,
+                "delivery_queued",
+                {"reminder_id": reminder.id},
+                trace_id=f"reminder-{reminder.id}",
+            )
 
     async def send_delivery(message: DeliveryMessage) -> None:
-        await bot.send_message(message.chat_id, message.text)
-        if service.events is not None:
-            service.events.log(message.user_id, "assistant_delivery_sent", {"delivery_id": message.id})
+        await bot.send_message(message.chat_id, message.text, reply_markup=_reply_markup(message.buttons))
 
     async def execute_action(action: AgentAction) -> str:
         tg_user_id = _tg_user_id_for_internal_user(action.user_id)
@@ -167,13 +198,44 @@ async def start_background_workers(bot: Bot) -> None:
         tg_user_id = _tg_user_id_for_internal_user(action.user_id)
         if tg_user_id is None:
             return
-        outbox.enqueue(user_id=action.user_id, chat_id=tg_user_id, text=text)
+        outbox.enqueue(
+            user_id=action.user_id,
+            chat_id=tg_user_id,
+            text=text,
+            trace_id=action.trace_id,
+            buttons=[[{"text": "Статус job", "callback_data": f"ai:status:{action.job_id}"}]] if action.job_id else [],
+        )
         if service.events is not None:
-            service.events.log(action.user_id, "assistant_action_result_queued", {"action_id": action.id})
+            service.events.log(
+                action.user_id,
+                "delivery_queued",
+                {"action_id": action.id, "job_id": action.job_id},
+                trace_id=action.trace_id,
+            )
+
+    def log_action_event(action: AgentAction, event_type: str, meta: dict) -> None:
+        if service.events is not None:
+            service.events.log(
+                action.user_id,
+                event_type,
+                {"action_id": action.id, "job_id": action.job_id, **meta},
+                trace_id=action.trace_id,
+            )
+
+    def log_delivery_event(message: DeliveryMessage, event_type: str, meta: dict) -> None:
+        if service.events is not None:
+            service.events.log(
+                message.user_id,
+                event_type,
+                {"delivery_id": message.id, **meta},
+                trace_id=message.trace_id,
+            )
 
     asyncio.create_task(run_reminder_worker(reminder_store, enqueue_reminder))
-    asyncio.create_task(run_action_worker(action_queue, execute_action, deliver_action_result))
-    asyncio.create_task(run_delivery_outbox_worker(outbox, send_delivery))
+    asyncio.create_task(
+        run_action_worker(action_queue, execute_action, deliver_action_result, event_logger=log_action_event)
+    )
+    asyncio.create_task(run_delivery_outbox_worker(outbox, send_delivery, event_logger=log_delivery_event))
 
 
 def _enqueue_reply(
@@ -181,6 +243,8 @@ def _enqueue_reply(
     tg_user_id: int,
     chat_id: int,
     text: str,
+    trace_id: str = "",
+    buttons: list[list[dict[str, str]]] | None = None,
 ) -> None:
     service = get_gateway_service()
     db_user = service.users.get_or_create(tg_user_id) if service.users is not None else None
@@ -188,7 +252,38 @@ def _enqueue_reply(
         user_id=db_user.id if db_user is not None else tg_user_id,
         chat_id=chat_id,
         text=text,
+        trace_id=trace_id,
+        buttons=buttons,
     )
+
+
+def _buttons_to_payload(buttons) -> list[list[dict[str, str]]]:
+    return [[{"text": button.text, "callback_data": button.callback_data} for button in row] for row in buttons]
+
+
+def _reply_markup(buttons: list[list[dict[str, str]]] | None):
+    if not buttons or InlineKeyboardMarkup is None or InlineKeyboardButton is None:
+        return None
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=button["text"], callback_data=button["callback_data"]) for button in row]
+            for row in buttons
+        ]
+    )
+
+
+def _handle_callback_data(service, tg_user_id: int, data: str):
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != "ai" or not parts[2].isdigit():
+        return service.handle_text(tg_user_id, "/status")
+    item_id = int(parts[2])
+    if parts[1] == "confirm":
+        return service.confirm_action(tg_user_id, item_id)
+    if parts[1] == "cancel":
+        return service.cancel_action(tg_user_id, item_id)
+    if parts[1] == "status":
+        return service.job_status(tg_user_id, item_id)
+    return service.handle_text(tg_user_id, "/status")
 
 
 def _tg_user_id_for_internal_user(user_id: int) -> int | None:

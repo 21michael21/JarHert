@@ -20,6 +20,14 @@ class FakeTaskCenterHealth:
         return Health()
 
 
+class RecordingEvents:
+    def __init__(self) -> None:
+        self.items = []
+
+    def log(self, user_id: int, event_type: str, meta: dict | None = None, *, trace_id: str = "") -> None:
+        self.items.append((user_id, event_type, meta or {}, trace_id))
+
+
 def user() -> UserContext:
     return UserContext(user_id=1, tg_user_id=1001)
 
@@ -109,3 +117,36 @@ def test_admin_status_shows_task_center_health() -> None:
     assert "Task Center:" in reply.text
     assert "trello=ok" in reply.text
     assert "calendar=ok" in reply.text
+
+
+def test_pipeline_logs_provider_fallback_lifecycle_event() -> None:
+    events = RecordingEvents()
+    hermes = FakeHermesClient(
+        [
+            HermesResponse(
+                text="Ответ.",
+                provider="fallback",
+                model="fallback-model",
+                fallback_count=1,
+                fallback_reason="primary: rate_limit",
+            )
+        ]
+    )
+    pipeline = AssistantPipeline(hermes, DailyLimitStore(), events=events)
+
+    reply = pipeline.handle_text(user(), "/ask привет")
+
+    assert reply.trace_id
+    assert events.items == [
+        (
+            1,
+            "provider_fallback",
+            {
+                "provider": "fallback",
+                "model": "fallback-model",
+                "fallback_count": 1,
+                "fallback_reason": "primary: rate_limit",
+            },
+            reply.trace_id,
+        )
+    ]

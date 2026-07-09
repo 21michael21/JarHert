@@ -1,3 +1,4 @@
+from assistant.action_queue import ActionStatus, InMemoryActionQueueStore
 from assistant.hermes_client import FakeHermesClient
 from assistant.ideas import InMemoryIdeaStore
 from assistant.limits import DailyLimitStore
@@ -49,6 +50,19 @@ def make_pipeline() -> AssistantPipeline:
 
 def user(user_id: int = 1) -> UserContext:
     return UserContext(user_id=user_id, tg_user_id=1000 + user_id)
+
+
+def execute_confirmed_actions(pipeline: AssistantPipeline, queue: InMemoryActionQueueStore) -> list[str]:
+    results: list[str] = []
+    for action in queue.list_for_user(user().user_id, limit=20):
+        if action.status == ActionStatus.NEEDS_CONFIRMATION:
+            assert queue.confirm_for_user(user().user_id, action.id) is not None
+    while True:
+        action = queue.claim_next()
+        if action is None:
+            return results
+        results.append(pipeline.execute_queued_action(user(), action))
+        queue.mark_succeeded(action.id)
 
 
 def test_remember_and_list_memories_are_user_scoped() -> None:
@@ -164,20 +178,24 @@ def test_calendar_command_uses_task_center() -> None:
 
 
 def test_plain_task_batch_uses_task_center() -> None:
+    queue = InMemoryActionQueueStore()
     task_center = FakeTaskCenter()
     pipeline = AssistantPipeline(
         FakeHermesClient(),
         DailyLimitStore(),
         plain_text_ai_enabled=True,
         task_center=task_center,
+        action_queue=queue,
     )
 
     reply = pipeline.handle_text(
         user(),
         "завтра задача 1 проверить сервер в 10:00, задача 2 созвон в 12:00",
     )
+    results = execute_confirmed_actions(pipeline, queue)
 
-    assert "Сделал" in reply.text
+    assert "Нужно подтверждение" in reply.text
+    assert len(results) == 2
     assert [call[0] for call in task_center.calls] == ["task_with_calendar", "task_with_calendar"]
     assert task_center.calls[0][1]["title"] == "проверить сервер"
     assert task_center.calls[0][1]["start"] == "tomorrow 10:00"
@@ -216,17 +234,21 @@ def test_agent_job_requires_numeric_id() -> None:
 
 
 def test_plain_text_creates_task_and_calendar_without_tags() -> None:
+    queue = InMemoryActionQueueStore()
     task_center = FakeTaskCenter()
     pipeline = AssistantPipeline(
         FakeHermesClient(),
         DailyLimitStore(),
         plain_text_ai_enabled=True,
         task_center=task_center,
+        action_queue=queue,
     )
 
     reply = pipeline.handle_text(user(), "завтра в 10 проверь сервер и завтра в 12 созвон с Ильей")
+    results = execute_confirmed_actions(pipeline, queue)
 
-    assert "Сделал" in reply.text
+    assert "Нужно подтверждение" in reply.text
+    assert len(results) == 2
     assert [call[0] for call in task_center.calls] == ["task_with_calendar", "calendar"]
     assert task_center.calls[0][1]["title"] == "проверь сервер"
     assert task_center.calls[0][1]["start"] == "tomorrow 10:00"
@@ -268,6 +290,7 @@ def test_plain_question_still_goes_to_ai() -> None:
 
 
 def test_plain_text_llm_extractor_creates_action_when_deterministic_router_misses() -> None:
+    queue = InMemoryActionQueueStore()
     task_center = FakeTaskCenter()
     hermes = FakeHermesClient(
         [
@@ -281,11 +304,14 @@ def test_plain_text_llm_extractor_creates_action_when_deterministic_router_misse
         DailyLimitStore(),
         plain_text_ai_enabled=True,
         task_center=task_center,
+        action_queue=queue,
     )
 
     reply = pipeline.handle_text(user(), "организуй ревью Hub ML завтра утром")
+    results = execute_confirmed_actions(pipeline, queue)
 
-    assert "Сделал" in reply.text
+    assert "Нужно подтверждение" in reply.text
+    assert len(results) == 1
     assert task_center.calls[0][0] == "task_with_calendar"
     assert task_center.calls[0][1]["title"] == "ревью Hub ML"
     assert task_center.calls[0][1]["start"] == "tomorrow 09:00"

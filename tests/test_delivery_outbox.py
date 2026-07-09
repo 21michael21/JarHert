@@ -17,13 +17,21 @@ class RetryAfterError(Exception):
 
 def test_delivery_outbox_claims_and_marks_sent() -> None:
     store = InMemoryDeliveryOutboxStore()
-    queued = store.enqueue(user_id=1, chat_id=1001, text="готово")
+    queued = store.enqueue(
+        user_id=1,
+        chat_id=1001,
+        text="готово",
+        trace_id="trace-delivery",
+        buttons=[[{"text": "Статус", "callback_data": "ai:status:1"}]],
+    )
 
     due = store.claim_due(now=datetime.now(timezone.utc))
     assert len(due) == 1
     assert due[0].id == queued.id
     assert due[0].status == DeliveryStatus.SENDING
     assert due[0].attempts == 1
+    assert due[0].trace_id == "trace-delivery"
+    assert due[0].buttons[0][0]["callback_data"] == "ai:status:1"
 
     sent = store.mark_sent(queued.id)
     assert sent.status == DeliveryStatus.SENT
@@ -76,6 +84,22 @@ def test_delivery_worker_marks_permanent_error_failed() -> None:
     assert recent.status == DeliveryStatus.FAILED
     assert recent.attempts == 1
     assert recent.next_attempt_at is None
+
+
+def test_delivery_worker_emits_lifecycle_events() -> None:
+    store = InMemoryDeliveryOutboxStore()
+    store.enqueue(user_id=1, chat_id=1001, text="пинг", trace_id="trace-delivery")
+    events = []
+
+    async def send(_message) -> None:
+        return None
+
+    def log_event(message, event_type, meta) -> None:
+        events.append((message.trace_id, event_type, meta))
+
+    asyncio.run(run_delivery_outbox_worker(store, send, stop_after_one_tick=True, event_logger=log_event))
+
+    assert events == [("trace-delivery", "delivery_sent", {"attempts": 1})]
 
 
 def test_delivery_outbox_skips_not_due_messages() -> None:

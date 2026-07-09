@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from assistant.action_queue import ActionStatus, InMemoryActionQueueStore
 from assistant.context_store import InMemoryConversationStore
 from assistant.hermes_client import FakeHermesClient
 from assistant.ideas import InMemoryIdeaStore
@@ -41,6 +42,19 @@ def session_factory(tmp_path):
 
 def user(user_id: int = 1) -> UserContext:
     return UserContext(user_id=user_id, tg_user_id=10_000 + user_id)
+
+
+def execute_confirmed_actions(pipeline: AssistantPipeline, queue: InMemoryActionQueueStore) -> list[str]:
+    results: list[str] = []
+    for action in queue.list_for_user(user().user_id, limit=20):
+        if action.status == ActionStatus.NEEDS_CONFIRMATION:
+            assert queue.confirm_for_user(user().user_id, action.id) is not None
+    while True:
+        action = queue.claim_next()
+        if action is None:
+            return results
+        results.append(pipeline.execute_queued_action(user(), action))
+        queue.mark_succeeded(action.id)
 
 
 def test_sql_conversation_turns_persist_and_are_user_scoped(tmp_path) -> None:
@@ -138,6 +152,7 @@ def test_preference_updates_default_task_list_and_task_uses_it() -> None:
 
 
 def test_evening_preference_changes_natural_calendar_time() -> None:
+    queue = InMemoryActionQueueStore()
     task_center = FakeTaskCenter()
     pipeline = AssistantPipeline(
         FakeHermesClient(),
@@ -145,12 +160,15 @@ def test_evening_preference_changes_natural_calendar_time() -> None:
         plain_text_ai_enabled=True,
         preferences=InMemoryPreferenceStore(),
         task_center=task_center,
+        action_queue=queue,
     )
 
     pipeline.handle_text(user(), "вечером это 20:15")
     reply = pipeline.handle_text(user(), "завтра вечером созвон с Ильей")
+    results = execute_confirmed_actions(pipeline, queue)
 
-    assert "Сделал" in reply.text
+    assert "Нужно подтверждение" in reply.text
+    assert len(results) == 1
     assert task_center.calls == [
         ("calendar", "созвон с Ильей | start=tomorrow 20:15 | end=tomorrow 20:45")
     ]

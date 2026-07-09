@@ -36,6 +36,12 @@ class GateStatus(str, Enum):
 
 
 @dataclass(frozen=True)
+class ReplyButton:
+    text: str
+    callback_data: str
+
+
+@dataclass(frozen=True)
 class UserContext:
     user_id: int
     tg_user_id: int
@@ -67,6 +73,7 @@ class HermesRequest:
     prompt: str
     intent: Intent = Intent.ASK
     context: dict[str, str] = field(default_factory=dict)
+    trace_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -89,4 +96,6 @@ class AssistantReply:
     fallback_count: int = 0
     blocked_reason: str | None = None
     perf_ms: dict[str, int] = field(default_factory=dict)
+    trace_id: str = ""
+    buttons: list[list[ReplyButton]] = field(default_factory=list)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))

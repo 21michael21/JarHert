@@ -17,6 +17,8 @@ def answer_with_ai(
     style: str,
     max_output_chars: int,
     perf: PerfRecorder,
+    trace_id: str = "",
+    events=None,
 ) -> AssistantReply:
     try:
         with perf.track("llm"):
@@ -26,6 +28,7 @@ def answer_with_ai(
                     prompt=prompt,
                     intent=intent,
                     context={"style": style},
+                    trace_id=trace_id,
                 )
             )
     except Exception:
@@ -41,10 +44,24 @@ def answer_with_ai(
             fallback_count=hermes_response.fallback_count,
         )
 
+    if events is not None and hermes_response.fallback_count:
+        events.log(
+            user.user_id,
+            "provider_fallback",
+            {
+                "provider": hermes_response.provider,
+                "model": hermes_response.model,
+                "fallback_count": hermes_response.fallback_count,
+                "fallback_reason": hermes_response.fallback_reason,
+            },
+            trace_id=trace_id,
+        )
+
     return AssistantReply(
         text=output_gate.safe_text,
         intent=intent,
         provider=hermes_response.provider,
         model=hermes_response.model,
         fallback_count=hermes_response.fallback_count,
+        trace_id=trace_id,
     )

@@ -28,6 +28,8 @@ class DeliveryMessage:
     text: str
     status: DeliveryStatus = DeliveryStatus.QUEUED
     attempts: int = 0
+    trace_id: str = ""
+    buttons: list[list[dict[str, str]]] = field(default_factory=list)
     last_error: str | None = None
     next_attempt_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -41,6 +43,7 @@ class DeliveryErrorClassification:
 
 
 AsyncDeliverySender = Callable[[DeliveryMessage], Awaitable[None]]
+DeliveryEventLogger = Callable[[DeliveryMessage, str, dict], None]
 
 
 class InMemoryDeliveryOutboxStore:
@@ -54,6 +57,8 @@ class InMemoryDeliveryOutboxStore:
         user_id: int,
         chat_id: int,
         text: str,
+        trace_id: str = "",
+        buttons: list[list[dict[str, str]]] | None = None,
         next_attempt_at: datetime | None = None,
     ) -> DeliveryMessage:
         now = datetime.now(timezone.utc)
@@ -62,6 +67,8 @@ class InMemoryDeliveryOutboxStore:
             user_id=user_id,
             chat_id=chat_id,
             text=text.strip(),
+            trace_id=trace_id,
+            buttons=list(buttons or []),
             next_attempt_at=next_attempt_at,
             created_at=now,
             updated_at=now,
@@ -165,6 +172,7 @@ async def run_delivery_outbox_worker(
     stop_after_one_tick: bool = False,
     limit: int = 20,
     max_attempts: int = 5,
+    event_logger: DeliveryEventLogger | None = None,
 ) -> None:
     while True:
         due = store.claim_due(limit=limit)
@@ -175,6 +183,7 @@ async def run_delivery_outbox_worker(
             try:
                 await send(message)
                 store.mark_sent(message.id)
+                _log_event(event_logger, message, "delivery_sent", {"attempts": message.attempts})
                 sent += 1
             except Exception as error:
                 classification = classify_delivery_error(error)
@@ -188,9 +197,11 @@ async def run_delivery_outbox_worker(
                             retry_after_seconds=classification.retry_after_seconds,
                         ),
                     )
+                    _log_event(event_logger, message, "delivery_retry", {"error": error_text})
                     retried += 1
                 else:
                     store.mark_failed_permanent(message.id, error_text)
+                    _log_event(event_logger, message, "delivery_failed", {"error": error_text})
                     failed += 1
         if due:
             logger.info(
@@ -243,3 +254,8 @@ def _truncate_error(error: str, *, limit: int = 1000) -> str:
     if len(value) <= limit:
         return value
     return value[: limit - 1].rstrip() + "…"
+
+
+def _log_event(logger_fn: DeliveryEventLogger | None, message: DeliveryMessage, event_type: str, meta: dict) -> None:
+    if logger_fn is not None:
+        logger_fn(message, event_type, meta)

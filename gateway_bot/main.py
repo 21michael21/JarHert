@@ -127,6 +127,7 @@ def _provider_api_key(provider: ProviderSpec, settings: Settings) -> str:
 def build_pipeline() -> AssistantPipeline:
     session_factory = get_session_factory()
     docs_sync = build_docs_sync()
+    event_store = EventStore(session_factory)
     return AssistantPipeline(
         hermes=build_hermes_client(),
         limits=SqlDailyLimitStore(
@@ -148,6 +149,7 @@ def build_pipeline() -> AssistantPipeline:
         provider_health=SqlProviderHealthStore(session_factory),
         delivery_outbox=SqlDeliveryOutboxStore(session_factory),
         action_queue=SqlActionQueueStore(session_factory),
+        events=event_store,
     )
 
 
@@ -191,12 +193,13 @@ def build_task_center() -> TaskCommandCenter | None:
 def build_gateway_service() -> GatewayService:
     allowed = set(settings.allowed_tg_user_ids)
     allowed.update(settings.admin_tg_user_ids)
+    event_store = EventStore(get_session_factory())
     return GatewayService(
         pipeline=build_pipeline(),
         allowed_tg_user_ids=allowed or None,
         admin_tg_user_ids=set(settings.admin_tg_user_ids) or None,
         users=UserStore(get_session_factory()),
-        events=EventStore(get_session_factory()),
+        events=event_store,
     )
 
 

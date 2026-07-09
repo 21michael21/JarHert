@@ -22,13 +22,14 @@ class SqlAgentJobStore:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self.session_factory = session_factory
 
-    def create(self, user_id: int, goal: str, steps: list[str]) -> AgentJob:
+    def create(self, user_id: int, goal: str, steps: list[str], *, trace_id: str = "") -> AgentJob:
         with self.session_factory() as db:
             record = AgentJobRecord(
                 user_id=user_id,
                 goal=goal.strip(),
                 status="queued",
                 steps=list(steps),
+                trace_id=trace_id or None,
             )
             db.add(record)
             db.commit()
@@ -69,6 +70,7 @@ class SqlActionQueueStore:
         action_type: ActionType,
         payload: dict[str, str],
         job_id: int | None = None,
+        trace_id: str = "",
         idempotency_key: str | None = None,
         status: ActionStatus = ActionStatus.QUEUED,
     ) -> AgentAction:
@@ -88,6 +90,7 @@ class SqlActionQueueStore:
                 type=action_type.value,
                 payload=dict(payload),
                 status=status.value,
+                trace_id=trace_id or None,
                 idempotency_key=idempotency_key,
             )
             db.add(record)
@@ -164,6 +167,22 @@ class SqlActionQueueStore:
             db.commit()
             return True
 
+    def confirm_for_user(self, user_id: int, action_id: int) -> AgentAction | None:
+        with self.session_factory() as db:
+            record = db.scalar(
+                select(AgentActionRecord).where(
+                    AgentActionRecord.id == action_id,
+                    AgentActionRecord.user_id == user_id,
+                    AgentActionRecord.status == ActionStatus.NEEDS_CONFIRMATION.value,
+                )
+            )
+            if record is None:
+                return None
+            record.status = ActionStatus.QUEUED.value
+            db.commit()
+            db.refresh(record)
+            return agent_action_from_record(record)
+
 
 class SqlDeliveryOutboxStore:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
@@ -175,6 +194,8 @@ class SqlDeliveryOutboxStore:
         user_id: int,
         chat_id: int,
         text: str,
+        trace_id: str = "",
+        buttons: list[list[dict[str, str]]] | None = None,
         next_attempt_at: datetime | None = None,
     ) -> DeliveryMessage:
         with self.session_factory() as db:
@@ -183,6 +204,8 @@ class SqlDeliveryOutboxStore:
                 chat_id=chat_id,
                 text=text.strip(),
                 status=DeliveryStatus.QUEUED.value,
+                trace_id=trace_id or None,
+                buttons=list(buttons or []),
                 next_attempt_at=next_attempt_at,
             )
             db.add(record)

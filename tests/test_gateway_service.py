@@ -50,6 +50,70 @@ def test_admin_status_for_admin() -> None:
     assert "Admin status" in reply.text
 
 
+def test_gateway_confirms_and_cancels_own_actions() -> None:
+    from assistant.action_queue import ActionStatus, InMemoryActionQueueStore
+    from assistant.action_schema import ActionType
+    from assistant.agent_jobs import InMemoryAgentJobStore
+
+    queue = InMemoryActionQueueStore()
+    jobs = InMemoryAgentJobStore()
+    job = jobs.create(1001, "создать задачу", ["создать задачу"], trace_id="trace-confirm")
+    action = queue.enqueue(
+        user_id=1001,
+        action_type=ActionType.TASK_CREATE,
+        payload={"title": "проверить"},
+        job_id=job.id,
+        trace_id=job.trace_id,
+        status=ActionStatus.NEEDS_CONFIRMATION,
+    )
+    service = GatewayService(
+        pipeline=AssistantPipeline(
+            FakeHermesClient(),
+            DailyLimitStore(),
+            agent_jobs=jobs,
+            action_queue=queue,
+        ),
+    )
+
+    status = service.job_status(1001, job.id)
+    confirmed = service.confirm_action(1001, action.id)
+
+    assert "needs_confirmation" in status.text
+    assert confirmed.trace_id == "trace-confirm"
+    assert queue.claim_next().id == action.id
+
+
+def test_gateway_cancels_own_action_with_trace() -> None:
+    from assistant.action_queue import ActionStatus, InMemoryActionQueueStore
+    from assistant.action_schema import ActionType
+    from assistant.agent_jobs import InMemoryAgentJobStore
+
+    queue = InMemoryActionQueueStore()
+    jobs = InMemoryAgentJobStore()
+    job = jobs.create(1001, "создать встречу", ["создать встречу"], trace_id="trace-cancel")
+    action = queue.enqueue(
+        user_id=1001,
+        action_type=ActionType.CALENDAR_CREATE,
+        payload={"title": "созвон"},
+        job_id=job.id,
+        trace_id=job.trace_id,
+        status=ActionStatus.NEEDS_CONFIRMATION,
+    )
+    service = GatewayService(
+        pipeline=AssistantPipeline(
+            FakeHermesClient(),
+            DailyLimitStore(),
+            agent_jobs=jobs,
+            action_queue=queue,
+        ),
+    )
+
+    cancelled = service.cancel_action(1001, action.id)
+
+    assert cancelled.trace_id == "trace-cancel"
+    assert "Отменил" in cancelled.text
+
+
 def test_telegram_app_imports_without_aiogram_runtime() -> None:
     import gateway_bot.telegram_app as telegram_app
 

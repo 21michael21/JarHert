@@ -40,8 +40,24 @@ def init_db(session_factory: sessionmaker[Session]) -> None:
 
 def _upgrade_existing_schema(engine) -> None:
     inspector = inspect(engine)
-    if "reminders" in inspector.get_table_names():
+    table_names = set(inspector.get_table_names())
+    if "reminders" in table_names:
         columns = {column["name"] for column in inspector.get_columns("reminders")}
         if "attempts" not in columns:
             with engine.begin() as connection:
                 connection.execute(text("ALTER TABLE reminders ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"))
+    _add_nullable_column_if_missing(engine, inspector, table_names, "agent_jobs", "trace_id", "VARCHAR(40)")
+    _add_nullable_column_if_missing(engine, inspector, table_names, "agent_actions", "trace_id", "VARCHAR(40)")
+    _add_nullable_column_if_missing(engine, inspector, table_names, "delivery_outbox", "trace_id", "VARCHAR(40)")
+    _add_nullable_column_if_missing(engine, inspector, table_names, "delivery_outbox", "buttons", "JSON")
+    _add_nullable_column_if_missing(engine, inspector, table_names, "events", "trace_id", "VARCHAR(40)")
+
+
+def _add_nullable_column_if_missing(engine, inspector, table_names: set[str], table: str, column: str, sql_type: str) -> None:
+    if table not in table_names:
+        return
+    columns = {item["name"] for item in inspector.get_columns(table)}
+    if column in columns:
+        return
+    with engine.begin() as connection:
+        connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}"))
