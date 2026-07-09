@@ -5,7 +5,8 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Callable
 
-from assistant.hermes_client import HermesClient, HermesClientError
+from assistant.provider_clients import HermesClient
+from assistant.provider_diagnostics import HermesClientError
 from assistant.provider_registry import ProviderRegistry, ProviderSpec
 from assistant.quality_gates import check_output
 from assistant.types import HermesRequest, HermesResponse

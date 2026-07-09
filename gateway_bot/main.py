@@ -3,8 +3,10 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from assistant.hermes_client import (
-    FallbackHermesClient,
+from assistant.google_docs_sync import GoogleDocsWebhookSync, NullDocsSync
+from assistant.google_sheets_sync import GoogleServiceAccountConfig, GoogleSheetsSync
+from assistant.pipeline import AssistantPipeline
+from assistant.provider_clients import (
     FakeHermesClient,
     HermesCliClient,
     HermesClient,
@@ -12,9 +14,6 @@ from assistant.hermes_client import (
     OpenAIChatCompletionsClient,
     OpenAIResponsesClient,
 )
-from assistant.google_docs_sync import GoogleDocsWebhookSync, NullDocsSync
-from assistant.google_sheets_sync import GoogleServiceAccountConfig, GoogleSheetsSync
-from assistant.pipeline import AssistantPipeline
 from assistant.provider_registry import ProviderKind, ProviderSpec, build_provider_registry
 from assistant.provider_router import ProviderRouterClient
 from assistant.task_command_center import TaskCommandCenter

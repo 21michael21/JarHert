@@ -16,6 +16,9 @@ from assistant.hermes_client import (
     OpenAIResponsesClient,
     normalize_hermes_response,
 )
+from assistant.provider_clients import HermesCliClient as SplitHermesCliClient
+from assistant.provider_diagnostics import normalize_hermes_response as split_normalize_hermes_response
+from assistant.provider_fallback import FallbackHermesClient as SplitFallbackHermesClient
 from assistant.types import HermesRequest, HermesResponse, UserContext
 
 
@@ -39,6 +42,12 @@ def test_normalize_openai_style_response() -> None:
     assert response.provider == "openrouter"
     assert response.model == "free-model"
     assert response.latency_ms == 12
+
+
+def test_split_provider_modules_keep_compatibility_exports() -> None:
+    assert SplitHermesCliClient is HermesCliClient
+    assert SplitFallbackHermesClient is FallbackHermesClient
+    assert split_normalize_hermes_response is normalize_hermes_response
 
 
 def test_normalize_rejects_empty_response() -> None:

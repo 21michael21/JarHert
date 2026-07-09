@@ -5,7 +5,8 @@ import re
 
 from assistant.action_schema import ActionType, NaturalRoute, PlannedAction
 from assistant.action_validator import validate_actions
-from assistant.hermes_client import HermesClient, HermesClientError
+from assistant.provider_clients import HermesClient
+from assistant.provider_diagnostics import HermesClientError
 from assistant.types import HermesRequest, Intent, UserContext
 
 

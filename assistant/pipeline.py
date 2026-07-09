@@ -15,7 +15,6 @@ from assistant.command_handlers import (
     task_text_with_preferences,
 )
 from assistant.context_store import InMemoryConversationStore, actions_to_dicts
-from assistant.hermes_client import HermesClient
 from assistant.google_docs_sync import DocsSync, NullDocsSync
 from assistant.ideas import InMemoryIdeaStore
 from assistant.intents import parse_message
@@ -27,6 +26,7 @@ from assistant.llm_action_extractor import LlmActionExtractor
 from assistant.natural_action_service import NaturalActionService
 from assistant.perf import NullPerfRecorder, PerfRecorder
 from assistant.preferences import InMemoryPreferenceStore, parse_preference_update
+from assistant.provider_clients import HermesClient
 from assistant.quality_gates import check_input
 from assistant.response_composer import ResponseComposer
 from assistant.task_command_center import TaskCommandCenter, TaskCommandError

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from assistant.hermes_client import HermesClient
+from assistant.provider_clients import HermesClient
 from assistant.perf import PerfRecorder
 from assistant.quality_gates import check_output
 from assistant.response_composer import ResponseComposer

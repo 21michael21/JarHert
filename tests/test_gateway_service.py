@@ -198,8 +198,14 @@ def test_trace_command_handles_missing_trace(tmp_path) -> None:
 
 def test_telegram_app_imports_without_aiogram_runtime() -> None:
     import gateway_bot.telegram_app as telegram_app
+    import gateway_bot.telegram_callbacks as telegram_callbacks
+    import gateway_bot.telegram_handlers as telegram_handlers
+    import gateway_bot.telegram_workers as telegram_workers
 
     assert telegram_app.START_TEXT
+    assert telegram_app.create_dispatcher is telegram_handlers.create_dispatcher
+    assert telegram_app.start_background_workers is telegram_workers.start_background_workers
+    assert telegram_callbacks.handle_callback_data
 
 
 def test_handle_local_text_preserves_process_state() -> None:
