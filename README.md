@@ -417,6 +417,57 @@ scripts/local_check.sh
 
 ## Live e2e перед тестом с друзьями
 
+### Строгий system E2E
+
+`scripts/live_system_e2e.py` всегда пишет JSON-отчёт в `reports/live-system-e2e/`. В отчёте есть
+`trace_id`, latency, статус и безопасные metadata каждого шага. Содержимое сообщений и секреты в
+отчёт не попадают.
+
+Локальный режим использует настоящие pipeline, SQLite stores, workers, approval callback, monitor
+runner и delivery outbox. Подменяются только LLM, Telegram, Trello/Calendar и STT:
+
+```bash
+.venv/bin/python scripts/live_system_e2e.py --mode local --tg-user-id <telegram_id>
+```
+
+Sandbox использует реальный настроенный LLM и, при наличии `--voice-file`, реальный STT. Записи в
+Trello/Calendar и сообщения в Telegram не создаются:
+
+```bash
+.venv/bin/python scripts/live_system_e2e.py \
+  --mode sandbox \
+  --tg-user-id <telegram_id> \
+  --voice-file dev/voice_fixtures/live_e2e.m4a
+```
+
+Live идёт через отдельную авторизованную Telethon user-session в реально запущенный бот. Бот и его
+action/reminder/outbox workers должны уже работать с production-like конфигурацией:
+
+```bash
+scripts/create_voice_fixture.sh "создай задачу проверить системный тест"
+TELEGRAM_API_ID=... TELEGRAM_API_HASH=... \
+.venv/bin/python scripts/live_system_e2e.py \
+  --mode live \
+  --require-live \
+  --tg-user-id <telegram_id> \
+  --voice-file dev/voice_fixtures/live_e2e.m4a
+```
+
+Для strict voice-сценария аудио должно содержать действие, которое создаёт approval-кнопку. Иначе
+STT будет проверен, но полный путь voice → action queue → approval → outbox корректно завершится
+ошибкой.
+
+Для первого запуска Telethon-сессию авторизуй отдельно; строгий runner сам не запрашивает код и не
+зависает в CI. Путь задаётся через `LIVE_E2E_TELETHON_SESSION`. При `--require-live` любой skip,
+blocked reply, fake provider, отсутствующий credential или timeout даёт ненулевой exit code.
+
+Проверяются text/LLM, voice/STT/natural route, task и Calendar с inline approval, reminder, итоговая
+доставка outbox, provider fallback, action idempotency, восстановление queued action новым store,
+monitor triggered/no-change и ownership. Текущая duplicate-проверка относится к action queue:
+durable dedup входящих Telegram `update_id` в проекте пока не реализован и этим тестом не заявляется.
+
+### Legacy component smoke
+
 Скрипт `scripts/live_e2e.py` проверяет цепочку:
 
 ```text
