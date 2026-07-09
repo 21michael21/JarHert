@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from contextvars import ContextVar
+from dataclasses import dataclass, field, replace
 
 from assistant.action_executor import ActionExecutor
 from assistant.action_queue import AgentAction
@@ -35,6 +36,13 @@ from assistant.tracing import new_trace_id
 from assistant.types import AssistantReply, Intent, UserContext
 from reminders.parser import parse_reminder
 from reminders.store import InMemoryReminderStore
+
+
+@dataclass
+class _PipelineRequestContext:
+    perf: PerfRecorder
+    trace_id: str
+    extracted_actions: list[PlannedAction] = field(default_factory=list)
 
 
 class AssistantPipeline:
@@ -90,18 +98,17 @@ class AssistantPipeline:
             action_queue=self.action_queue,
             events=self.events,
         )
-        self._perf = NullPerfRecorder()
-        self._current_trace_id = ""
-        self._current_extracted_actions: list[PlannedAction] = []
+        self._null_perf = NullPerfRecorder()
+        self._request_context: ContextVar[_PipelineRequestContext | None] = ContextVar(
+            f"assistant_pipeline_request_{id(self)}",
+            default=None,
+        )
 
     def handle_text(self, user: UserContext, text: str) -> AssistantReply:
-        self._current_extracted_actions = []
-        previous_perf = self._perf
-        previous_trace_id = self._current_trace_id
         recorder = PerfRecorder()
         trace_id = new_trace_id()
-        self._perf = recorder
-        self._current_trace_id = trace_id
+        request_context = _PipelineRequestContext(perf=recorder, trace_id=trace_id)
+        context_token = self._request_context.set(request_context)
         try:
             with recorder.track("total_response"):
                 reply = self._handle_text(user, text)
@@ -110,12 +117,21 @@ class AssistantPipeline:
                 user_id=user.user_id,
                 user_text=text,
                 assistant_text=reply.text,
-                extracted_actions=actions_to_dicts(self._current_extracted_actions),
+                extracted_actions=actions_to_dicts(request_context.extracted_actions),
             )
             return reply
         finally:
-            self._perf = previous_perf
-            self._current_trace_id = previous_trace_id
+            self._request_context.reset(context_token)
+
+    @property
+    def _perf(self):
+        request_context = self._request_context.get()
+        return request_context.perf if request_context is not None else self._null_perf
+
+    @property
+    def _current_trace_id(self) -> str:
+        request_context = self._request_context.get()
+        return request_context.trace_id if request_context is not None else ""
 
     def _handle_text(self, user: UserContext, text: str) -> AssistantReply:
         with self._perf.track("intent_parse"):
@@ -524,7 +540,9 @@ class AssistantPipeline:
         return AssistantReply(text="\n".join(lines), intent=Intent.AGENT_JOB)
 
     def _execute_natural_route(self, user: UserContext, route: NaturalRoute) -> AssistantReply:
-        self._current_extracted_actions = list(route.actions)
+        request_context = self._request_context.get()
+        if request_context is not None:
+            request_context.extracted_actions[:] = route.actions
         return self.natural_actions.execute_route(user, route, perf=self._perf, trace_id=self._current_trace_id)
 
     def _queue_direct_action(
