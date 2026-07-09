@@ -3,21 +3,34 @@ from __future__ import annotations
 import asyncio
 
 from assistant.action_queue import AgentAction
-from assistant.action_worker import run_action_worker
-from assistant.delivery_outbox import DeliveryMessage, run_delivery_outbox_worker
+from assistant.action_worker import ActionWorkerAdapter
+from assistant.automation_runtime import AutomationRuntime
+from assistant.delivery_outbox import DeliveryMessage, DeliveryOutboxAdapter
 from assistant.job_orchestration import compute_job_status
 from assistant.types import UserContext
+from backend.automation_store import SqlAutomationLeaseStore
 from backend.stores import SqlActionQueueStore, SqlDeliveryOutboxStore, SqlReminderStore
 from gateway_bot.main import get_gateway_service, get_session_factory
 from gateway_bot.telegram_callbacks import reply_markup
-from reminders.worker import run_reminder_worker
+from reminders.worker import ReminderWorkerAdapter
+
+
+_background_tasks: set[asyncio.Task] = set()
 
 
 async def start_background_workers(bot) -> None:
+    runtime = build_background_runtime(bot)
+    task = asyncio.create_task(runtime.run())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+def build_background_runtime(bot) -> AutomationRuntime:
     service = get_gateway_service()
-    action_queue = SqlActionQueueStore(get_session_factory())
-    reminder_store = SqlReminderStore(get_session_factory())
-    outbox = SqlDeliveryOutboxStore(get_session_factory())
+    session_factory = get_session_factory()
+    action_queue = SqlActionQueueStore(session_factory)
+    reminder_store = SqlReminderStore(session_factory)
+    outbox = SqlDeliveryOutboxStore(session_factory)
 
     async def enqueue_reminder(reminder) -> None:
         tg_user_id = _tg_user_id_for_internal_user(reminder.user_id)
@@ -44,7 +57,8 @@ async def start_background_workers(bot) -> None:
         tg_user_id = _tg_user_id_for_internal_user(action.user_id)
         if tg_user_id is None:
             raise RuntimeError(f"Telegram user not found for internal user {action.user_id}")
-        return service.pipeline.execute_queued_action_result(
+        return await asyncio.to_thread(
+            service.pipeline.execute_queued_action_result,
             UserContext(user_id=action.user_id, tg_user_id=tg_user_id),
             action,
         )
@@ -114,17 +128,20 @@ async def start_background_workers(bot) -> None:
                 trace_id=action.trace_id,
             )
 
-    asyncio.create_task(run_reminder_worker(reminder_store, enqueue_reminder))
-    asyncio.create_task(
-        run_action_worker(
-            action_queue,
-            execute_action,
-            deliver_action_result,
-            event_logger=log_action_event,
-            job_status_updater=update_job_status,
-        )
+    return AutomationRuntime(
+        [
+            ReminderWorkerAdapter(reminder_store, enqueue_reminder),
+            ActionWorkerAdapter(
+                action_queue,
+                execute_action,
+                deliver_action_result,
+                event_logger=log_action_event,
+                job_status_updater=update_job_status,
+            ),
+            DeliveryOutboxAdapter(outbox, send_delivery, event_logger=log_delivery_event),
+        ],
+        SqlAutomationLeaseStore(session_factory),
     )
-    asyncio.create_task(run_delivery_outbox_worker(outbox, send_delivery, event_logger=log_delivery_event))
 
 
 def _tg_user_id_for_internal_user(user_id: int) -> int | None:

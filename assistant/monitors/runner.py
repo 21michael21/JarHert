@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
+from assistant.automation_runtime import WorkerPolicy
 from assistant.delivery_outbox import InMemoryDeliveryOutboxStore
 from assistant.monitors.github_releases import fetch_latest_github_release
 from assistant.monitors.models import MonitorDecision, MonitorJob
@@ -40,6 +42,43 @@ class MonitorJobStore(Protocol):
 
 
 MonitorPayloadFetcher = Callable[[MonitorJob], dict[str, Any]]
+
+
+class MonitorWorkerAdapter:
+    name = "monitors"
+    default_policy = WorkerPolicy(interval_seconds=900, timeout_seconds=120, lease_seconds=180, heartbeat_seconds=20)
+
+    def __init__(
+        self,
+        *,
+        monitor_jobs: MonitorJobStore,
+        hermes: HermesClient,
+        delivery_outbox,
+        fetcher: MonitorPayloadFetcher | None = None,
+        limit: int = 50,
+        policy: WorkerPolicy | None = None,
+    ) -> None:
+        self.monitor_jobs = monitor_jobs
+        self.hermes = hermes
+        self.delivery_outbox = delivery_outbox
+        self.fetcher = fetcher
+        self.limit = limit
+        self.policy = policy or self.default_policy
+        self.last_result: dict[str, int] | None = None
+
+    async def recover_stale(self) -> int:
+        return 0
+
+    async def run_once(self) -> dict:
+        self.last_result = await asyncio.to_thread(
+            run_monitors_once,
+            monitor_jobs=self.monitor_jobs,
+            hermes=self.hermes,
+            delivery_outbox=self.delivery_outbox,
+            fetcher=self.fetcher,
+            limit=self.limit,
+        )
+        return self.last_result
 
 
 def run_monitors_once(

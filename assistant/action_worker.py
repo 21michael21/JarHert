@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 
 from assistant.action_queue import AgentAction
+from assistant.automation_runtime import AutomationRuntime, InMemoryAutomationLeaseStore, WorkerPolicy
 from assistant.tool_registry import ToolExecutionError, ToolExecutionResult
 
 
@@ -15,6 +17,66 @@ AsyncActionExecutor = Callable[[AgentAction], Awaitable[str | ToolExecutionResul
 AsyncActionResultDelivery = Callable[[AgentAction, str], Awaitable[None]]
 ActionEventLogger = Callable[[AgentAction, str, dict], None]
 JobStatusUpdater = Callable[[AgentAction], None]
+
+
+class ActionWorkerAdapter:
+    name = "actions"
+    default_policy = WorkerPolicy(interval_seconds=2, timeout_seconds=60, lease_seconds=90, heartbeat_seconds=15)
+
+    def __init__(
+        self,
+        action_queue,
+        execute: AsyncActionExecutor,
+        deliver: AsyncActionResultDelivery,
+        *,
+        policy: WorkerPolicy | None = None,
+        max_attempts: int = 3,
+        event_logger: ActionEventLogger | None = None,
+        job_status_updater: JobStatusUpdater | None = None,
+    ) -> None:
+        self.action_queue = action_queue
+        self.execute = execute
+        self.deliver = deliver
+        self.policy = policy or self.default_policy
+        self.max_attempts = max_attempts
+        self.event_logger = event_logger
+        self.job_status_updater = job_status_updater
+
+    async def recover_stale(self) -> int:
+        recover = getattr(self.action_queue, "recover_running", None)
+        return recover() if recover is not None else 0
+
+    async def run_once(self) -> dict:
+        action = self.action_queue.claim_next()
+        if action is None:
+            return {"processed": 0}
+        try:
+            _log_event(self.event_logger, action, "action_started", {"attempts": action.attempts})
+            result = _coerce_result(await self.execute(action))
+        except Exception as error:
+            retryable = isinstance(error, ToolExecutionError) and error.retryable
+            if retryable and action.attempts < self.max_attempts:
+                self.action_queue.retry_failed(action.id)
+                _log_event(self.event_logger, action, "tool_failed", {"retryable": True, "error": str(error)})
+                return {"processed": 1, "retried": 1}
+            self.action_queue.mark_failed(action.id, str(error) or error.__class__.__name__)
+            _log_event(self.event_logger, action, "tool_failed", {"retryable": False, "error": str(error)})
+            _block_downstream(self.action_queue, self.event_logger, action)
+            _mark_compensation_skipped(self.action_queue, self.event_logger, action)
+            _update_job_status(self.job_status_updater, action)
+            await self.deliver(action, _failure_text(action, error))
+            return {"processed": 1, "failed": 1}
+
+        self.action_queue.mark_succeeded(action.id, result_meta=result.meta)
+        _log_event(
+            self.event_logger,
+            action,
+            "action_succeeded",
+            {"result_chars": len(result.message), "result_meta": dict(result.meta)},
+        )
+        _update_job_status(self.job_status_updater, action)
+        await self.deliver(action, _success_text(action, result.message))
+        return {"processed": 1, "succeeded": 1}
 
 
 async def run_action_worker(
@@ -28,48 +90,20 @@ async def run_action_worker(
     event_logger: ActionEventLogger | None = None,
     job_status_updater: JobStatusUpdater | None = None,
 ) -> None:
-    while True:
-        action = action_queue.claim_next()
-        if action is None:
-            if stop_after_one_tick:
-                return
-            await asyncio.sleep(interval_seconds)
-            continue
-
-        try:
-            _log_event(event_logger, action, "action_started", {"attempts": action.attempts})
-            raw_result = await execute(action)
-            result = _coerce_result(raw_result)
-        except Exception as error:
-            retryable = isinstance(error, ToolExecutionError) and error.retryable
-            if retryable and action.attempts < max_attempts:
-                action_queue.retry_failed(action.id)
-                logger.info("action worker retry queued: action_id=%s attempts=%s", action.id, action.attempts)
-                _log_event(event_logger, action, "tool_failed", {"retryable": True, "error": str(error)})
-            else:
-                action_queue.mark_failed(action.id, str(error) or error.__class__.__name__)
-                _log_event(event_logger, action, "tool_failed", {"retryable": False, "error": str(error)})
-                _block_downstream(action_queue, event_logger, action)
-                _mark_compensation_skipped(action_queue, event_logger, action)
-                _update_job_status(job_status_updater, action)
-                await deliver(action, _failure_text(action, error))
-            if stop_after_one_tick:
-                return
-            await asyncio.sleep(interval_seconds)
-            continue
-
-        action_queue.mark_succeeded(action.id, result_meta=result.meta)
-        _log_event(
-            event_logger,
-            action,
-            "action_succeeded",
-            {"result_chars": len(result.message), "result_meta": dict(result.meta)},
-        )
-        _update_job_status(job_status_updater, action)
-        await deliver(action, _success_text(action, result.message))
-        if stop_after_one_tick:
-            return
-        await asyncio.sleep(interval_seconds)
+    adapter = ActionWorkerAdapter(
+        action_queue,
+        execute,
+        deliver,
+        policy=replace(ActionWorkerAdapter.default_policy, interval_seconds=interval_seconds),
+        max_attempts=max_attempts,
+        event_logger=event_logger,
+        job_status_updater=job_status_updater,
+    )
+    await AutomationRuntime(
+        [adapter],
+        InMemoryAutomationLeaseStore(),
+        poll_seconds=min(1, max(0.01, interval_seconds)),
+    ).run(stop_after_one_tick=stop_after_one_tick)
 
 
 def _success_text(action: AgentAction, result: str) -> str:

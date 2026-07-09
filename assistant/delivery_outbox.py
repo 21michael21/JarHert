@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 
+from assistant.automation_runtime import AutomationRuntime, InMemoryAutomationLeaseStore, WorkerPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,58 @@ class DeliveryErrorClassification:
 
 AsyncDeliverySender = Callable[[DeliveryMessage], Awaitable[None]]
 DeliveryEventLogger = Callable[[DeliveryMessage, str, dict], None]
+
+
+class DeliveryOutboxAdapter:
+    name = "delivery_outbox"
+    default_policy = WorkerPolicy(interval_seconds=2, timeout_seconds=45, lease_seconds=75, heartbeat_seconds=15)
+
+    def __init__(
+        self,
+        store,
+        send: AsyncDeliverySender,
+        *,
+        policy: WorkerPolicy | None = None,
+        limit: int = 20,
+        max_attempts: int = 5,
+        event_logger: DeliveryEventLogger | None = None,
+    ) -> None:
+        self.store = store
+        self.send = send
+        self.policy = policy or self.default_policy
+        self.limit = limit
+        self.max_attempts = max_attempts
+        self.event_logger = event_logger
+
+    async def recover_stale(self) -> int:
+        recover = getattr(self.store, "recover_sending", None)
+        return recover() if recover is not None else 0
+
+    async def run_once(self) -> dict:
+        due = self.store.claim_due(limit=self.limit)
+        counts = {"processed": len(due), "sent": 0, "retried": 0, "failed": 0}
+        for message in due:
+            try:
+                await self.send(message)
+                self.store.mark_sent(message.id)
+                _log_event(self.event_logger, message, "delivery_sent", {"attempts": message.attempts})
+                counts["sent"] += 1
+            except Exception as error:
+                classification = classify_delivery_error(error)
+                error_text = _truncate_error(str(error) or error.__class__.__name__)
+                if classification.retryable and message.attempts < self.max_attempts:
+                    self.store.mark_retry(
+                        message.id,
+                        error_text,
+                        _next_attempt_at(attempts=message.attempts, retry_after_seconds=classification.retry_after_seconds),
+                    )
+                    _log_event(self.event_logger, message, "delivery_retry", {"error": error_text})
+                    counts["retried"] += 1
+                else:
+                    self.store.mark_failed_permanent(message.id, error_text)
+                    _log_event(self.event_logger, message, "delivery_failed", {"error": error_text})
+                    counts["failed"] += 1
+        return counts
 
 
 class InMemoryDeliveryOutboxStore:
@@ -174,46 +227,19 @@ async def run_delivery_outbox_worker(
     max_attempts: int = 5,
     event_logger: DeliveryEventLogger | None = None,
 ) -> None:
-    while True:
-        due = store.claim_due(limit=limit)
-        sent = 0
-        retried = 0
-        failed = 0
-        for message in due:
-            try:
-                await send(message)
-                store.mark_sent(message.id)
-                _log_event(event_logger, message, "delivery_sent", {"attempts": message.attempts})
-                sent += 1
-            except Exception as error:
-                classification = classify_delivery_error(error)
-                error_text = _truncate_error(str(error) or error.__class__.__name__)
-                if classification.retryable and message.attempts < max_attempts:
-                    store.mark_retry(
-                        message.id,
-                        error_text,
-                        _next_attempt_at(
-                            attempts=message.attempts,
-                            retry_after_seconds=classification.retry_after_seconds,
-                        ),
-                    )
-                    _log_event(event_logger, message, "delivery_retry", {"error": error_text})
-                    retried += 1
-                else:
-                    store.mark_failed_permanent(message.id, error_text)
-                    _log_event(event_logger, message, "delivery_failed", {"error": error_text})
-                    failed += 1
-        if due:
-            logger.info(
-                "delivery outbox tick: due=%s sent=%s retried=%s failed=%s",
-                len(due),
-                sent,
-                retried,
-                failed,
-            )
-        if stop_after_one_tick:
-            return
-        await asyncio.sleep(interval_seconds)
+    adapter = DeliveryOutboxAdapter(
+        store,
+        send,
+        policy=replace(DeliveryOutboxAdapter.default_policy, interval_seconds=interval_seconds),
+        limit=limit,
+        max_attempts=max_attempts,
+        event_logger=event_logger,
+    )
+    await AutomationRuntime(
+        [adapter],
+        InMemoryAutomationLeaseStore(),
+        poll_seconds=min(1, max(0.01, interval_seconds)),
+    ).run(stop_after_one_tick=stop_after_one_tick)
 
 
 def classify_delivery_error(error: Exception) -> DeliveryErrorClassification:

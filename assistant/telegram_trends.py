@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from assistant.automation_runtime import AutomationRuntime, InMemoryAutomationLeaseStore, WorkerPolicy
 from assistant.provider_clients import HermesClient
 from assistant.tracing import new_trace_id
 from assistant.types import HermesRequest, Intent, UserContext
@@ -22,6 +23,47 @@ class TrendDecision:
     summary: str | None = None
 
 
+class TelegramTrendWorkerAdapter:
+    name = "telegram_trends"
+    default_policy = WorkerPolicy(interval_seconds=3600, timeout_seconds=120, lease_seconds=180, heartbeat_seconds=20)
+
+    def __init__(
+        self,
+        message_store,
+        hermes: HermesClient,
+        delivery_outbox,
+        *,
+        user_id: int,
+        chat_id: int,
+        lookback_hours: int = 6,
+        limit: int = 300,
+        policy: WorkerPolicy | None = None,
+    ) -> None:
+        self.message_store = message_store
+        self.hermes = hermes
+        self.delivery_outbox = delivery_outbox
+        self.user_id = user_id
+        self.chat_id = chat_id
+        self.lookback_hours = lookback_hours
+        self.limit = limit
+        self.policy = policy or self.default_policy
+
+    async def recover_stale(self) -> int:
+        return 0
+
+    async def run_once(self) -> dict:
+        decision = await run_telegram_trend_once(
+            self.message_store,
+            self.hermes,
+            self.delivery_outbox,
+            user_id=self.user_id,
+            chat_id=self.chat_id,
+            lookback_hours=self.lookback_hours,
+            limit=self.limit,
+        )
+        return {"processed": int(decision is not None), "triggered": bool(decision and decision.triggered)}
+
+
 async def run_telegram_trend_worker(
     message_store,
     hermes: HermesClient,
@@ -34,19 +76,26 @@ async def run_telegram_trend_worker(
     limit: int = 300,
     stop_after_one_tick: bool = False,
 ) -> None:
-    while True:
-        await run_telegram_trend_once(
-            message_store,
-            hermes,
-            delivery_outbox,
-            user_id=user_id,
-            chat_id=chat_id,
-            lookback_hours=lookback_hours,
-            limit=limit,
-        )
-        if stop_after_one_tick:
-            return
-        await asyncio.sleep(max(60, interval_seconds))
+    adapter = TelegramTrendWorkerAdapter(
+        message_store,
+        hermes,
+        delivery_outbox,
+        user_id=user_id,
+        chat_id=chat_id,
+        lookback_hours=lookback_hours,
+        limit=limit,
+        policy=WorkerPolicy(
+            interval_seconds=max(60, interval_seconds),
+            timeout_seconds=120,
+            lease_seconds=180,
+            heartbeat_seconds=20,
+        ),
+    )
+    await AutomationRuntime(
+        [adapter],
+        InMemoryAutomationLeaseStore(),
+        poll_seconds=min(5, max(0.01, interval_seconds)),
+    ).run(stop_after_one_tick=stop_after_one_tick)
 
 
 async def run_telegram_trend_once(
@@ -70,15 +119,14 @@ async def run_telegram_trend_once(
         return TrendDecision(triggered=False, summary=None)
 
     trace_id = f"telegram-trends-{new_trace_id()}"
-    response = hermes.ask(
-        HermesRequest(
-            user=UserContext(user_id=user_id, tg_user_id=chat_id),
-            prompt=build_trend_prompt(text_messages),
-            intent=Intent.ASK,
-            context={"response_format": "json", "job_type": "telegram_trendwatch"},
-            trace_id=trace_id,
-        )
+    request = HermesRequest(
+        user=UserContext(user_id=user_id, tg_user_id=chat_id),
+        prompt=build_trend_prompt(text_messages),
+        intent=Intent.ASK,
+        context={"response_format": "json", "job_type": "telegram_trendwatch"},
+        trace_id=trace_id,
     )
+    response = await asyncio.to_thread(hermes.ask, request)
     decision = parse_trend_decision(response.text)
     if decision.triggered and decision.summary:
         delivery_outbox.enqueue(

@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from assistant.monitors.runner import run_monitors_once
+from assistant.automation_runtime import AutomationRuntime
+from assistant.monitors.runner import MonitorWorkerAdapter
+from backend.automation_store import SqlAutomationLeaseStore
 from backend.stores import SqlDeliveryOutboxStore, SqlMonitorJobStore
 from gateway_bot.main import build_hermes_client, get_session_factory
 from scripts.run_migrations import run_migrations
@@ -21,12 +25,28 @@ def main() -> int:
 
     run_migrations()
     session_factory = get_session_factory()
-    summary = run_monitors_once(
+    adapter = MonitorWorkerAdapter(
         monitor_jobs=SqlMonitorJobStore(session_factory),
         hermes=build_hermes_client(),
         delivery_outbox=SqlDeliveryOutboxStore(session_factory),
         limit=args.limit,
+        policy=replace(MonitorWorkerAdapter.default_policy, interval_seconds=0),
     )
+    lease_store = SqlAutomationLeaseStore(session_factory)
+    asyncio.run(
+        AutomationRuntime(
+            [adapter],
+            lease_store,
+        ).run(stop_after_one_tick=True)
+    )
+    summary = adapter.last_result
+    if summary is None:
+        lease = lease_store.get(adapter.name)
+        if lease is not None and lease.status in {"retry_wait", "degraded"}:
+            print(f"monitor_run failed={lease.status} error={lease.last_error or 'unknown'}")
+            return 1
+        print("monitor_run skipped=lease_busy")
+        return 0
     print(
         "monitor_run "
         + " ".join(
