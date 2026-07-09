@@ -25,7 +25,7 @@ def make_session_factory(database_url: str) -> sessionmaker[Session]:
     sqlite_path = _sqlite_path_from_url(database_url)
     if sqlite_path is not None and sqlite_path.parent != Path("."):
         sqlite_path.parent.mkdir(parents=True, exist_ok=True)
-    connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
+    connect_args = {"check_same_thread": False, "timeout": 30} if database_url.startswith("sqlite") else {}
     engine = create_engine(database_url, future=True, connect_args=connect_args)
     return sessionmaker(engine, expire_on_commit=False)
 
@@ -66,8 +66,22 @@ def _upgrade_existing_schema(engine) -> None:
         "result_meta",
         "JSON NOT NULL DEFAULT '{}'",
     )
+    for column, sql_type in (
+        ("worker_id", "VARCHAR(100)"),
+        ("lease_until", "DATETIME"),
+        ("claimed_at", "DATETIME"),
+        ("heartbeat_at", "DATETIME"),
+    ):
+        _add_nullable_column_if_missing(engine, inspector, table_names, "agent_actions", column, sql_type)
     _add_nullable_column_if_missing(engine, inspector, table_names, "delivery_outbox", "trace_id", "VARCHAR(40)")
     _add_nullable_column_if_missing(engine, inspector, table_names, "delivery_outbox", "buttons", "JSON")
+    for column, sql_type in (
+        ("worker_id", "VARCHAR(100)"),
+        ("lease_until", "DATETIME"),
+        ("claimed_at", "DATETIME"),
+        ("heartbeat_at", "DATETIME"),
+    ):
+        _add_nullable_column_if_missing(engine, inspector, table_names, "delivery_outbox", column, sql_type)
     _add_nullable_column_if_missing(engine, inspector, table_names, "events", "trace_id", "VARCHAR(40)")
 
 

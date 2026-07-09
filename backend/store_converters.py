@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from assistant.action_queue import AgentAction, ActionStatus
 from assistant.action_schema import ActionType
 from assistant.agent_jobs import AgentJob
@@ -84,6 +86,10 @@ def agent_action_from_record(record: AgentActionRecord) -> AgentAction:
         compensation_status=record.compensation_status or "none",
         result_meta=dict(record.result_meta or {}),
         idempotency_key=record.idempotency_key,
+        worker_id=record.worker_id,
+        lease_until=_aware(record.lease_until),
+        claimed_at=_aware(record.claimed_at),
+        heartbeat_at=_aware(record.heartbeat_at),
         last_error=record.last_error,
         created_at=record.created_at,
         updated_at=record.updated_at,
@@ -149,6 +155,10 @@ def delivery_message_from_record(
         attempts=record.attempts if attempts is None else attempts,
         trace_id=record.trace_id or "",
         buttons=list(record.buttons or []),
+        worker_id=record.worker_id,
+        lease_until=_aware(record.lease_until),
+        claimed_at=_aware(record.claimed_at),
+        heartbeat_at=_aware(record.heartbeat_at),
         last_error=record.last_error,
         next_attempt_at=record.next_attempt_at,
         created_at=record.created_at,
@@ -172,3 +182,9 @@ def truncate_error(error: str, *, limit: int = 1000) -> str:
     if len(value) <= limit:
         return value
     return value[: limit - 1].rstrip() + "…"
+
+
+def _aware(value: datetime | None) -> datetime | None:
+    if value is None or value.tzinfo is not None:
+        return value
+    return value.replace(tzinfo=timezone.utc)

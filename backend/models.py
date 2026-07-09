@@ -126,6 +126,7 @@ class AgentActionRecord(Base):
         Index("ix_agent_actions_status_created", "status", "created_at"),
         Index("ix_agent_actions_user_status_created", "user_id", "status", "created_at"),
         Index("ix_agent_actions_trace", "trace_id"),
+        Index("ix_agent_actions_status_lease", "status", "lease_until"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -141,6 +142,10 @@ class AgentActionRecord(Base):
     compensation_status: Mapped[str] = mapped_column(String(30), nullable=False, default="none")
     result_meta: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict, server_default=text("'{}'"))
     idempotency_key: Mapped[str | None] = mapped_column(String(180))
+    worker_id: Mapped[str | None] = mapped_column(String(100))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -233,6 +238,7 @@ class DeliveryOutboxRecord(Base):
         Index("ix_delivery_outbox_status_next_attempt", "status", "next_attempt_at"),
         Index("ix_delivery_outbox_user_status_created", "user_id", "status", "created_at"),
         Index("ix_delivery_outbox_trace", "trace_id"),
+        Index("ix_delivery_outbox_status_lease", "status", "lease_until"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -243,6 +249,10 @@ class DeliveryOutboxRecord(Base):
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     trace_id: Mapped[str | None] = mapped_column(String(40))
     buttons: Mapped[list[dict] | None] = mapped_column(JSON)
+    worker_id: Mapped[str | None] = mapped_column(String(100))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
