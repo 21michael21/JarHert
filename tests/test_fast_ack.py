@@ -6,6 +6,7 @@ import time
 from assistant.action_queue import ActionStatus, InMemoryActionQueueStore
 from assistant.action_schema import ActionType
 from assistant.action_worker import run_action_worker
+from assistant.agent_jobs import InMemoryAgentJobStore
 from assistant.delivery_outbox import InMemoryDeliveryOutboxStore
 from assistant.hermes_client import FakeHermesClient
 from assistant.limits import DailyLimitStore
@@ -65,6 +66,35 @@ def test_heavy_natural_action_returns_fast_ack_and_queues_work() -> None:
     queued = queue.claim_next()
     assert queued is not None
     assert queued.status == ActionStatus.RUNNING
+
+
+def test_replayed_telegram_update_creates_one_job_and_action() -> None:
+    queue = InMemoryActionQueueStore()
+    jobs = InMemoryAgentJobStore()
+    pipeline = AssistantPipeline(
+        FakeHermesClient(),
+        DailyLimitStore(),
+        plain_text_ai_enabled=True,
+        task_center=SlowTaskCenter(),
+        agent_jobs=jobs,
+        action_queue=queue,
+    )
+    root_key = "telegram:1001:4242"
+
+    replies = [
+        pipeline.handle_text(
+            user(),
+            "создай задачу проверить сервер",
+            idempotency_key=root_key,
+        )
+        for _ in range(10)
+    ]
+
+    assert len(jobs.list_for_user(1)) == 1
+    assert len(queue.list_for_user(1)) == 1
+    assert jobs.list_for_user(1)[0].idempotency_key == f"{root_key}:job"
+    assert queue.list_for_user(1)[0].idempotency_key == f"{root_key}:action:1"
+    assert {reply.text for reply in replies} == {replies[0].text}
 
 
 def test_action_worker_executes_queued_action_and_delivers_result() -> None:
@@ -212,6 +242,7 @@ def test_action_worker_persists_tool_result_meta() -> None:
 
     saved = next(item for item in queue.list_for_user(1) if item.id == action.id)
     assert saved.result_meta == {"trello_card_id": "card123456"}
+    assert saved.result_text == "Создал задачу."
     assert "Создал задачу" in delivered[0]
     assert ("action_succeeded", {"trello_card_id": "card123456"}) in [
         (event_type, meta.get("result_meta")) for _, event_type, meta in events

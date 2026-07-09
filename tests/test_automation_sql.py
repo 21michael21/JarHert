@@ -104,3 +104,22 @@ def test_alembic_creates_automation_worker_leases_on_clean_database(tmp_path) ->
     item_lease_columns = {"worker_id", "lease_until", "claimed_at", "heartbeat_at"}
     assert item_lease_columns <= {column["name"] for column in inspector.get_columns("agent_actions")}
     assert item_lease_columns <= {column["name"] for column in inspector.get_columns("delivery_outbox")}
+
+
+def test_alembic_creates_update_idempotency_schema(tmp_path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'idempotency.sqlite3'}"
+
+    run_migrations(database_url)
+
+    engine = make_session_factory(database_url).kw["bind"]
+    inspector = inspect(engine)
+    assert "inbound_updates" in inspector.get_table_names()
+    assert "idempotency_key" in {
+        column["name"] for column in inspector.get_columns("agent_jobs")
+    }
+    assert "idempotency_key" in {
+        column["name"] for column in inspector.get_columns("delivery_outbox")
+    }
+    assert "result_text" in {
+        column["name"] for column in inspector.get_columns("agent_actions")
+    }

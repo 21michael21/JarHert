@@ -14,6 +14,7 @@ from backend.stores import (
     SqlDailyLimitStore,
     SqlDeliveryOutboxStore,
     SqlIdeaStore,
+    SqlInboundUpdateStore,
     SqlMemoryStore,
     SqlMonitorJobStore,
     SqlReminderStore,
@@ -212,6 +213,75 @@ def test_sql_agent_jobs_persist_and_are_user_scoped(tmp_path) -> None:
     assert store_two.get_for_user(user_one.id, created.id).goal == "проверить календарь"
     assert store_two.get_for_user(user_two.id, created.id) is None
     assert store_two.list_for_user(user_two.id) == []
+
+
+def test_sql_job_and_delivery_deduplicate_replayed_update(tmp_path) -> None:
+    factory = session_factory(tmp_path)
+    user = UserStore(factory).get_or_create(7110)
+    jobs = SqlAgentJobStore(factory)
+    outbox = SqlDeliveryOutboxStore(factory)
+    root_key = "telegram:7110:55"
+
+    created_jobs = [
+        jobs.create(
+            user.id,
+            "создать задачу",
+            ["создать"],
+            idempotency_key=f"{root_key}:job",
+        )
+        for _ in range(10)
+    ]
+    deliveries = [
+        outbox.enqueue(
+            user_id=user.id,
+            chat_id=user.tg_user_id,
+            text="Принял",
+            idempotency_key=f"{root_key}:reply",
+        )
+        for _ in range(10)
+    ]
+
+    assert {job.id for job in created_jobs} == {created_jobs[0].id}
+    assert {message.id for message in deliveries} == {deliveries[0].id}
+    assert len(jobs.list_for_user(user.id)) == 1
+    assert len(outbox.list_recent(limit=20)) == 1
+
+
+def test_replayed_update_creates_one_note_idea_and_reminder(tmp_path) -> None:
+    factory = session_factory(tmp_path)
+    users = UserStore(factory)
+    memories = SqlMemoryStore(factory)
+    ideas = SqlIdeaStore(factory)
+    reminders = SqlReminderStore(factory)
+    service = GatewayService(
+        pipeline=AssistantPipeline(
+            FakeHermesClient(),
+            SqlDailyLimitStore(factory),
+            memories=memories,
+            ideas=ideas,
+            reminders=reminders,
+        ),
+        users=users,
+        events=EventStore(factory),
+        inbound_updates=SqlInboundUpdateStore(factory),
+    )
+    commands = [
+        ("telegram:7120:1", "/remember важная заметка"),
+        ("telegram:7120:2", "/idea идея без дублей"),
+        ("telegram:7120:3", "/remind 2026-07-10 09:30 проверить очередь"),
+    ]
+
+    for idempotency_key, command in commands:
+        replies = [
+            service.handle_text(7120, command, idempotency_key=idempotency_key)
+            for _ in range(10)
+        ]
+        assert {reply.text for reply in replies} == {replies[0].text}
+
+    user = users.get_or_create(7120)
+    assert len(memories.list_for_user(user.id)) == 1
+    assert len(ideas.list_for_user(user.id)) == 1
+    assert len(reminders.list_pending_for_user(user.id)) == 1
 
 
 def test_sql_monitor_jobs_persist_and_record_runs(tmp_path) -> None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from assistant.action_executor import ActionExecutor
@@ -121,6 +123,22 @@ def test_executor_routes_task_create_to_registered_tool() -> None:
     ]
     assert result.meta["trello_card_id"] == "trello123456"
     assert result.meta["calendar_event_id"] == "event123456"
+
+
+def test_tool_result_keeps_root_idempotency_key_with_external_ids() -> None:
+    context = replace(
+        make_context(task_center=FakeTaskCenter()),
+        idempotency_key="telegram:1001:4242:action:1",
+    )
+    executor = ActionExecutor(build_default_tool_registry())
+
+    result = executor.execute(
+        PlannedAction(ActionType.TASK_CREATE, {"title": "проверить Trello"}),
+        context,
+    )
+
+    assert result.meta["idempotency_key"] == "telegram:1001:4242:action:1"
+    assert result.meta["trello_card_id"] == "trello123456"
 
 
 def test_tool_registry_classifies_external_task_errors() -> None:

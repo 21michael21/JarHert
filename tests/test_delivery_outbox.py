@@ -108,3 +108,23 @@ def test_delivery_outbox_skips_not_due_messages() -> None:
     store.enqueue(user_id=1, chat_id=1001, text="позже", next_attempt_at=future)
 
     assert store.claim_due(now=datetime.now(timezone.utc)) == []
+
+
+def test_replayed_update_is_delivered_once() -> None:
+    store = InMemoryDeliveryOutboxStore()
+    for _ in range(10):
+        store.enqueue(
+            user_id=1,
+            chat_id=1001,
+            text="один ответ",
+            idempotency_key="telegram:1001:4242:reply",
+        )
+    sent = []
+
+    async def send(message) -> None:
+        sent.append(message.text)
+
+    for _ in range(10):
+        asyncio.run(run_delivery_outbox_worker(store, send, stop_after_one_tick=True))
+
+    assert sent == ["один ответ"]
