@@ -7,3 +7,8 @@ ADMIN_TG_USER_IDS= ALLOWED_TG_USER_IDS= HERMES_MODE=fake .venv/bin/python -m pyt
 .venv/bin/python -m compileall assistant backend gateway_bot reminders
 ADMIN_TG_USER_IDS= ALLOWED_TG_USER_IDS= HERMES_MODE=fake .venv/bin/python scripts/eval_golden.py
 ADMIN_TG_USER_IDS= ALLOWED_TG_USER_IDS= HERMES_MODE=fake .venv/bin/python scripts/hermes_adapter_smoke.py
+if [[ "${RUN_PROVIDER_BENCHMARK_GATE:-0}" == "1" ]]; then
+  scripts/provider_quality_gate.sh
+else
+  echo "provider_quality_gate=skipped set RUN_PROVIDER_BENCHMARK_GATE=1"
+fi

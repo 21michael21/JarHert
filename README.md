@@ -548,7 +548,7 @@ reports/golden_eval/
 
 ## Provider quality benchmark
 
-Запуск:
+Обычный отчёт без падения как gate:
 
 ```bash
 .venv/bin/python scripts/provider_benchmark.py
@@ -560,6 +560,76 @@ reports/golden_eval/
 .venv/bin/python scripts/provider_benchmark.py --provider openrouter_free
 ```
 
+Регулярный gate перед релизом или по cron:
+
+```bash
+scripts/provider_quality_gate.sh
+```
+
+По умолчанию gate проверяет всех включённых провайдеров из `.env` в двух профилях:
+
+1. direct API: OpenRouter/free, OpenAI cheap, опциональные Groq/HF;
+2. local/CLI: Hermes CLI.
+
+Пороговые значения для direct API:
+
+- `fail_rate <= 20%`;
+- `quality_score >= 75`;
+- `avg_latency_ms <= 12000`;
+- `p95_latency_ms <= 20000`.
+
+Regular gate считается пройденным, если прошёл хотя бы один direct provider. Это защищает реальный router path: если OpenRouter/free просел по лимитам, но OpenAI cheap живой, сервис всё ещё отвечает. Чтобы требовать больше провайдеров:
+
+```bash
+PROVIDER_GATE_DIRECT_MIN_PASSING=2 scripts/provider_quality_gate.sh
+```
+
+Hermes CLI проверяется отдельно, потому что он может включать локальный запуск, CLI overhead и чужой router за ним. В regular gate он измеряется и пишет отчёт, но не блокирует релиз по умолчанию. Чтобы сделать Hermes CLI обязательным:
+
+```bash
+PROVIDER_GATE_REQUIRE_LOCAL=1 scripts/provider_quality_gate.sh
+```
+
+Пороги для local/CLI:
+
+- `fail_rate <= 30%`;
+- `quality_score >= 70`;
+- `avg_latency_ms <= 15000`;
+- `p95_latency_ms <= 45000`.
+
+Если нужен быстрый gate только по direct API:
+
+```bash
+PROVIDER_GATE_RUN_LOCAL=0 scripts/provider_quality_gate.sh
+```
+
+Пороги direct API можно менять env-переменными:
+
+```bash
+PROVIDER_GATE_MAX_FAIL_RATE=0.30 \
+PROVIDER_GATE_MIN_QUALITY_SCORE=70 \
+PROVIDER_GATE_MAX_AVG_LATENCY_MS=15000 \
+PROVIDER_GATE_MAX_P95_LATENCY_MS=25000 \
+PROVIDER_GATE_DIRECT_MIN_PASSING=1 \
+scripts/provider_quality_gate.sh --provider openrouter_free
+```
+
+Пороги local/CLI:
+
+```bash
+PROVIDER_GATE_LOCAL_MAX_FAIL_RATE=0.30 \
+PROVIDER_GATE_LOCAL_MIN_QUALITY_SCORE=70 \
+PROVIDER_GATE_LOCAL_MAX_AVG_LATENCY_MS=15000 \
+PROVIDER_GATE_LOCAL_MAX_P95_LATENCY_MS=45000 \
+scripts/provider_quality_gate.sh
+```
+
+Включить этот gate в общий локальный чек:
+
+```bash
+RUN_PROVIDER_BENCHMARK_GATE=1 scripts/local_check.sh
+```
+
 Отчёт пишется в:
 
 ```text
@@ -569,9 +639,10 @@ reports/provider_benchmarks/
 В отчёте есть:
 
 - provider/model;
-- latency;
-- quality gate result;
-- fallback/error summary;
+- latency: `avg_latency_ms`, `p95_latency_ms`, `max_latency_ms`;
+- `fail_rate` и `success_rate`;
+- `quality_score` 0–100;
+- gate result и причины провала;
 - короткий preview ответа без секретов.
 
 Benchmark делает реальные LLM-запросы к провайдерам из `.env`, поэтому запускай его осознанно.
