@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 
 from assistant.action_schema import ActionType
+from assistant.automation_runtime import LeaseLostError
 
 
 class ActionStatus(str, Enum):
@@ -32,6 +33,10 @@ class AgentAction:
     compensation_status: str = "none"
     result_meta: dict[str, str] = field(default_factory=dict)
     idempotency_key: str | None = None
+    worker_id: str | None = None
+    lease_until: datetime | None = None
+    claimed_at: datetime | None = None
+    heartbeat_at: datetime | None = None
     last_error: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -84,7 +89,14 @@ class InMemoryActionQueueStore:
         items = [item for item in self._items if item.user_id == user_id]
         return sorted(items, key=lambda item: (item.created_at, item.id), reverse=True)[:limit]
 
-    def claim_next(self) -> AgentAction | None:
+    def claim_next(
+        self,
+        *,
+        worker_id: str | None = None,
+        now: datetime | None = None,
+        lease_seconds: float = 75,
+    ) -> AgentAction | None:
+        claimed_at = now or datetime.now(timezone.utc)
         for item in sorted(self._items, key=lambda item: (item.created_at, item.id)):
             if item.status != ActionStatus.QUEUED:
                 continue
@@ -105,18 +117,93 @@ class InMemoryActionQueueStore:
                 item,
                 status=ActionStatus.RUNNING,
                 attempts=item.attempts + 1,
-                updated_at=datetime.now(timezone.utc),
+                worker_id=worker_id,
+                claimed_at=claimed_at,
+                heartbeat_at=claimed_at,
+                lease_until=claimed_at + timedelta(seconds=lease_seconds),
+                updated_at=claimed_at,
             )
             self._replace(updated)
             return updated
         return None
 
-    def mark_succeeded(self, action_id: int, *, result_meta: dict[str, str] | None = None) -> AgentAction:
+    def heartbeat(
+        self,
+        action_id: int,
+        *,
+        worker_id: str,
+        now: datetime | None = None,
+        lease_seconds: float = 75,
+    ) -> bool:
         item = self._require(action_id)
+        if item.status != ActionStatus.RUNNING or item.worker_id != worker_id:
+            return False
+        heartbeat_at = now or datetime.now(timezone.utc)
+        self._replace(
+            replace(
+                item,
+                heartbeat_at=heartbeat_at,
+                lease_until=heartbeat_at + timedelta(seconds=lease_seconds),
+                updated_at=heartbeat_at,
+            )
+        )
+        return True
+
+    def recover_expired(self, *, now: datetime | None = None) -> int:
+        expired_at = now or datetime.now(timezone.utc)
+        recovered = 0
+        for item in list(self._items):
+            if item.status != ActionStatus.RUNNING:
+                continue
+            if item.lease_until is not None and item.lease_until > expired_at:
+                continue
+            self._replace(
+                replace(
+                    item,
+                    status=ActionStatus.QUEUED,
+                    worker_id=None,
+                    lease_until=None,
+                    claimed_at=None,
+                    heartbeat_at=None,
+                    updated_at=expired_at,
+                )
+            )
+            recovered += 1
+        return recovered
+
+    def recover_running(self) -> int:
+        recovered = 0
+        for item in list(self._items):
+            if item.status != ActionStatus.RUNNING:
+                continue
+            self._replace(
+                replace(
+                    item,
+                    status=ActionStatus.QUEUED,
+                    worker_id=None,
+                    lease_until=None,
+                    claimed_at=None,
+                    heartbeat_at=None,
+                    updated_at=datetime.now(timezone.utc),
+                )
+            )
+            recovered += 1
+        return recovered
+
+    def mark_succeeded(
+        self,
+        action_id: int,
+        *,
+        result_meta: dict[str, str] | None = None,
+        worker_id: str | None = None,
+    ) -> AgentAction:
+        item = self._require(action_id)
+        _assert_action_owner(item, worker_id)
         updated = replace(
             item,
             status=ActionStatus.SUCCEEDED,
             result_meta=dict(result_meta or item.result_meta),
+            lease_until=None,
             last_error=None,
             updated_at=datetime.now(timezone.utc),
         )
@@ -124,22 +211,29 @@ class InMemoryActionQueueStore:
         self._unblock_dependents_after_success(updated.id)
         return updated
 
-    def mark_failed(self, action_id: int, error: str) -> AgentAction:
+    def mark_failed(self, action_id: int, error: str, *, worker_id: str | None = None) -> AgentAction:
         item = self._require(action_id)
+        _assert_action_owner(item, worker_id)
         updated = replace(
             item,
             status=ActionStatus.FAILED,
+            lease_until=None,
             last_error=_truncate_error(error),
             updated_at=datetime.now(timezone.utc),
         )
         self._replace(updated)
         return updated
 
-    def retry_failed(self, action_id: int) -> AgentAction:
+    def retry_failed(self, action_id: int, *, worker_id: str | None = None) -> AgentAction:
         item = self._require(action_id)
+        _assert_action_owner(item, worker_id)
         updated = replace(
             item,
             status=ActionStatus.QUEUED,
+            worker_id=None,
+            lease_until=None,
+            claimed_at=None,
+            heartbeat_at=None,
             last_error=None,
             updated_at=datetime.now(timezone.utc),
         )
@@ -285,6 +379,13 @@ def _truncate_error(error: str, *, limit: int = 1000) -> str:
     if len(value) <= limit:
         return value
     return value[: limit - 1].rstrip() + "…"
+
+
+def _assert_action_owner(item: AgentAction, worker_id: str | None) -> None:
+    if worker_id is None:
+        return
+    if item.status != ActionStatus.RUNNING or item.worker_id != worker_id:
+        raise LeaseLostError(f"action lease lost: action_id={item.id} worker_id={worker_id}")
 
 
 def _has_external_result_ids(meta: dict[str, str]) -> bool:

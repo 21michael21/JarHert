@@ -12,6 +12,10 @@ from typing import Any, Protocol
 logger = logging.getLogger(__name__)
 
 
+class LeaseLostError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class WorkerPolicy:
     interval_seconds: float = 2
