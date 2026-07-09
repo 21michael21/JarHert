@@ -25,6 +25,7 @@ class Intent(str, Enum):
     AGENT_JOB = "agent_job"
     STATUS = "status"
     ADMIN_STATUS = "admin_status"
+    TRACE = "trace"
     HELP = "help"
     UNKNOWN = "unknown"
 

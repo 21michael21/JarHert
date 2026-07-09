@@ -49,7 +49,7 @@ def main() -> int:
     from assistant.transcription import OpenAITranscriber, TranscriptionError
     from assistant.types import UserContext
     from backend.db import init_db
-    from backend.stores import SqlActionQueueStore, SqlDeliveryOutboxStore, SqlReminderStore, UserStore
+    from backend.stores import EventStore, SqlActionQueueStore, SqlDeliveryOutboxStore, SqlReminderStore, UserStore
     from gateway_bot.main import get_gateway_service, get_session_factory, settings
     from reminders.worker import run_reminder_worker
 
@@ -62,6 +62,7 @@ def main() -> int:
     outbox = SqlDeliveryOutboxStore(factory)
     reminders = SqlReminderStore(factory)
     actions = SqlActionQueueStore(factory)
+    events = EventStore(factory)
     results: list[StepResult] = []
 
     if args.require_real_llm and settings.hermes_mode == "fake":
@@ -89,7 +90,7 @@ def main() -> int:
     )
     if args.send_telegram:
         message = outbox.enqueue(user_id=db_user.id, chat_id=args.tg_user_id, text=f"[live-e2e] LLM: {ask_reply.value.text}")
-        results.append(_deliver_one(outbox, message, settings.bot_token))
+        results.append(_deliver_one(outbox, message, settings.bot_token, events=events))
 
     reminder_text = _due_reminder_text(args.reminder_text)
     reminder_reply = _timed("reminder_create", lambda: service.handle_text(args.tg_user_id, reminder_text))
@@ -108,6 +109,13 @@ def main() -> int:
             user_id=reminder.user_id,
             chat_id=args.tg_user_id,
             text=f"[live-e2e] Напоминание #{reminder.id}: {reminder.text}",
+            trace_id=f"reminder-{reminder.id}",
+        )
+        events.log(
+            reminder.user_id,
+            "delivery_queued",
+            {"reminder_id": reminder.id, "delivery_id": message.id},
+            trace_id=f"reminder-{reminder.id}",
         )
         reminder_outbox_ids.append(message.id)
 
@@ -122,7 +130,7 @@ def main() -> int:
     if args.send_telegram:
         for message in outbox.list_recent(limit=20):
             if message.id in reminder_outbox_ids:
-                results.append(_deliver_one(outbox, message, settings.bot_token))
+                results.append(_deliver_one(outbox, message, settings.bot_token, events=events))
 
     if args.include_task:
         before_action_ids = _action_ids(actions, db_user.id)
@@ -136,6 +144,15 @@ def main() -> int:
                 task_reply.elapsed_ms,
             )
         )
+        if args.send_telegram:
+            message = outbox.enqueue(
+                user_id=db_user.id,
+                chat_id=args.tg_user_id,
+                text=f"[live-e2e] Task: {task_reply.value.text}",
+                trace_id=task_reply.value.trace_id,
+                buttons=_buttons_to_payload(task_reply.value.buttons),
+            )
+            results.append(_deliver_one(outbox, message, settings.bot_token, events=events))
         confirm_result = _confirm_actions(service, args.tg_user_id, actions, db_user.id, task_action_ids)
         results.append(confirm_result)
         action_outbox_ids: list[int] = []
@@ -151,10 +168,31 @@ def main() -> int:
                 user_id=action.user_id,
                 chat_id=args.tg_user_id,
                 text=f"[live-e2e] {text}",
+                trace_id=action.trace_id,
+                buttons=[[{"text": "Статус job", "callback_data": f"ai:status:{action.job_id}"}]] if action.job_id else [],
+            )
+            events.log(
+                action.user_id,
+                "delivery_queued",
+                {"action_id": action.id, "job_id": action.job_id, "delivery_id": message.id},
+                trace_id=action.trace_id,
             )
             action_outbox_ids.append(message.id)
 
-        asyncio.run(run_action_worker(actions, execute_action, deliver_action_result, stop_after_one_tick=True))
+        asyncio.run(
+            run_action_worker(
+                actions,
+                execute_action,
+                deliver_action_result,
+                stop_after_one_tick=True,
+                event_logger=lambda action, event_type, meta: events.log(
+                    action.user_id,
+                    event_type,
+                    {"action_id": action.id, "job_id": action.job_id, **meta},
+                    trace_id=action.trace_id,
+                ),
+            )
+        )
         task_statuses = _action_statuses(actions, db_user.id, task_action_ids)
         results.append(
             StepResult(
@@ -169,7 +207,7 @@ def main() -> int:
         if args.send_telegram:
             for message in outbox.list_recent(limit=20):
                 if message.id in action_outbox_ids:
-                    results.append(_deliver_one(outbox, message, settings.bot_token))
+                    results.append(_deliver_one(outbox, message, settings.bot_token, events=events))
 
     if args.include_calendar:
         before_action_ids = _action_ids(actions, db_user.id)
@@ -183,6 +221,15 @@ def main() -> int:
                 calendar_reply.elapsed_ms,
             )
         )
+        if args.send_telegram:
+            message = outbox.enqueue(
+                user_id=db_user.id,
+                chat_id=args.tg_user_id,
+                text=f"[live-e2e-calendar] {calendar_reply.value.text}",
+                trace_id=calendar_reply.value.trace_id,
+                buttons=_buttons_to_payload(calendar_reply.value.buttons),
+            )
+            results.append(_deliver_one(outbox, message, settings.bot_token, events=events))
         confirm_result = _confirm_actions(service, args.tg_user_id, actions, db_user.id, calendar_action_ids)
         results.append(StepResult("calendar_action_confirm", confirm_result.ok, confirm_result.detail, confirm_result.elapsed_ms))
         calendar_outbox_ids: list[int] = []
@@ -198,10 +245,31 @@ def main() -> int:
                 user_id=action.user_id,
                 chat_id=args.tg_user_id,
                 text=f"[live-e2e-calendar] {text}",
+                trace_id=action.trace_id,
+                buttons=[[{"text": "Статус job", "callback_data": f"ai:status:{action.job_id}"}]] if action.job_id else [],
+            )
+            events.log(
+                action.user_id,
+                "delivery_queued",
+                {"action_id": action.id, "job_id": action.job_id, "delivery_id": message.id},
+                trace_id=action.trace_id,
             )
             calendar_outbox_ids.append(message.id)
 
-        asyncio.run(run_action_worker(actions, execute_calendar_action, deliver_calendar_result, stop_after_one_tick=True))
+        asyncio.run(
+            run_action_worker(
+                actions,
+                execute_calendar_action,
+                deliver_calendar_result,
+                stop_after_one_tick=True,
+                event_logger=lambda action, event_type, meta: events.log(
+                    action.user_id,
+                    event_type,
+                    {"action_id": action.id, "job_id": action.job_id, **meta},
+                    trace_id=action.trace_id,
+                ),
+            )
+        )
         calendar_statuses = _action_statuses(actions, db_user.id, calendar_action_ids)
         results.append(
             StepResult(
@@ -217,7 +285,7 @@ def main() -> int:
         if args.send_telegram:
             for message in outbox.list_recent(limit=20):
                 if message.id in calendar_outbox_ids:
-                    results.append(_deliver_one(outbox, message, settings.bot_token))
+                    results.append(_deliver_one(outbox, message, settings.bot_token, events=events))
 
     if args.voice_file:
         voice_path = Path(args.voice_file)
@@ -263,12 +331,12 @@ def _timed(_name: str, fn) -> TimedValue:
     return TimedValue(fn(), _elapsed_ms(started))
 
 
-def _deliver_one(outbox, message, bot_token: str) -> StepResult:
+def _deliver_one(outbox, message, bot_token: str, *, events=None) -> StepResult:
     from assistant.delivery_outbox import classify_delivery_error
 
     started = time.perf_counter()
     try:
-        _send_telegram_message(bot_token, message.chat_id, message.text)
+        _send_telegram_message(bot_token, message.chat_id, message.text, buttons=message.buttons)
     except Exception as error:
         classification = classify_delivery_error(error)
         if classification.retryable:
@@ -278,12 +346,28 @@ def _deliver_one(outbox, message, bot_token: str) -> StepResult:
         outbox.mark_failed_permanent(message.id, str(error))
         return StepResult("telegram_delivery", False, f"permanent_error={error}", _elapsed_ms(started))
     outbox.mark_sent(message.id)
+    if events is not None:
+        events.log(
+            message.user_id,
+            "delivery_sent",
+            {"delivery_id": message.id, "attempts": message.attempts},
+            trace_id=message.trace_id,
+        )
     return StepResult("telegram_delivery", True, f"sent_delivery_id={message.id}", _elapsed_ms(started))
 
 
-def _send_telegram_message(bot_token: str, chat_id: int, text: str) -> None:
+def _send_telegram_message(
+    bot_token: str,
+    chat_id: int,
+    text: str,
+    *,
+    buttons: list[list[dict[str, str]]] | None = None,
+) -> None:
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    data = urllib.parse.urlencode({"chat_id": str(chat_id), "text": text[:3900]}).encode("utf-8")
+    payload = {"chat_id": str(chat_id), "text": text[:3900]}
+    if buttons:
+        payload["reply_markup"] = json.dumps({"inline_keyboard": buttons}, ensure_ascii=False)
+    data = urllib.parse.urlencode(payload).encode("utf-8")
     request = urllib.request.Request(url, data=data, method="POST")
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
@@ -369,9 +453,13 @@ def _confirm_actions(service, tg_user_id: int, actions, user_id: int, ids: list[
     return StepResult(
         "action_confirm",
         ok,
-        f"confirmed={','.join(map(str, confirmed)) or 'none'} statuses={statuses}",
+        f"confirmed={','.join(map(str, confirmed)) or 'none'} statuses={statuses} path=service_callback",
         _elapsed_ms(started),
     )
+
+
+def _buttons_to_payload(buttons) -> list[list[dict[str, str]]]:
+    return [[{"text": button.text, "callback_data": button.callback_data} for button in row] for row in buttons]
 
 
 def _print_summary(results: list[StepResult], started: float) -> None:

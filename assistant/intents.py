@@ -23,6 +23,7 @@ COMMAND_INTENTS = {
     "/do": Intent.AGENT_DO,
     "/jobs": Intent.AGENT_JOBS,
     "/job": Intent.AGENT_JOB,
+    "/trace": Intent.TRACE,
     "/status": Intent.STATUS,
     "/admin_status": Intent.ADMIN_STATUS,
     "/help": Intent.HELP,

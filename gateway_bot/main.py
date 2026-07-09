@@ -31,6 +31,7 @@ from backend.stores import (
     SqlMemoryStore,
     SqlProviderHealthStore,
     SqlReminderStore,
+    SqlTraceStore,
     SqlUserPreferenceStore,
     UserStore,
 )
@@ -200,6 +201,7 @@ def build_gateway_service() -> GatewayService:
         admin_tg_user_ids=set(settings.admin_tg_user_ids) or None,
         users=UserStore(get_session_factory()),
         events=event_store,
+        traces=SqlTraceStore(get_session_factory()),
     )
 
 

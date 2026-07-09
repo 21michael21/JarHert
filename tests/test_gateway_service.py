@@ -1,6 +1,15 @@
 from assistant.hermes_client import FakeHermesClient
 from assistant.limits import DailyLimitStore
 from assistant.pipeline import AssistantPipeline
+from backend.db import init_db, make_session_factory
+from backend.stores import (
+    EventStore,
+    SqlActionQueueStore,
+    SqlAgentJobStore,
+    SqlDeliveryOutboxStore,
+    SqlTraceStore,
+    UserStore,
+)
 from gateway_bot.service import GatewayService
 
 
@@ -9,6 +18,12 @@ def make_service(*, allowed: set[int] | None = None) -> GatewayService:
         pipeline=AssistantPipeline(FakeHermesClient(), DailyLimitStore()),
         allowed_tg_user_ids=allowed,
     )
+
+
+def session_factory(tmp_path):
+    factory = make_session_factory(f"sqlite:///{tmp_path / 'gateway.sqlite3'}")
+    init_db(factory)
+    return factory
 
 
 def test_gateway_service_preserves_memory_between_messages() -> None:
@@ -112,6 +127,73 @@ def test_gateway_cancels_own_action_with_trace() -> None:
 
     assert cancelled.trace_id == "trace-cancel"
     assert "Отменил" in cancelled.text
+
+
+def test_trace_command_requires_admin(tmp_path) -> None:
+    factory = session_factory(tmp_path)
+    service = GatewayService(
+        pipeline=AssistantPipeline(FakeHermesClient(), DailyLimitStore()),
+        users=UserStore(factory),
+        traces=SqlTraceStore(factory),
+    )
+
+    reply = service.handle_text(1001, "/trace trace-1")
+
+    assert reply.blocked_reason == "admin_required"
+
+
+def test_trace_command_shows_job_action_delivery_and_events(tmp_path) -> None:
+    from assistant.action_schema import ActionType
+
+    factory = session_factory(tmp_path)
+    user = UserStore(factory).get_or_create(1001)
+    trace_id = "trace-view-1"
+    job = SqlAgentJobStore(factory).create(user.id, "создать задачу", ["создать задачу"], trace_id=trace_id)
+    action = SqlActionQueueStore(factory).enqueue(
+        user_id=user.id,
+        action_type=ActionType.TASK_CREATE,
+        payload={"title": "проверить trace"},
+        job_id=job.id,
+        trace_id=trace_id,
+    )
+    SqlDeliveryOutboxStore(factory).enqueue(user_id=user.id, chat_id=user.tg_user_id, text="готово", trace_id=trace_id)
+    EventStore(factory).log(
+        user.id,
+        "action_started",
+        {"job_id": job.id, "action_id": action.id, "type": action.type.value},
+        trace_id=trace_id,
+    )
+    service = GatewayService(
+        pipeline=AssistantPipeline(FakeHermesClient(), DailyLimitStore()),
+        admin_tg_user_ids={1001},
+        users=UserStore(factory),
+        traces=SqlTraceStore(factory),
+    )
+
+    reply = service.handle_text(1001, f"/trace {trace_id}")
+
+    assert reply.blocked_reason is None
+    assert f"Trace {trace_id}" in reply.text
+    assert "Jobs:" in reply.text
+    assert "Actions:" in reply.text
+    assert "Delivery:" in reply.text
+    assert "Events:" in reply.text
+    assert "action_started" in reply.text
+
+
+def test_trace_command_handles_missing_trace(tmp_path) -> None:
+    factory = session_factory(tmp_path)
+    service = GatewayService(
+        pipeline=AssistantPipeline(FakeHermesClient(), DailyLimitStore()),
+        admin_tg_user_ids={1001},
+        users=UserStore(factory),
+        traces=SqlTraceStore(factory),
+    )
+
+    reply = service.handle_text(1001, "/trace missing")
+
+    assert reply.blocked_reason == "trace_not_found"
+    assert "ничего не найдено" in reply.text
 
 
 def test_telegram_app_imports_without_aiogram_runtime() -> None:

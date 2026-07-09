@@ -6,6 +6,7 @@ from assistant.action_queue import ActionStatus
 from assistant.pipeline import AssistantPipeline
 from assistant.types import AssistantReply, Intent, ReplyButton, UserContext
 from backend.stores import EventStore, UserStore
+from backend.trace_store import SqlTraceStore, TraceSnapshot
 
 
 @dataclass
@@ -15,6 +16,7 @@ class GatewayService:
     admin_tg_user_ids: set[int] | None = None
     users: UserStore | None = None
     events: EventStore | None = None
+    traces: SqlTraceStore | None = None
 
     def is_allowed(self, tg_user_id: int) -> bool:
         if not self.allowed_tg_user_ids:
@@ -28,6 +30,9 @@ class GatewayService:
                 intent=Intent.UNKNOWN,
                 blocked_reason="user_not_allowed",
             )
+        trace_text = (text or "").strip()
+        if trace_text == "/trace" or trace_text.startswith("/trace "):
+            return self.trace_status(tg_user_id, trace_text.partition(" ")[2].strip())
         db_user = self.users.get_or_create(tg_user_id) if self.users is not None else None
         user_id = db_user.id if db_user is not None else tg_user_id
         user = UserContext(
@@ -141,6 +146,38 @@ class GatewayService:
                 )
         return AssistantReply(text="\n".join(lines), intent=Intent.AGENT_JOB, trace_id=job.trace_id, buttons=buttons)
 
+    def trace_status(self, tg_user_id: int, trace_id: str) -> AssistantReply:
+        user = self._user_context(tg_user_id)
+        if user is None:
+            return _not_allowed_reply()
+        if not user.is_admin:
+            return AssistantReply(
+                text="Эта команда доступна только владельцу бота.",
+                intent=Intent.TRACE,
+                blocked_reason="admin_required",
+            )
+        clean_trace_id = (trace_id or "").strip()
+        if not clean_trace_id:
+            return AssistantReply(
+                text="Укажи trace id: /trace abc123",
+                intent=Intent.TRACE,
+                blocked_reason="trace_id_required",
+            )
+        if self.traces is None:
+            return AssistantReply(
+                text="Trace viewer не подключён.",
+                intent=Intent.TRACE,
+                blocked_reason="trace_store_disabled",
+            )
+        snapshot = self.traces.get(clean_trace_id)
+        if snapshot.empty:
+            return AssistantReply(
+                text=f"Trace {clean_trace_id}: ничего не найдено.",
+                intent=Intent.TRACE,
+                blocked_reason="trace_not_found",
+            )
+        return AssistantReply(text=_format_trace(snapshot), intent=Intent.TRACE, trace_id=clean_trace_id)
+
     def _user_context(self, tg_user_id: int) -> UserContext | None:
         if not self.is_allowed(tg_user_id):
             return None
@@ -165,3 +202,83 @@ def _not_allowed_reply() -> AssistantReply:
         intent=Intent.UNKNOWN,
         blocked_reason="user_not_allowed",
     )
+
+
+def _format_trace(snapshot: TraceSnapshot) -> str:
+    lines = [f"Trace {snapshot.trace_id}"]
+    if snapshot.jobs:
+        lines.append("Jobs:")
+        for job in snapshot.jobs[:8]:
+            computed_status = _computed_job_status(job.id, snapshot)
+            status = job.status if computed_status == job.status else f"{job.status} computed={computed_status}"
+            lines.append(f"- #{job.id} {status}: {_compact(job.goal)}")
+    if snapshot.actions:
+        lines.append("Actions:")
+        for action in snapshot.actions[:12]:
+            suffix = f" error={_compact(action.last_error, limit=80)}" if action.last_error else ""
+            lines.append(
+                f"- #{action.id} job={action.job_id or '-'} {action.type} "
+                f"{action.status} attempts={action.attempts}{suffix}"
+            )
+    if snapshot.deliveries:
+        lines.append("Delivery:")
+        for delivery in snapshot.deliveries[:12]:
+            suffix = f" error={_compact(delivery.last_error, limit=80)}" if delivery.last_error else ""
+            lines.append(f"- #{delivery.id} {delivery.status} attempts={delivery.attempts}{suffix}")
+    if snapshot.events:
+        lines.append("Events:")
+        for event in snapshot.events[:20]:
+            meta = _event_meta_summary(event.meta or {})
+            suffix = f" {meta}" if meta else ""
+            lines.append(f"- #{event.id} {event.type}{suffix}")
+    return "\n".join(lines)
+
+
+def _event_meta_summary(meta: dict) -> str:
+    allowed_keys = (
+        "intent",
+        "blocked_reason",
+        "provider",
+        "model",
+        "fallback_count",
+        "job_id",
+        "action_id",
+        "delivery_id",
+        "type",
+        "retryable",
+        "attempts",
+    )
+    parts = []
+    for key in allowed_keys:
+        value = meta.get(key)
+        if value in (None, "", {}):
+            continue
+        parts.append(f"{key}={_compact(str(value), limit=60)}")
+    return " ".join(parts)
+
+
+def _computed_job_status(job_id: int, snapshot: TraceSnapshot) -> str:
+    actions = [action for action in snapshot.actions if action.job_id == job_id]
+    if not actions:
+        return "unknown"
+    statuses = {action.status for action in actions}
+    if statuses == {"succeeded"}:
+        return "succeeded"
+    if "failed" in statuses:
+        return "failed"
+    if "running" in statuses:
+        return "running"
+    if "needs_confirmation" in statuses:
+        return "needs_confirmation"
+    if "queued" in statuses:
+        return "queued"
+    if statuses == {"cancelled"}:
+        return "cancelled"
+    return "partial"
+
+
+def _compact(value: str | None, *, limit: int = 120) -> str:
+    clean = " ".join((value or "").split())
+    if len(clean) <= limit:
+        return clean
+    return clean[: limit - 1].rstrip() + "…"
