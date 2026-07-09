@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from assistant.action_queue import AgentAction, ActionStatus
 from assistant.action_schema import ActionType
 from assistant.agent_jobs import AgentJob
+from assistant.automation_runtime import LeaseLostError
 from assistant.delivery_outbox import DeliveryMessage, DeliveryStatus
 from backend.models import AgentActionRecord, AgentJobRecord, DeliveryOutboxRecord
 from backend.store_converters import (
@@ -125,7 +126,14 @@ class SqlActionQueueStore:
             ).all()
             return [agent_action_from_record(record) for record in records]
 
-    def claim_next(self) -> AgentAction | None:
+    def claim_next(
+        self,
+        *,
+        worker_id: str | None = None,
+        now: datetime | None = None,
+        lease_seconds: float = 75,
+    ) -> AgentAction | None:
+        claimed_at = now or datetime.now(timezone.utc)
         with self.session_factory() as db:
             records = db.scalars(
                 select(AgentActionRecord)
@@ -141,26 +149,115 @@ class SqlActionQueueStore:
                     record.status = ActionStatus.BLOCKED.value
                     record.last_error = truncate_error(dependency_error)
                     continue
-                record.status = ActionStatus.RUNNING.value
-                record.attempts += 1
+                result = db.execute(
+                    update(AgentActionRecord)
+                    .where(
+                        AgentActionRecord.id == record.id,
+                        AgentActionRecord.status == ActionStatus.QUEUED.value,
+                    )
+                    .values(
+                        status=ActionStatus.RUNNING.value,
+                        attempts=AgentActionRecord.attempts + 1,
+                        worker_id=worker_id,
+                        claimed_at=claimed_at,
+                        heartbeat_at=claimed_at,
+                        lease_until=claimed_at + timedelta(seconds=lease_seconds),
+                    )
+                    .execution_options(synchronize_session=False)
+                )
+                if result.rowcount != 1:
+                    continue
                 db.commit()
-                db.refresh(record)
-                return agent_action_from_record(record)
+                db.expire_all()
+                claimed = db.get(AgentActionRecord, record.id)
+                return agent_action_from_record(claimed)
             db.commit()
             return None
+
+    def recover_expired(self, *, now: datetime | None = None) -> int:
+        expired_at = now or datetime.now(timezone.utc)
+        with self.session_factory() as db:
+            result = db.execute(
+                update(AgentActionRecord)
+                .where(
+                    AgentActionRecord.status == ActionStatus.RUNNING.value,
+                    or_(AgentActionRecord.lease_until.is_(None), AgentActionRecord.lease_until <= expired_at),
+                )
+                .values(
+                    status=ActionStatus.QUEUED.value,
+                    worker_id=None,
+                    lease_until=None,
+                    claimed_at=None,
+                    heartbeat_at=None,
+                )
+                .execution_options(synchronize_session=False)
+            )
+            db.commit()
+            return result.rowcount
 
     def recover_running(self) -> int:
         with self.session_factory() as db:
             result = db.execute(
                 update(AgentActionRecord)
                 .where(AgentActionRecord.status == ActionStatus.RUNNING.value)
-                .values(status=ActionStatus.QUEUED.value)
+                .values(
+                    status=ActionStatus.QUEUED.value,
+                    worker_id=None,
+                    lease_until=None,
+                    claimed_at=None,
+                    heartbeat_at=None,
+                )
+                .execution_options(synchronize_session=False)
             )
             db.commit()
             return result.rowcount
 
-    def mark_succeeded(self, action_id: int, *, result_meta: dict[str, str] | None = None) -> AgentAction:
+    def heartbeat(
+        self,
+        action_id: int,
+        *,
+        worker_id: str,
+        now: datetime | None = None,
+        lease_seconds: float = 75,
+    ) -> bool:
+        heartbeat_at = now or datetime.now(timezone.utc)
         with self.session_factory() as db:
+            result = db.execute(
+                update(AgentActionRecord)
+                .where(
+                    AgentActionRecord.id == action_id,
+                    AgentActionRecord.status == ActionStatus.RUNNING.value,
+                    AgentActionRecord.worker_id == worker_id,
+                )
+                .values(
+                    heartbeat_at=heartbeat_at,
+                    lease_until=heartbeat_at + timedelta(seconds=lease_seconds),
+                )
+                .execution_options(synchronize_session=False)
+            )
+            db.commit()
+            return result.rowcount == 1
+
+    def mark_succeeded(
+        self,
+        action_id: int,
+        *,
+        result_meta: dict[str, str] | None = None,
+        worker_id: str | None = None,
+    ) -> AgentAction:
+        with self.session_factory() as db:
+            if worker_id is not None:
+                values = {
+                    "status": ActionStatus.SUCCEEDED.value,
+                    "last_error": None,
+                    "lease_until": None,
+                }
+                if result_meta is not None:
+                    values["result_meta"] = dict(result_meta)
+                _require_owned_update(db, action_id, worker_id, values)
+                _unblock_dependents_after_success(db, action_id)
+                db.commit()
+                return agent_action_from_record(_require_agent_action(db, action_id))
             record = _require_agent_action(db, action_id)
             record.status = ActionStatus.SUCCEEDED.value
             if result_meta is not None:
@@ -171,8 +268,21 @@ class SqlActionQueueStore:
             db.refresh(record)
             return agent_action_from_record(record)
 
-    def mark_failed(self, action_id: int, error: str) -> AgentAction:
+    def mark_failed(self, action_id: int, error: str, *, worker_id: str | None = None) -> AgentAction:
         with self.session_factory() as db:
+            if worker_id is not None:
+                _require_owned_update(
+                    db,
+                    action_id,
+                    worker_id,
+                    {
+                        "status": ActionStatus.FAILED.value,
+                        "last_error": truncate_error(error),
+                        "lease_until": None,
+                    },
+                )
+                db.commit()
+                return agent_action_from_record(_require_agent_action(db, action_id))
             record = _require_agent_action(db, action_id)
             record.status = ActionStatus.FAILED.value
             record.last_error = truncate_error(error)
@@ -180,8 +290,24 @@ class SqlActionQueueStore:
             db.refresh(record)
             return agent_action_from_record(record)
 
-    def retry_failed(self, action_id: int) -> AgentAction:
+    def retry_failed(self, action_id: int, *, worker_id: str | None = None) -> AgentAction:
         with self.session_factory() as db:
+            if worker_id is not None:
+                _require_owned_update(
+                    db,
+                    action_id,
+                    worker_id,
+                    {
+                        "status": ActionStatus.QUEUED.value,
+                        "last_error": None,
+                        "worker_id": None,
+                        "lease_until": None,
+                        "claimed_at": None,
+                        "heartbeat_at": None,
+                    },
+                )
+                db.commit()
+                return agent_action_from_record(_require_agent_action(db, action_id))
             record = _require_agent_action(db, action_id)
             record.status = ActionStatus.QUEUED.value
             record.last_error = None
@@ -326,10 +452,12 @@ class SqlDeliveryOutboxStore:
         *,
         now: datetime | None = None,
         limit: int = 20,
+        worker_id: str | None = None,
+        lease_seconds: float = 60,
     ) -> list[DeliveryMessage]:
         due_at = now or datetime.now(timezone.utc)
         with self.session_factory() as db:
-            records = db.scalars(
+            candidate_ids = db.scalars(
                 select(DeliveryOutboxRecord)
                 .where(
                     DeliveryOutboxRecord.status == DeliveryStatus.QUEUED.value,
@@ -339,33 +467,120 @@ class SqlDeliveryOutboxStore:
                     ),
                 )
                 .order_by(DeliveryOutboxRecord.created_at.asc(), DeliveryOutboxRecord.id.asc())
-                .limit(limit)
+                .limit(max(limit * 3, limit))
             ).all()
-            ids = [record.id for record in records]
-            if ids:
-                db.execute(
+            claimed: list[DeliveryMessage] = []
+            for candidate in candidate_ids:
+                if len(claimed) >= limit:
+                    break
+                result = db.execute(
                     update(DeliveryOutboxRecord)
-                    .where(DeliveryOutboxRecord.id.in_(ids))
+                    .where(
+                        DeliveryOutboxRecord.id == candidate.id,
+                        DeliveryOutboxRecord.status == DeliveryStatus.QUEUED.value,
+                        or_(
+                            DeliveryOutboxRecord.next_attempt_at.is_(None),
+                            DeliveryOutboxRecord.next_attempt_at <= due_at,
+                        ),
+                    )
                     .values(
                         status=DeliveryStatus.SENDING.value,
                         attempts=DeliveryOutboxRecord.attempts + 1,
+                        worker_id=worker_id,
+                        claimed_at=due_at,
+                        heartbeat_at=due_at,
+                        lease_until=due_at + timedelta(seconds=lease_seconds),
                     )
+                    .execution_options(synchronize_session=False)
                 )
+                if result.rowcount != 1:
+                    continue
                 db.commit()
-            return [delivery_message_from_record(record, status=DeliveryStatus.SENDING) for record in records]
+                db.expire_all()
+                record = db.get(DeliveryOutboxRecord, candidate.id)
+                claimed.append(delivery_message_from_record(record))
+            return claimed
+
+    def recover_expired(self, *, now: datetime | None = None) -> int:
+        expired_at = now or datetime.now(timezone.utc)
+        with self.session_factory() as db:
+            result = db.execute(
+                update(DeliveryOutboxRecord)
+                .where(
+                    DeliveryOutboxRecord.status == DeliveryStatus.SENDING.value,
+                    or_(DeliveryOutboxRecord.lease_until.is_(None), DeliveryOutboxRecord.lease_until <= expired_at),
+                )
+                .values(
+                    status=DeliveryStatus.QUEUED.value,
+                    worker_id=None,
+                    lease_until=None,
+                    claimed_at=None,
+                    heartbeat_at=None,
+                )
+                .execution_options(synchronize_session=False)
+            )
+            db.commit()
+            return result.rowcount
 
     def recover_sending(self) -> int:
         with self.session_factory() as db:
             result = db.execute(
                 update(DeliveryOutboxRecord)
                 .where(DeliveryOutboxRecord.status == DeliveryStatus.SENDING.value)
-                .values(status=DeliveryStatus.QUEUED.value)
+                .values(
+                    status=DeliveryStatus.QUEUED.value,
+                    worker_id=None,
+                    lease_until=None,
+                    claimed_at=None,
+                    heartbeat_at=None,
+                )
+                .execution_options(synchronize_session=False)
             )
             db.commit()
             return result.rowcount
 
-    def mark_sent(self, message_id: int) -> DeliveryMessage:
+    def heartbeat(
+        self,
+        message_id: int,
+        *,
+        worker_id: str,
+        now: datetime | None = None,
+        lease_seconds: float = 60,
+    ) -> bool:
+        heartbeat_at = now or datetime.now(timezone.utc)
         with self.session_factory() as db:
+            result = db.execute(
+                update(DeliveryOutboxRecord)
+                .where(
+                    DeliveryOutboxRecord.id == message_id,
+                    DeliveryOutboxRecord.status == DeliveryStatus.SENDING.value,
+                    DeliveryOutboxRecord.worker_id == worker_id,
+                )
+                .values(
+                    heartbeat_at=heartbeat_at,
+                    lease_until=heartbeat_at + timedelta(seconds=lease_seconds),
+                )
+                .execution_options(synchronize_session=False)
+            )
+            db.commit()
+            return result.rowcount == 1
+
+    def mark_sent(self, message_id: int, *, worker_id: str | None = None) -> DeliveryMessage:
+        with self.session_factory() as db:
+            if worker_id is not None:
+                _require_owned_delivery_update(
+                    db,
+                    message_id,
+                    worker_id,
+                    {
+                        "status": DeliveryStatus.SENT.value,
+                        "last_error": None,
+                        "next_attempt_at": None,
+                        "lease_until": None,
+                    },
+                )
+                db.commit()
+                return delivery_message_from_record(_require_delivery_message(db, message_id))
             record = _require_delivery_message(db, message_id)
             record.status = DeliveryStatus.SENT.value
             record.last_error = None
@@ -374,8 +589,32 @@ class SqlDeliveryOutboxStore:
             db.refresh(record)
             return delivery_message_from_record(record)
 
-    def mark_retry(self, message_id: int, error: str, next_attempt_at: datetime) -> DeliveryMessage:
+    def mark_retry(
+        self,
+        message_id: int,
+        error: str,
+        next_attempt_at: datetime,
+        *,
+        worker_id: str | None = None,
+    ) -> DeliveryMessage:
         with self.session_factory() as db:
+            if worker_id is not None:
+                _require_owned_delivery_update(
+                    db,
+                    message_id,
+                    worker_id,
+                    {
+                        "status": DeliveryStatus.QUEUED.value,
+                        "last_error": truncate_error(error),
+                        "next_attempt_at": next_attempt_at,
+                        "worker_id": None,
+                        "lease_until": None,
+                        "claimed_at": None,
+                        "heartbeat_at": None,
+                    },
+                )
+                db.commit()
+                return delivery_message_from_record(_require_delivery_message(db, message_id))
             record = _require_delivery_message(db, message_id)
             record.status = DeliveryStatus.QUEUED.value
             record.last_error = truncate_error(error)
@@ -384,8 +623,28 @@ class SqlDeliveryOutboxStore:
             db.refresh(record)
             return delivery_message_from_record(record)
 
-    def mark_failed_permanent(self, message_id: int, error: str) -> DeliveryMessage:
+    def mark_failed_permanent(
+        self,
+        message_id: int,
+        error: str,
+        *,
+        worker_id: str | None = None,
+    ) -> DeliveryMessage:
         with self.session_factory() as db:
+            if worker_id is not None:
+                _require_owned_delivery_update(
+                    db,
+                    message_id,
+                    worker_id,
+                    {
+                        "status": DeliveryStatus.FAILED.value,
+                        "last_error": truncate_error(error),
+                        "next_attempt_at": None,
+                        "lease_until": None,
+                    },
+                )
+                db.commit()
+                return delivery_message_from_record(_require_delivery_message(db, message_id))
             record = _require_delivery_message(db, message_id)
             record.status = DeliveryStatus.FAILED.value
             record.last_error = truncate_error(error)
@@ -419,6 +678,26 @@ def _require_agent_action(db: Session, action_id: int) -> AgentActionRecord:
     if record is None:
         raise KeyError(f"action not found: {action_id}")
     return record
+
+
+def _require_owned_update(
+    db: Session,
+    action_id: int,
+    worker_id: str,
+    values: dict,
+) -> None:
+    result = db.execute(
+        update(AgentActionRecord)
+        .where(
+            AgentActionRecord.id == action_id,
+            AgentActionRecord.status == ActionStatus.RUNNING.value,
+            AgentActionRecord.worker_id == worker_id,
+        )
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        raise LeaseLostError(f"action lease lost: action_id={action_id} worker_id={worker_id}")
 
 
 def _dependency_error(db: Session, record: AgentActionRecord) -> str | None:
@@ -473,3 +752,23 @@ def _require_delivery_message(db: Session, message_id: int) -> DeliveryOutboxRec
     if record is None:
         raise KeyError(f"delivery message not found: {message_id}")
     return record
+
+
+def _require_owned_delivery_update(
+    db: Session,
+    message_id: int,
+    worker_id: str,
+    values: dict,
+) -> None:
+    result = db.execute(
+        update(DeliveryOutboxRecord)
+        .where(
+            DeliveryOutboxRecord.id == message_id,
+            DeliveryOutboxRecord.status == DeliveryStatus.SENDING.value,
+            DeliveryOutboxRecord.worker_id == worker_id,
+        )
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        raise LeaseLostError(f"delivery lease lost: message_id={message_id} worker_id={worker_id}")
