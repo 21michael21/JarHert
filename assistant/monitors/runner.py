@@ -4,13 +4,13 @@ import asyncio
 import hashlib
 import json
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from typing import Any, Protocol
 
 from assistant.automation_runtime import WorkerPolicy
 from assistant.delivery_outbox import InMemoryDeliveryOutboxStore
-from assistant.monitors.github_releases import fetch_latest_github_release
 from assistant.monitors.models import MonitorDecision, MonitorJob
+from assistant.monitors.sources import MonitorSourceRegistry
 from assistant.provider_clients import HermesClient
 from assistant.types import HermesRequest, Intent, UserContext
 from backend.store_converters import truncate_error
@@ -36,6 +36,7 @@ class MonitorJobStore(Protocol):
         *,
         status: str,
         triggered: bool = False,
+        message: str | None = None,
         error: str | None = None,
     ):
         ...
@@ -55,6 +56,8 @@ class MonitorWorkerAdapter:
         hermes: HermesClient,
         delivery_outbox,
         fetcher: MonitorPayloadFetcher | None = None,
+        source_registry: MonitorSourceRegistry | None = None,
+        daily_llm_budget: int | None = None,
         limit: int = 50,
         policy: WorkerPolicy | None = None,
     ) -> None:
@@ -62,6 +65,8 @@ class MonitorWorkerAdapter:
         self.hermes = hermes
         self.delivery_outbox = delivery_outbox
         self.fetcher = fetcher
+        self.source_registry = source_registry
+        self.daily_llm_budget = daily_llm_budget
         self.limit = limit
         self.policy = policy or self.default_policy
         self.last_result: dict[str, int] | None = None
@@ -76,6 +81,8 @@ class MonitorWorkerAdapter:
             hermes=self.hermes,
             delivery_outbox=self.delivery_outbox,
             fetcher=self.fetcher,
+            source_registry=self.source_registry,
+            daily_llm_budget=self.daily_llm_budget,
             limit=self.limit,
         )
         return self.last_result
@@ -87,10 +94,20 @@ def run_monitors_once(
     hermes: HermesClient,
     delivery_outbox: InMemoryDeliveryOutboxStore,
     fetcher: MonitorPayloadFetcher | None = None,
+    source_registry: MonitorSourceRegistry | None = None,
+    daily_llm_budget: int | None = None,
     limit: int = 50,
 ) -> dict[str, int]:
-    counts = {"checked": 0, "no_change": 0, "triggered": 0, "not_triggered": 0, "failed": 0}
-    payload_fetcher = fetcher or fetch_monitor_payload
+    counts = {
+        "checked": 0,
+        "no_change": 0,
+        "triggered": 0,
+        "deferred": 0,
+        "not_triggered": 0,
+        "budget_skipped": 0,
+        "failed": 0,
+    }
+    payload_fetcher = fetcher or (lambda job: fetch_monitor_payload(job, source_registry=source_registry))
     for job in monitor_jobs.list_enabled(limit=limit):
         counts["checked"] += 1
         try:
@@ -103,16 +120,31 @@ def run_monitors_once(
                 counts["no_change"] += 1
                 continue
 
+            if daily_llm_budget is not None and _budget_used(monitor_jobs) >= daily_llm_budget:
+                monitor_jobs.record_run(job.id, status="budget_skipped", triggered=False)
+                counts["budget_skipped"] += 1
+                continue
+
             decision = ask_monitor_decision(hermes, job, payload)
             monitor_jobs.mark_checked(job.id, state_hash=state_hash, payload=payload, checked_at=checked_at)
             if decision.triggered and decision.message:
+                if _quiet_hours_active(job):
+                    monitor_jobs.record_run(
+                        job.id,
+                        status="deferred_quiet_hours",
+                        triggered=True,
+                        message=decision.message,
+                    )
+                    counts["deferred"] += 1
+                    continue
                 delivery_outbox.enqueue(
                     user_id=job.user_id,
                     chat_id=job.chat_id,
                     text=decision.message,
                     trace_id=f"monitor-{job.id}",
+                    idempotency_key=f"monitor:{job.id}:{state_hash}",
                 )
-                monitor_jobs.record_run(job.id, status="triggered", triggered=True)
+                monitor_jobs.record_run(job.id, status="triggered", triggered=True, message=decision.message)
                 counts["triggered"] += 1
             else:
                 monitor_jobs.record_run(job.id, status="not_triggered", triggered=False)
@@ -123,12 +155,36 @@ def run_monitors_once(
     return counts
 
 
-def fetch_monitor_payload(job: MonitorJob) -> dict[str, Any]:
-    if job.source_type != "github_releases":
-        raise ValueError(f"Unsupported monitor source_type: {job.source_type}")
-    owner = str(job.source_config.get("owner") or "")
-    repo = str(job.source_config.get("repo") or "")
-    return fetch_latest_github_release(owner, repo)
+def fetch_monitor_payload(job: MonitorJob, *, source_registry: MonitorSourceRegistry | None = None) -> dict[str, Any]:
+    return (source_registry or MonitorSourceRegistry()).fetch(job)
+
+
+def run_daily_brief_once(
+    *,
+    monitor_jobs,
+    delivery_outbox,
+    limit: int = 100,
+) -> dict[str, int]:
+    runs = monitor_jobs.list_deferred_for_brief(limit=limit)
+    grouped: dict[tuple[int, int], list] = {}
+    for run in runs:
+        job = monitor_jobs.get(run.monitor_job_id)
+        if job is None or not run.message:
+            continue
+        grouped.setdefault((job.user_id, job.chat_id), []).append(run)
+    briefed_ids: list[int] = []
+    for (user_id, chat_id), items in grouped.items():
+        lines = ["Daily Brief"]
+        lines.extend(f"- {item.message}" for item in items if item.message)
+        delivery_outbox.enqueue(
+            user_id=user_id,
+            chat_id=chat_id,
+            text="\n".join(lines),
+            trace_id=f"monitor-brief-{datetime.now(timezone.utc):%Y%m%d}",
+            idempotency_key=f"monitor-brief:{user_id}:{datetime.now(timezone.utc):%Y-%m-%d}",
+        )
+        briefed_ids.extend(item.id for item in items)
+    return {"briefed": monitor_jobs.mark_runs_briefed(briefed_ids)}
 
 
 def hash_payload(payload: dict[str, Any]) -> str:
@@ -147,6 +203,34 @@ def ask_monitor_decision(hermes: HermesClient, job: MonitorJob, payload: dict[st
         )
     )
     return parse_monitor_decision(response.text)
+
+
+def _budget_used(monitor_jobs) -> int:
+    counter = getattr(monitor_jobs, "count_llm_runs_today", None)
+    return int(counter() if counter is not None else 0)
+
+
+def _quiet_hours_active(job: MonitorJob, *, now: datetime | None = None) -> bool:
+    value = str(job.source_config.get("quiet_hours") or "").strip()
+    if not value or "-" not in value:
+        return False
+    start_raw, _, end_raw = value.partition("-")
+    start = _parse_clock(start_raw)
+    end = _parse_clock(end_raw)
+    if start is None or end is None:
+        return False
+    current = (now or datetime.now(timezone.utc)).time()
+    if start <= end:
+        return start <= current <= end
+    return current >= start or current <= end
+
+
+def _parse_clock(value: str) -> time | None:
+    try:
+        hours, minutes = [int(part) for part in value.strip().split(":", 1)]
+        return time(hour=hours, minute=minutes)
+    except Exception:
+        return None
 
 
 def build_monitor_prompt(job: MonitorJob, payload: dict[str, Any]) -> str:

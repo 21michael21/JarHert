@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from assistant.monitors.models import MonitorJob, MonitorRun
@@ -85,12 +85,23 @@ class SqlMonitorJobStore:
             db.refresh(record)
             return _job_from_record(record)
 
+    def update_config(self, monitor_job_id: int, updates: dict[str, Any]) -> MonitorJob:
+        with self.session_factory() as db:
+            record = _require_job(db, monitor_job_id)
+            config = dict(record.source_config or {})
+            config.update(updates)
+            record.source_config = config
+            db.commit()
+            db.refresh(record)
+            return _job_from_record(record)
+
     def record_run(
         self,
         monitor_job_id: int,
         *,
         status: str,
         triggered: bool = False,
+        message: str | None = None,
         error: str | None = None,
     ) -> MonitorRun:
         with self.session_factory() as db:
@@ -99,6 +110,7 @@ class SqlMonitorJobStore:
                 monitor_job_id=monitor_job_id,
                 status=status,
                 triggered=triggered,
+                message=message,
                 error=truncate_error(error or "") if error else None,
             )
             db.add(record)
@@ -115,6 +127,45 @@ class SqlMonitorJobStore:
                 .limit(limit)
             ).all()
             return [_run_from_record(record) for record in records]
+
+    def count_llm_runs_today(self, *, now: datetime | None = None) -> int:
+        current = now or datetime.now(timezone.utc)
+        start = datetime(current.year, current.month, current.day, tzinfo=timezone.utc)
+        end = start + timedelta(days=1)
+        with self.session_factory() as db:
+            return len(
+                db.scalars(
+                    select(MonitorRunRecord.id).where(
+                        MonitorRunRecord.created_at >= start,
+                        MonitorRunRecord.created_at < end,
+                        MonitorRunRecord.status.in_(("triggered", "not_triggered", "deferred_quiet_hours")),
+                    )
+                ).all()
+            )
+
+    def list_deferred_for_brief(self, *, limit: int = 100) -> list[MonitorRun]:
+        with self.session_factory() as db:
+            records = db.scalars(
+                select(MonitorRunRecord)
+                .where(MonitorRunRecord.status == "deferred_quiet_hours", MonitorRunRecord.triggered.is_(True))
+                .order_by(MonitorRunRecord.created_at.asc(), MonitorRunRecord.id.asc())
+                .limit(limit)
+            ).all()
+            return [_run_from_record(record) for record in records]
+
+    def mark_runs_briefed(self, run_ids: list[int]) -> int:
+        ids = [run_id for run_id in run_ids if run_id > 0]
+        if not ids:
+            return 0
+        with self.session_factory() as db:
+            result = db.execute(
+                update(MonitorRunRecord)
+                .where(MonitorRunRecord.id.in_(ids), MonitorRunRecord.status == "deferred_quiet_hours")
+                .values(status="briefed")
+                .execution_options(synchronize_session=False)
+            )
+            db.commit()
+            return int(result.rowcount or 0)
 
     def get(self, monitor_job_id: int) -> MonitorJob | None:
         with self.session_factory() as db:
@@ -152,6 +203,7 @@ def _run_from_record(record: MonitorRunRecord) -> MonitorRun:
         monitor_job_id=record.monitor_job_id,
         status=record.status,
         triggered=record.triggered,
+        message=record.message,
         error=record.error,
         created_at=record.created_at,
     )

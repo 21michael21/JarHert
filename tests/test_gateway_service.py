@@ -371,6 +371,36 @@ def test_gateway_monitor_remove_is_user_scoped(tmp_path) -> None:
     assert monitors.get(monitor.id).enabled is True
 
 
+def test_gateway_monitor_add_supports_rss_http_and_telegram_trends(tmp_path) -> None:
+    factory = session_factory(tmp_path)
+    users = UserStore(factory)
+    monitors = SqlMonitorJobStore(factory)
+    service = GatewayService(
+        pipeline=AssistantPipeline(
+            FakeHermesClient(),
+            SqlDailyLimitStore(factory),
+            monitor_jobs=monitors,
+        ),
+        users=users,
+        events=EventStore(factory),
+    )
+
+    rss = service.handle_text(7401, "/monitor add rss https://example.test/feed.xml | condition=важная статья")
+    http = service.handle_text(
+        7401,
+        "/monitor add http_api https://api.example.test/status | allowed_hosts=api.example.test | condition=важный статус",
+    )
+    trends = service.handle_text(7401, "/monitor add telegram_trends | condition=новая частая тема")
+    items = monitors.list_for_user(users.get_or_create(7401).id)
+
+    assert "rss https://example.test/feed.xml" in rss.text
+    assert "http_api https://api.example.test/status" in http.text
+    assert "telegram_trends" in trends.text
+    assert {item.source_type for item in items} == {"rss", "http_api", "telegram_trends"}
+    http_item = next(item for item in items if item.source_type == "http_api")
+    assert http_item.source_config["allowed_hosts"] == ["api.example.test"]
+
+
 def test_trace_command_shows_job_action_delivery_and_events(tmp_path) -> None:
     from assistant.action_schema import ActionType
 

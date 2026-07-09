@@ -456,6 +456,7 @@ class MonitorRunRecord(Base):
     monitor_job_id: Mapped[int] = mapped_column(ForeignKey("monitor_jobs.id", ondelete="CASCADE"), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
     triggered: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("0"))
+    message: Mapped[str | None] = mapped_column(Text)
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

@@ -26,6 +26,7 @@ class MonitorRun:
     monitor_job_id: int
     status: str
     triggered: bool = False
+    message: str | None = None
     error: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 

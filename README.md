@@ -884,9 +884,12 @@ runtime со своими adapters и используют общую SQL lease-
 
 Proactive monitor проверяет внешний источник и пишет в Telegram только при выполнении условия. Управление идёт через команды бота, а проверка запускается отдельным cron/systemd runner.
 
-Поддерживаемый источник сейчас один:
+Поддерживаемые источники:
 
 - `github_releases` — читает latest release через публичный `api.github.com`.
+- `rss` — читает RSS/Atom-like XML по HTTPS и сравнивает последние items.
+- `http_api` — читает JSON endpoint только по HTTPS и только если host явно указан в `allowed_hosts`.
+- `telegram_trends` — использует локальную базу Telegram collector/trendwatch как monitor source.
 
 ### Команды
 
@@ -894,6 +897,9 @@ Proactive monitor проверяет внешний источник и пише
 
 ```text
 /monitor add github_releases openai/codex | condition=напиши мне только если вышел важный релиз
+/monitor add rss https://example.com/feed.xml | condition=напиши если появилась важная статья
+/monitor add http_api https://api.example.com/status | allowed_hosts=api.example.com | condition=напиши если статус стал critical
+/monitor add telegram_trends | condition=напиши если в чатах появилась новая повторяющаяся тема
 ```
 
 Показать свои monitors:
@@ -915,27 +921,29 @@ Proactive monitor проверяет внешний источник и пише
 Конфиг источника хранится в `monitor_jobs.source_config`:
 
 ```json
-{"owner":"openai","repo":"codex"}
+{"owner":"openai","repo":"codex","quiet_hours":"23:00-08:00"}
 ```
 
-Runner сравнивает hash нового payload с `last_state_hash`. Если hash не изменился, он пишет `monitor_runs.status=no_change` и молчит. Если payload изменился, runner отдаёт предыдущее и новое состояние в текущий Hermes/provider router и ждёт строгий JSON:
+Runner сравнивает hash нового payload с `last_state_hash`. Если hash не изменился, он пишет `monitor_runs.status=no_change` и молчит. Если payload изменился, runner проверяет дневной LLM budget, отдаёт предыдущее и новое состояние в текущий Hermes/provider router и ждёт строгий JSON:
 
 ```json
 {"triggered": true, "message": "Короткое сообщение для Telegram"}
 ```
 
-Если `triggered=false`, Telegram-сообщение не создаётся. Если `triggered=true`, сообщение попадает в existing delivery outbox и доставляется тем же worker'ом, что и остальные отложенные ответы. Секреты для GitHub releases не нужны.
+Если `triggered=false`, Telegram-сообщение не создаётся. Если `triggered=true`, сообщение попадает в existing delivery outbox и доставляется тем же worker'ом, что и остальные отложенные ответы. Delivery получает idempotency key `monitor:<id>:<state_hash>`, поэтому повторный runner не создаёт дубль. Если monitor попал в `quiet_hours`, событие записывается как `deferred_quiet_hours`, а доставляется позже через Daily Brief. Секреты для GitHub releases/RSS не нужны.
 
 Запуск одного прохода:
 
 ```bash
 .venv/bin/python scripts/run_monitors_once.py --limit 50
+.venv/bin/python scripts/run_monitors_once.py --limit 50 --daily-llm-budget 25 --daily-brief
 ```
 
 Для cron можно запускать раз в 10–30 минут:
 
 ```cron
-*/15 * * * * cd /opt/jarhert && .venv/bin/python scripts/run_monitors_once.py --limit 50 >> /var/log/jarhert-monitors.log 2>&1
+*/15 * * * * cd /opt/jarhert && .venv/bin/python scripts/run_monitors_once.py --limit 50 --daily-llm-budget 25 >> /var/log/jarhert-monitors.log 2>&1
+5 9 * * * cd /opt/jarhert && .venv/bin/python scripts/run_monitors_once.py --limit 0 --daily-brief >> /var/log/jarhert-monitor-brief.log 2>&1
 ```
 
 Пример systemd unit:
@@ -967,6 +975,20 @@ WantedBy=timers.target
 ```
 
 Частоту хранит внешний scheduler, не сама таблица `monitor_jobs`.
+
+### Planner DAG для длинных задач
+
+Длинные планы строятся как DAG поверх существующих `agent_jobs` и `agent_actions`.
+Каждый node — allowlisted action из Tool Registry. Planner не даёт Hermes прямой shell/file/server доступ:
+он только раскладывает план на разрешённые tools.
+
+Поддержано:
+
+- `dependencies` через `depends_on_action_id`;
+- checkpoints из `succeeded` actions с `result_meta/result_text`;
+- `pause/resume/cancel` на уровне job;
+- partial results из уже завершённых шагов;
+- compensation candidates по external ids (`trello_card_id`, `calendar_event_id`, `*_url`) через существующий `result_meta`.
 
 ## Telegram chat collector
 

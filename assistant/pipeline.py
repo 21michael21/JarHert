@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
+from urllib.parse import urlparse
 
 from assistant.action_executor import ActionExecutor
 from assistant.action_queue import AgentAction
@@ -787,20 +788,20 @@ class AssistantPipeline:
                 intent=Intent.MONITOR_ADD,
                 blocked_reason="monitor_add_bad_format",
             )
-        owner, repo, condition_text = parsed
+        source_type, source_config, condition_text = parsed.source_type, parsed.source_config, parsed.condition_text
         input_gate = check_input(condition_text, max_chars=800)
         if not input_gate.ok:
             return self.responses.blocked_action(input_gate.reason, intent=Intent.MONITOR_ADD)
         monitor = self.monitor_jobs.create(
             user_id=user.user_id,
             chat_id=user.tg_user_id,
-            source_type="github_releases",
-            source_config={"owner": owner, "repo": repo},
+            source_type=source_type,
+            source_config=source_config,
             condition_text=input_gate.safe_text,
         )
         return AssistantReply(
             text=(
-                f"Добавил monitor #{monitor.id}: github_releases {owner}/{repo}\n"
+                f"Добавил monitor #{monitor.id}: {_format_monitor_source(monitor.source_type, monitor.source_config)}\n"
                 f"Условие: {monitor.condition_text}\n"
                 "Проверить: /monitor list"
             ),
@@ -822,10 +823,10 @@ class AssistantPipeline:
             )
         lines = ["Proactive monitors:"]
         for monitor in monitors:
-            owner = monitor.source_config.get("owner", "?")
-            repo = monitor.source_config.get("repo", "?")
             status = "enabled" if monitor.enabled else "disabled"
-            lines.append(f"{monitor.id}. {status} — {monitor.source_type} {owner}/{repo} — {monitor.condition_text}")
+            lines.append(
+                f"{monitor.id}. {status} — {_format_monitor_source(monitor.source_type, monitor.source_config)} — {monitor.condition_text}"
+            )
         return AssistantReply(text="\n".join(lines), intent=Intent.MONITOR_LIST)
 
     def _monitor_remove(self, user: UserContext, text: str) -> AssistantReply:
@@ -927,26 +928,80 @@ class AssistantPipeline:
             self._explicit_ideas.add(user_id, text)
 
 
-def _parse_monitor_add_payload(text: str) -> tuple[str, str, str] | None:
+@dataclass(frozen=True)
+class _MonitorAddPayload:
+    source_type: str
+    source_config: dict[str, object]
+    condition_text: str
+
+
+def _parse_monitor_add_payload(text: str) -> _MonitorAddPayload | None:
     left, separator, right = (text or "").partition("|")
     if not separator:
         return None
     parts = left.strip().split()
-    if len(parts) != 2 or parts[0] != "github_releases":
+    if not parts:
         return None
-    repo_ref = parts[1]
-    if repo_ref.count("/") != 1:
-        return None
-    owner, repo = (part.strip() for part in repo_ref.split("/", 1))
-    if not _valid_github_segment(owner) or not _valid_github_segment(repo):
-        return None
-    condition_key, condition_separator, condition = right.strip().partition("=")
-    if condition_separator != "=" or condition_key.strip().lower() != "condition":
-        return None
-    condition_text = condition.strip()
+    source_type = parts[0]
+    options = _parse_monitor_options(right)
+    condition_text = str(options.pop("condition", "")).strip()
     if not condition_text:
         return None
-    return owner, repo, condition_text
+
+    if source_type == "github_releases":
+        if len(parts) != 2:
+            return None
+        repo_ref = parts[1]
+        if repo_ref.count("/") != 1:
+            return None
+        owner, repo = (part.strip() for part in repo_ref.split("/", 1))
+        if not _valid_github_segment(owner) or not _valid_github_segment(repo):
+            return None
+        return _MonitorAddPayload(source_type, {"owner": owner, "repo": repo, **options}, condition_text)
+
+    if source_type in {"rss", "http_api"}:
+        if len(parts) != 2 or not _valid_https_url(parts[1]):
+            return None
+        config: dict[str, object] = {"url": parts[1], **options}
+        if source_type == "http_api":
+            allowed = config.get("allowed_hosts") or config.get("allowed_host")
+            if isinstance(allowed, str):
+                config["allowed_hosts"] = [item.strip() for item in allowed.split(",") if item.strip()]
+            if not config.get("allowed_hosts"):
+                return None
+        return _MonitorAddPayload(source_type, config, condition_text)
+
+    if source_type == "telegram_trends":
+        if len(parts) != 1:
+            return None
+        return _MonitorAddPayload(source_type, dict(options), condition_text)
+
+    return None
+
+
+def _parse_monitor_options(text: str) -> dict[str, str]:
+    options: dict[str, str] = {}
+    for chunk in (text or "").split("|"):
+        key, separator, value = chunk.strip().partition("=")
+        if separator != "=":
+            continue
+        options[key.strip().lower()] = value.strip()
+    return options
+
+
+def _format_monitor_source(source_type: str, config: dict) -> str:
+    if source_type == "github_releases":
+        return f"github_releases {config.get('owner', '?')}/{config.get('repo', '?')}"
+    if source_type in {"rss", "http_api"}:
+        return f"{source_type} {config.get('url', '?')}"
+    return source_type
+
+
+def _valid_https_url(value: str) -> bool:
+    parsed = urlparse(value)
+    if parsed.scheme != "https" or not parsed.hostname:
+        return False
+    return True
 
 
 def _valid_github_segment(value: str) -> bool:
