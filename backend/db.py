@@ -47,6 +47,7 @@ def _upgrade_existing_schema(engine) -> None:
             with engine.begin() as connection:
                 connection.execute(text("ALTER TABLE reminders ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"))
     _add_nullable_column_if_missing(engine, inspector, table_names, "agent_jobs", "trace_id", "VARCHAR(40)")
+    _add_nullable_column_if_missing(engine, inspector, table_names, "agent_jobs", "idempotency_key", "VARCHAR(180)")
     _add_nullable_column_if_missing(engine, inspector, table_names, "agent_actions", "trace_id", "VARCHAR(40)")
     _add_nullable_column_if_missing(engine, inspector, table_names, "agent_actions", "depends_on_action_id", "INTEGER")
     _add_nullable_column_if_missing(engine, inspector, table_names, "agent_actions", "compensation_for_action_id", "INTEGER")
@@ -66,6 +67,7 @@ def _upgrade_existing_schema(engine) -> None:
         "result_meta",
         "JSON NOT NULL DEFAULT '{}'",
     )
+    _add_nullable_column_if_missing(engine, inspector, table_names, "agent_actions", "result_text", "TEXT")
     for column, sql_type in (
         ("worker_id", "VARCHAR(100)"),
         ("lease_until", "DATETIME"),
@@ -75,6 +77,7 @@ def _upgrade_existing_schema(engine) -> None:
         _add_nullable_column_if_missing(engine, inspector, table_names, "agent_actions", column, sql_type)
     _add_nullable_column_if_missing(engine, inspector, table_names, "delivery_outbox", "trace_id", "VARCHAR(40)")
     _add_nullable_column_if_missing(engine, inspector, table_names, "delivery_outbox", "buttons", "JSON")
+    _add_nullable_column_if_missing(engine, inspector, table_names, "delivery_outbox", "idempotency_key", "VARCHAR(180)")
     for column, sql_type in (
         ("worker_id", "VARCHAR(100)"),
         ("lease_until", "DATETIME"),
@@ -83,6 +86,20 @@ def _upgrade_existing_schema(engine) -> None:
     ):
         _add_nullable_column_if_missing(engine, inspector, table_names, "delivery_outbox", column, sql_type)
     _add_nullable_column_if_missing(engine, inspector, table_names, "events", "trace_id", "VARCHAR(40)")
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ux_agent_jobs_user_idempotency "
+                    "ON agent_jobs (user_id, idempotency_key)"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ux_delivery_outbox_user_idempotency "
+                    "ON delivery_outbox (user_id, idempotency_key)"
+                )
+            )
 
 
 def _add_nullable_column_if_missing(engine, inspector, table_names: set[str], table: str, column: str, sql_type: str) -> None:

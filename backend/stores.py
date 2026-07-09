@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from backend.automation_store import SqlAutomationLeaseStore
 from backend.event_store import EventStore
+from backend.idempotency_store import SqlInboundUpdateStore
 from backend.message_store import CollectedMessage, SqlCollectedMessageStore
 from backend.memory_store import (
     ReminderSender,
@@ -30,6 +31,7 @@ __all__ = [
     "SqlDeliveryOutboxStore",
     "SqlCollectedMessageStore",
     "SqlIdeaStore",
+    "SqlInboundUpdateStore",
     "SqlMemoryStore",
     "SqlMonitorJobStore",
     "SqlProviderHealthStore",

@@ -31,6 +31,7 @@ class DeliveryMessage:
     status: DeliveryStatus = DeliveryStatus.QUEUED
     attempts: int = 0
     trace_id: str = ""
+    idempotency_key: str | None = None
     buttons: list[list[dict[str, str]]] = field(default_factory=list)
     worker_id: str | None = None
     lease_until: datetime | None = None
@@ -173,7 +174,19 @@ class InMemoryDeliveryOutboxStore:
         trace_id: str = "",
         buttons: list[list[dict[str, str]]] | None = None,
         next_attempt_at: datetime | None = None,
+        idempotency_key: str | None = None,
     ) -> DeliveryMessage:
+        if idempotency_key:
+            existing = next(
+                (
+                    item
+                    for item in self._items
+                    if item.user_id == user_id and item.idempotency_key == idempotency_key
+                ),
+                None,
+            )
+            if existing is not None:
+                return existing
         now = datetime.now(timezone.utc)
         item = DeliveryMessage(
             id=self._next_id,
@@ -181,6 +194,7 @@ class InMemoryDeliveryOutboxStore:
             chat_id=chat_id,
             text=text.strip(),
             trace_id=trace_id,
+            idempotency_key=idempotency_key,
             buttons=list(buttons or []),
             next_attempt_at=next_attempt_at,
             created_at=now,

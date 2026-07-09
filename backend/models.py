@@ -95,6 +95,7 @@ class ReminderRecord(Base):
 class AgentJobRecord(Base):
     __tablename__ = "agent_jobs"
     __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_agent_jobs_user_idempotency"),
         Index("ix_agent_jobs_user_status_created", "user_id", "status", "created_at"),
         Index("ix_agent_jobs_trace", "trace_id"),
     )
@@ -105,6 +106,7 @@ class AgentJobRecord(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
     steps: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     trace_id: Mapped[str | None] = mapped_column(String(40))
+    idempotency_key: Mapped[str | None] = mapped_column(String(180))
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -141,6 +143,7 @@ class AgentActionRecord(Base):
     compensation_for_action_id: Mapped[int | None] = mapped_column(Integer)
     compensation_status: Mapped[str] = mapped_column(String(30), nullable=False, default="none")
     result_meta: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict, server_default=text("'{}'"))
+    result_text: Mapped[str | None] = mapped_column(Text)
     idempotency_key: Mapped[str | None] = mapped_column(String(180))
     worker_id: Mapped[str | None] = mapped_column(String(100))
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -235,6 +238,7 @@ class ProviderHealthRecord(Base):
 class DeliveryOutboxRecord(Base):
     __tablename__ = "delivery_outbox"
     __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_delivery_outbox_user_idempotency"),
         Index("ix_delivery_outbox_status_next_attempt", "status", "next_attempt_at"),
         Index("ix_delivery_outbox_user_status_created", "user_id", "status", "created_at"),
         Index("ix_delivery_outbox_trace", "trace_id"),
@@ -248,6 +252,7 @@ class DeliveryOutboxRecord(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     trace_id: Mapped[str | None] = mapped_column(String(40))
+    idempotency_key: Mapped[str | None] = mapped_column(String(180))
     buttons: Mapped[list[dict] | None] = mapped_column(JSON)
     worker_id: Mapped[str | None] = mapped_column(String(100))
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -255,6 +260,32 @@ class DeliveryOutboxRecord(Base):
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class InboundUpdateRecord(Base):
+    __tablename__ = "inbound_updates"
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_inbound_updates_user_idempotency"),
+        Index("ix_inbound_updates_status_updated", "status", "updated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(220), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="processing")
+    response: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict, server_default=text("'{}'"))
+    trace_id: Mapped[str | None] = mapped_column(String(40))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

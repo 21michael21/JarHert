@@ -32,6 +32,7 @@ class AgentAction:
     compensation_for_action_id: int | None = None
     compensation_status: str = "none"
     result_meta: dict[str, str] = field(default_factory=dict)
+    result_text: str | None = None
     idempotency_key: str | None = None
     worker_id: str | None = None
     lease_until: datetime | None = None
@@ -195,6 +196,7 @@ class InMemoryActionQueueStore:
         action_id: int,
         *,
         result_meta: dict[str, str] | None = None,
+        result_text: str | None = None,
         worker_id: str | None = None,
     ) -> AgentAction:
         item = self._require(action_id)
@@ -203,6 +205,7 @@ class InMemoryActionQueueStore:
             item,
             status=ActionStatus.SUCCEEDED,
             result_meta=dict(result_meta or item.result_meta),
+            result_text=result_text if result_text is not None else item.result_text,
             lease_until=None,
             last_error=None,
             updated_at=datetime.now(timezone.utc),

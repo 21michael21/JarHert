@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from assistant.action_queue import AgentAction, ActionStatus
@@ -23,17 +24,49 @@ class SqlAgentJobStore:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self.session_factory = session_factory
 
-    def create(self, user_id: int, goal: str, steps: list[str], *, trace_id: str = "") -> AgentJob:
+    def create(
+        self,
+        user_id: int,
+        goal: str,
+        steps: list[str],
+        *,
+        trace_id: str = "",
+        idempotency_key: str | None = None,
+    ) -> AgentJob:
         with self.session_factory() as db:
+            if idempotency_key:
+                existing = db.scalar(
+                    select(AgentJobRecord).where(
+                        AgentJobRecord.user_id == user_id,
+                        AgentJobRecord.idempotency_key == idempotency_key,
+                    )
+                )
+                if existing is not None:
+                    return agent_job_from_record(existing)
             record = AgentJobRecord(
                 user_id=user_id,
                 goal=goal.strip(),
                 status="queued",
                 steps=list(steps),
                 trace_id=trace_id or None,
+                idempotency_key=idempotency_key,
             )
             db.add(record)
-            db.commit()
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                if not idempotency_key:
+                    raise
+                existing = db.scalar(
+                    select(AgentJobRecord).where(
+                        AgentJobRecord.user_id == user_id,
+                        AgentJobRecord.idempotency_key == idempotency_key,
+                    )
+                )
+                if existing is None:
+                    raise
+                return agent_job_from_record(existing)
             db.refresh(record)
             return agent_job_from_record(record)
 
@@ -112,7 +145,21 @@ class SqlActionQueueStore:
                 idempotency_key=idempotency_key,
             )
             db.add(record)
-            db.commit()
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                if not idempotency_key:
+                    raise
+                existing = db.scalar(
+                    select(AgentActionRecord).where(
+                        AgentActionRecord.user_id == user_id,
+                        AgentActionRecord.idempotency_key == idempotency_key,
+                    )
+                )
+                if existing is None:
+                    raise
+                return agent_action_from_record(existing)
             db.refresh(record)
             return agent_action_from_record(record)
 
@@ -243,6 +290,7 @@ class SqlActionQueueStore:
         action_id: int,
         *,
         result_meta: dict[str, str] | None = None,
+        result_text: str | None = None,
         worker_id: str | None = None,
     ) -> AgentAction:
         with self.session_factory() as db:
@@ -254,6 +302,8 @@ class SqlActionQueueStore:
                 }
                 if result_meta is not None:
                     values["result_meta"] = dict(result_meta)
+                if result_text is not None:
+                    values["result_text"] = result_text
                 _require_owned_update(db, action_id, worker_id, values)
                 _unblock_dependents_after_success(db, action_id)
                 db.commit()
@@ -262,6 +312,8 @@ class SqlActionQueueStore:
             record.status = ActionStatus.SUCCEEDED.value
             if result_meta is not None:
                 record.result_meta = dict(result_meta)
+            if result_text is not None:
+                record.result_text = result_text
             record.last_error = None
             _unblock_dependents_after_success(db, action_id)
             db.commit()
@@ -431,19 +483,44 @@ class SqlDeliveryOutboxStore:
         trace_id: str = "",
         buttons: list[list[dict[str, str]]] | None = None,
         next_attempt_at: datetime | None = None,
+        idempotency_key: str | None = None,
     ) -> DeliveryMessage:
         with self.session_factory() as db:
+            if idempotency_key:
+                existing = db.scalar(
+                    select(DeliveryOutboxRecord).where(
+                        DeliveryOutboxRecord.user_id == user_id,
+                        DeliveryOutboxRecord.idempotency_key == idempotency_key,
+                    )
+                )
+                if existing is not None:
+                    return delivery_message_from_record(existing)
             record = DeliveryOutboxRecord(
                 user_id=user_id,
                 chat_id=chat_id,
                 text=text.strip(),
                 status=DeliveryStatus.QUEUED.value,
                 trace_id=trace_id or None,
+                idempotency_key=idempotency_key,
                 buttons=list(buttons or []),
                 next_attempt_at=next_attempt_at,
             )
             db.add(record)
-            db.commit()
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                if not idempotency_key:
+                    raise
+                existing = db.scalar(
+                    select(DeliveryOutboxRecord).where(
+                        DeliveryOutboxRecord.user_id == user_id,
+                        DeliveryOutboxRecord.idempotency_key == idempotency_key,
+                    )
+                )
+                if existing is None:
+                    raise
+                return delivery_message_from_record(existing)
             db.refresh(record)
             return delivery_message_from_record(record)
 
