@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 
 from assistant.automation_runtime import AutomationRuntime, InMemoryAutomationLeaseStore, LeaseLostError, WorkerPolicy
+from assistant.observability import delivery_latency_ms, queue_lag_ms
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +111,17 @@ class DeliveryOutboxAdapter:
                     counts["lease_lost"] = counts.get("lease_lost", 0) + 1
                     continue
                 self.store.mark_sent(message.id, worker_id=self.worker_id)
-                _log_event(self.event_logger, message, "delivery_sent", {"attempts": message.attempts})
+                delivered_at = datetime.now(timezone.utc)
+                _log_event(
+                    self.event_logger,
+                    message,
+                    "delivery_sent",
+                    {
+                        "attempts": message.attempts,
+                        "queue_lag_ms": queue_lag_ms(message.created_at, message.claimed_at),
+                        "delivery_latency_ms": delivery_latency_ms(message.created_at, delivered_at),
+                    },
+                )
                 counts["sent"] += 1
             except LeaseLostError:
                 counts["lease_lost"] = counts.get("lease_lost", 0) + 1
@@ -129,11 +140,21 @@ class DeliveryOutboxAdapter:
                             _next_attempt_at(attempts=message.attempts, retry_after_seconds=classification.retry_after_seconds),
                             worker_id=self.worker_id,
                         )
-                        _log_event(self.event_logger, message, "delivery_retry", {"error": error_text})
+                        _log_event(
+                            self.event_logger,
+                            message,
+                            "delivery_retry",
+                            {"error_type": error.__class__.__name__},
+                        )
                         counts["retried"] += 1
                     else:
                         self.store.mark_failed_permanent(message.id, error_text, worker_id=self.worker_id)
-                        _log_event(self.event_logger, message, "delivery_failed", {"error": error_text})
+                        _log_event(
+                            self.event_logger,
+                            message,
+                            "delivery_failed",
+                            {"error_type": error.__class__.__name__},
+                        )
                         counts["failed"] += 1
                 except LeaseLostError:
                     counts["lease_lost"] = counts.get("lease_lost", 0) + 1

@@ -11,6 +11,7 @@ from assistant.provider_diagnostics import HermesClientError
 from assistant.provider_policy import ProviderSelectionPolicy
 from assistant.provider_registry import ProviderRegistry, ProviderSpec
 from assistant.quality_gates import check_output
+from assistant.observability import sanitize_observability_meta
 from assistant.types import HermesRequest, HermesResponse
 
 
@@ -118,6 +119,7 @@ class InMemoryProviderHealthStore:
 
 
 ClientFactory = Callable[[ProviderSpec], HermesClient]
+ProviderEventLogger = Callable[[HermesRequest, str, dict], None]
 
 
 class ProviderRouterClient:
@@ -129,6 +131,7 @@ class ProviderRouterClient:
         client_factory: ClientFactory,
         cooldown_seconds: int = 120,
         policy: ProviderSelectionPolicy | None = None,
+        event_logger: ProviderEventLogger | None = None,
     ) -> None:
         self.registry = registry
         self.health_store = health_store
@@ -139,6 +142,7 @@ class ProviderRouterClient:
             max_attempts=2,
             cooldown_seconds=cooldown_seconds,
         )
+        self.event_logger = event_logger
 
     def ask(self, request: HermesRequest) -> HermesResponse:
         failures: list[str] = []
@@ -154,6 +158,9 @@ class ProviderRouterClient:
             now=now,
         )
         failures.extend(selection.skipped)
+        for skipped in selection.skipped:
+            provider_name, _, reason = skipped.partition(": ")
+            self._log(request, "provider_attempt_skipped", {"provider": provider_name, "reason": reason})
         for selected_provider in selection.providers:
             remaining_seconds = deadline - time.monotonic()
             if remaining_seconds <= 0:
@@ -165,9 +172,15 @@ class ProviderRouterClient:
             provider = replace(selected_provider, timeout_seconds=min(selected_provider.timeout_seconds, remaining_seconds))
             if not self.policy.reserve_budget(provider, now=now):
                 failures.append(f"{provider.name}: budget")
+                self._log(request, "provider_attempt_skipped", {"provider": provider.name, "reason": "budget"})
                 continue
             attempted += 1
             client = self.client_factory(provider)
+            self._log(
+                request,
+                "provider_attempt_started",
+                {"provider": provider.name, "model": provider.model, "attempt": attempted},
+            )
             try:
                 response = client.ask(request)
             except Exception as exc:
@@ -181,6 +194,11 @@ class ProviderRouterClient:
                     cooldown_until=cooldown_until,
                 )
                 failures.append(f"{provider.name}: {failure_kind.value}")
+                self._log(
+                    request,
+                    "provider_attempt_failed",
+                    {"provider": provider.name, "model": provider.model, "failure": failure_kind.value},
+                )
                 continue
 
             if time.monotonic() > deadline:
@@ -193,6 +211,11 @@ class ProviderRouterClient:
                     cooldown_until=cooldown_until,
                 )
                 failures.append(f"{provider.name}: deadline_exceeded")
+                self._log(
+                    request,
+                    "provider_attempt_failed",
+                    {"provider": provider.name, "model": provider.model, "failure": "deadline_exceeded"},
+                )
                 break
 
             output_gate = check_output(response.text)
@@ -205,6 +228,11 @@ class ProviderRouterClient:
                     cooldown_until=None,
                 )
                 failures.append(f"{provider.name}: {output_gate.reason}")
+                self._log(
+                    request,
+                    "provider_attempt_failed",
+                    {"provider": provider.name, "model": provider.model, "failure": output_gate.reason},
+                )
                 continue
 
             self.health_store.record_success(
@@ -212,6 +240,11 @@ class ProviderRouterClient:
                 provider.model,
                 latency_ms=response.latency_ms,
                 quality_score=100,
+            )
+            self._log(
+                request,
+                "provider_attempt_succeeded",
+                {"provider": provider.name, "model": provider.model, "latency_ms": response.latency_ms},
             )
             return HermesResponse(
                 text=response.text,
@@ -224,6 +257,10 @@ class ProviderRouterClient:
             )
 
         raise HermesClientError("; ".join(failures) or "all providers unavailable")
+
+    def _log(self, request: HermesRequest, event_type: str, meta: dict) -> None:
+        if self.event_logger is not None:
+            self.event_logger(request, event_type, sanitize_observability_meta(meta))
 
 
 def classify_provider_failure(error: Exception) -> ProviderFailureKind:

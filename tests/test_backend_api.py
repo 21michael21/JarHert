@@ -54,3 +54,19 @@ def test_assistant_endpoint_returns_gateway_reply(monkeypatch) -> None:
         "fallback_count": 0,
         "blocked_reason": None,
     }
+
+
+def test_readiness_checks_schema_without_exposing_configuration(monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    checked = []
+    monkeypatch.setattr(main, "require_current_schema", lambda database_url: checked.append(database_url))
+    client = TestClient(main.app)
+
+    response = client.get("/readyz")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ready"
+    assert response.json()["checks"] == {"schema": "ok"}
+    assert "database_url" not in str(response.json()).lower()
+    assert checked

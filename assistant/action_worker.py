@@ -8,6 +8,7 @@ from dataclasses import replace
 
 from assistant.action_queue import AgentAction
 from assistant.automation_runtime import AutomationRuntime, InMemoryAutomationLeaseStore, LeaseLostError, WorkerPolicy
+from assistant.observability import queue_lag_ms
 from assistant.tool_registry import ToolExecutionError, ToolExecutionResult
 
 
@@ -67,8 +68,19 @@ class ActionWorkerAdapter:
         lease_lost = asyncio.Event()
         heartbeat_task = asyncio.create_task(self._heartbeat_item(action.id, lease_lost))
         try:
-            _log_event(self.event_logger, action, "action_started", {"attempts": action.attempts})
+            _log_event(
+                self.event_logger,
+                action,
+                "action_started",
+                {"attempts": action.attempts, "queue_lag_ms": queue_lag_ms(action.created_at, action.claimed_at)},
+            )
             try:
+                _log_event(
+                    self.event_logger,
+                    action,
+                    "tool_started",
+                    {"attempts": action.attempts, "type": action.type.value},
+                )
                 result = _coerce_result(await self.execute(action))
             except Exception as error:
                 if lease_lost.is_set():
@@ -77,12 +89,22 @@ class ActionWorkerAdapter:
                 try:
                     if retryable and action.attempts < self.max_attempts:
                         self.action_queue.retry_failed(action.id, worker_id=self.worker_id)
-                        _log_event(self.event_logger, action, "tool_failed", {"retryable": True, "error": str(error)})
+                        _log_event(
+                            self.event_logger,
+                            action,
+                            "tool_failed",
+                            {"retryable": True, "error_type": error.__class__.__name__},
+                        )
                         return {"processed": 1, "retried": 1}
                     self.action_queue.mark_failed(action.id, str(error) or error.__class__.__name__, worker_id=self.worker_id)
                 except LeaseLostError:
                     return self._lease_lost(action)
-                _log_event(self.event_logger, action, "tool_failed", {"retryable": False, "error": str(error)})
+                _log_event(
+                    self.event_logger,
+                    action,
+                    "tool_failed",
+                    {"retryable": False, "error_type": error.__class__.__name__},
+                )
                 _block_downstream(self.action_queue, self.event_logger, action)
                 _mark_compensation_skipped(self.action_queue, self.event_logger, action)
                 _update_job_status(self.job_status_updater, action)
@@ -104,6 +126,12 @@ class ActionWorkerAdapter:
                 self.event_logger,
                 action,
                 "action_succeeded",
+                {"result_chars": len(result.message), "result_meta": dict(result.meta)},
+            )
+            _log_event(
+                self.event_logger,
+                action,
+                "tool_succeeded",
                 {"result_chars": len(result.message), "result_meta": dict(result.meta)},
             )
             _update_job_status(self.job_status_updater, action)

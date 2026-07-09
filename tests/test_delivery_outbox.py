@@ -99,7 +99,13 @@ def test_delivery_worker_emits_lifecycle_events() -> None:
 
     asyncio.run(run_delivery_outbox_worker(store, send, stop_after_one_tick=True, event_logger=log_event))
 
-    assert events == [("trace-delivery", "delivery_sent", {"attempts": 1})]
+    assert len(events) == 1
+    trace_id, event_type, meta = events[0]
+    assert trace_id == "trace-delivery"
+    assert event_type == "delivery_sent"
+    assert meta["attempts"] == 1
+    assert isinstance(meta["queue_lag_ms"], int)
+    assert isinstance(meta["delivery_latency_ms"], int)
 
 
 def test_delivery_outbox_skips_not_due_messages() -> None:

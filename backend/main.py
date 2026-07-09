@@ -63,6 +63,17 @@ try:
     def health() -> dict[str, str]:
         return health_payload()
 
+    @app.get("/readyz")
+    def readiness() -> dict[str, object]:
+        checks: dict[str, str] = {}
+        try:
+            require_current_schema(settings.database_url)
+        except Exception as error:
+            checks["schema"] = "fail"
+            raise HTTPException(status_code=503, detail="database schema is not ready") from error
+        checks["schema"] = "ok"
+        return {**health_payload(), "status": "ready", "checks": checks}
+
     @app.get("/api/version")
     def version() -> dict[str, str]:
         return health_payload()

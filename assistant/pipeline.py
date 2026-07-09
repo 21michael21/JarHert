@@ -71,6 +71,7 @@ class AssistantPipeline:
         action_queue=None,
         events=None,
         monitor_jobs=None,
+        worker_leases=None,
     ) -> None:
         self.hermes = hermes
         self.limits = limits
@@ -93,6 +94,7 @@ class AssistantPipeline:
         self.action_queue = action_queue
         self.events = events
         self.monitor_jobs = monitor_jobs
+        self.worker_leases = worker_leases
         self.natural_actions = NaturalActionService(
             action_executor=self.action_executor,
             agent_jobs=self.agent_jobs,
@@ -107,9 +109,16 @@ class AssistantPipeline:
             default=None,
         )
 
-    def handle_text(self, user: UserContext, text: str, *, idempotency_key: str = "") -> AssistantReply:
+    def handle_text(
+        self,
+        user: UserContext,
+        text: str,
+        *,
+        idempotency_key: str = "",
+        trace_id: str = "",
+    ) -> AssistantReply:
         recorder = PerfRecorder()
-        trace_id = new_trace_id()
+        trace_id = trace_id or new_trace_id()
         request_context = _PipelineRequestContext(
             perf=recorder,
             trace_id=trace_id,
@@ -178,6 +187,8 @@ class AssistantPipeline:
                     provider_health=self.provider_health,
                     delivery_outbox=self.delivery_outbox,
                     task_center=self.task_center,
+                    events=self.events,
+                    worker_leases=self.worker_leases,
                 ),
                 intent=parsed.intent,
             )

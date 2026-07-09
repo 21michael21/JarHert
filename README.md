@@ -420,6 +420,13 @@ scripts/local_check.sh
 
 `preflight.py` ожидаемо завершится ошибкой, если в `.env` ещё нет `BOT_TOKEN`. Это нормальная проверка перед реальным Telegram polling.
 
+## Диагностика и readiness
+
+- `GET /health` подтверждает, что backend запущен.
+- `GET /readyz` дополнительно проверяет, что схема базы данных применена; при проблеме возвращает `503`.
+- `/admin_status` у владельца показывает состояние провайдеров, delivery outbox, worker heartbeat и p50/p95 для provider, queue и delivery.
+- `/trace <trace_id>` показывает безопасный путь Telegram update → intent/provider → job/action/tool → outbox/delivery. В trace не выводятся тексты сообщений, prompt'ы, цели job, API keys и сырые ошибки провайдеров.
+
 ## Live e2e перед тестом с друзьями
 
 ### Строгий system E2E

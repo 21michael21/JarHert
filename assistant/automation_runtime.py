@@ -8,6 +8,8 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
+from assistant.observability import sanitize_observability_meta
+
 
 logger = logging.getLogger(__name__)
 
@@ -348,17 +350,18 @@ class AutomationRuntime:
 
     def _emit(self, event_type: str, adapter: AutomationAdapter, **meta: Any) -> None:
         payload = {"worker": adapter.name, "owner_id": self.owner_id, **meta}
+        safe_payload = sanitize_observability_meta(payload)
         if event_type in {"worker_failed", "worker_timeout", "worker_degraded", "worker_lease_lost", "worker_claim_failed"}:
-            logger.warning("automation event=%s meta=%s", event_type, payload)
+            logger.warning("automation event=%s meta=%s", event_type, safe_payload)
         elif event_type == "worker_completed" and (meta.get("result") or {}).get("processed", 0):
-            logger.info("automation event=%s meta=%s", event_type, payload)
+            logger.info("automation event=%s meta=%s", event_type, safe_payload)
         elif event_type == "worker_recovered" and meta.get("recovered_items", 0):
-            logger.info("automation event=%s meta=%s", event_type, payload)
+            logger.info("automation event=%s meta=%s", event_type, safe_payload)
         else:
-            logger.debug("automation event=%s meta=%s", event_type, payload)
+            logger.debug("automation event=%s meta=%s", event_type, safe_payload)
         if self.event_logger is not None:
             try:
-                self.event_logger(event_type, payload)
+                self.event_logger(event_type, safe_payload)
             except Exception:  # noqa: BLE001 - diagnostics must not control worker availability.
                 logger.exception("automation lifecycle logger failed: event=%s", event_type)
 

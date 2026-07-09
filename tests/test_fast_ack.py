@@ -144,8 +144,14 @@ def test_action_worker_emits_lifecycle_events() -> None:
 
     asyncio.run(run_action_worker(queue, execute, deliver, stop_after_one_tick=True, event_logger=log_event))
 
-    assert [event[1] for event in events] == ["action_started", "action_succeeded"]
+    assert [event[1] for event in events] == [
+        "action_started",
+        "tool_started",
+        "action_succeeded",
+        "tool_succeeded",
+    ]
     assert all(event[0] == "trace-action" for event in events)
+    assert "проверить trace" not in str(events)
 
 
 def test_action_worker_blocks_dependents_and_marks_compensation_on_failure() -> None:

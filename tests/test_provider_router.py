@@ -141,6 +141,28 @@ def test_provider_router_records_success_latency() -> None:
     assert provider_health.latency_ms == 123
 
 
+def test_provider_attempt_events_keep_trace_and_never_include_prompt() -> None:
+    registry = ProviderRegistry([spec("primary", 10)])
+    events = []
+    router = ProviderRouterClient(
+        registry=registry,
+        health_store=InMemoryProviderHealthStore(),
+        client_factory=lambda _provider: FakeClient(
+            [HermesResponse(text="Ок.", provider="primary", model="primary-model", latency_ms=123)]
+        ),
+        event_logger=lambda request, event_type, meta: events.append((request.trace_id, event_type, meta)),
+    )
+
+    router.ask(replace(request(), prompt="личный текст не должен попасть в event", trace_id="trace-provider"))
+
+    assert events[0] == ("trace-provider", "provider_attempt_started", {"provider": "primary", "model": "primary-model", "attempt": 1})
+    assert events[1] == (
+        "trace-provider",
+        "provider_attempt_succeeded",
+        {"provider": "primary", "model": "primary-model", "latency_ms": 123},
+    )
+
+
 def test_free_only_never_calls_cheap_or_paid_provider_after_free_failure() -> None:
     registry = ProviderRegistry(
         [

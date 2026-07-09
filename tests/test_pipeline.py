@@ -119,6 +119,46 @@ def test_admin_status_shows_task_center_health() -> None:
     assert "calendar=ok" in reply.text
 
 
+def test_admin_status_shows_observability_percentiles_and_worker_heartbeat() -> None:
+    from datetime import datetime, timezone
+
+    from assistant.automation_runtime import WorkerLease
+
+    class Metrics:
+        def recent_metric_values(self, event_type, metric):
+            values = {
+                ("provider_attempt_succeeded", "latency_ms"): [80, 120],
+                ("action_started", "queue_lag_ms"): [20, 40],
+                ("delivery_sent", "delivery_latency_ms"): [30, 90],
+            }
+            return values.get((event_type, metric), [])
+
+    class WorkerLeases:
+        def list_all(self):
+            return [
+                WorkerLease(
+                    worker_name="actions",
+                    status="running",
+                    heartbeat_at=datetime(2026, 7, 10, tzinfo=timezone.utc),
+                )
+            ]
+
+    pipeline = AssistantPipeline(
+        FakeHermesClient(),
+        DailyLimitStore(),
+        events=Metrics(),
+        worker_leases=WorkerLeases(),
+    )
+
+    reply = pipeline.handle_text(UserContext(user_id=1, tg_user_id=1001, is_admin=True), "/admin_status")
+
+    assert "provider_latency_ms: p50=80ms p95=120ms" in reply.text
+    assert "queue_lag_ms: p50=20ms p95=40ms" in reply.text
+    assert "delivery_latency_ms: p50=30ms p95=90ms" in reply.text
+    assert "Workers:" in reply.text
+    assert "actions status=running heartbeat=2026-07-10T00:00:00+00:00" in reply.text
+
+
 def test_pipeline_logs_provider_fallback_lifecycle_event() -> None:
     events = RecordingEvents()
     hermes = FakeHermesClient(

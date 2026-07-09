@@ -19,6 +19,7 @@ from backend.stores import (
     EventStore,
     SqlAgentJobStore,
     SqlActionQueueStore,
+    SqlAutomationLeaseStore,
     SqlConversationStore,
     SqlDailyLimitStore,
     SqlDeliveryOutboxStore,
@@ -53,6 +54,7 @@ def get_session_factory():
 def build_hermes_client() -> HermesClient:
     session_factory = get_session_factory()
     provider_health = SqlProviderHealthStore(session_factory)
+    events = EventStore(session_factory)
     require_policy_controlled_transport(cost_mode=settings.ai_cost_mode, hermes_mode=settings.hermes_mode)
     if settings.hermes_mode == "fake":
         return FakeHermesClient()
@@ -82,6 +84,12 @@ def build_hermes_client() -> HermesClient:
                 daily_budget_micro_usd=settings.ai_provider_daily_budget_micro_usd,
                 minimum_quality_score=settings.ai_provider_min_quality_score,
                 budget_ledger=SqlProviderBudgetLedger(session_factory),
+            ),
+            event_logger=lambda request, event_type, meta: events.log(
+                request.user.user_id,
+                event_type,
+                meta,
+                trace_id=request.trace_id,
             ),
         )
     raise ValueError(f"Unsupported HERMES_MODE: {settings.hermes_mode}")
@@ -114,6 +122,7 @@ def build_pipeline() -> AssistantPipeline:
         action_queue=SqlActionQueueStore(session_factory),
         events=event_store,
         monitor_jobs=SqlMonitorJobStore(session_factory),
+        worker_leases=SqlAutomationLeaseStore(session_factory),
     )
 
 

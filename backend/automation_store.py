@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import or_, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -116,6 +116,15 @@ class SqlAutomationLeaseStore:
         with self.session_factory() as db:
             record = db.get(AutomationWorkerLeaseRecord, worker_name)
             return _from_record(record) if record is not None else None
+
+    def list_all(self) -> list[WorkerLease]:
+        with self.session_factory() as db:
+            return [
+                _from_record(record)
+                for record in db.scalars(
+                    select(AutomationWorkerLeaseRecord).order_by(AutomationWorkerLeaseRecord.worker_name.asc())
+                ).all()
+            ]
 
     def _ensure_record(self, worker_name: str) -> None:
         with self.session_factory() as db:

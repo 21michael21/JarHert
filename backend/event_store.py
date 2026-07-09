@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.models import Event
+from assistant.observability import sanitize_observability_meta
 
 
 class EventStore:
@@ -19,7 +20,14 @@ class EventStore:
         trace_id: str = "",
     ) -> None:
         with self.session_factory() as db:
-            db.add(Event(user_id=user_id, type=event_type, trace_id=trace_id or None, meta=meta))
+            db.add(
+                Event(
+                    user_id=user_id,
+                    type=event_type,
+                    trace_id=trace_id or None,
+                    meta=sanitize_observability_meta(meta),
+                )
+            )
             db.commit()
 
     def log_assistant_response(
@@ -69,3 +77,19 @@ class EventStore:
                 if clean:
                     samples.append(clean)
             return samples
+
+    def recent_metric_values(self, event_type: str, metric: str, *, limit: int = 200) -> list[int]:
+        with self.session_factory() as db:
+            records = db.scalars(
+                select(Event)
+                .where(Event.type == event_type)
+                .order_by(Event.created_at.desc(), Event.id.desc())
+                .limit(limit)
+            ).all()
+            return [
+                value
+                for record in records
+                if isinstance(record.meta, dict)
+                for value in [record.meta.get(metric)]
+                if isinstance(value, int)
+            ]

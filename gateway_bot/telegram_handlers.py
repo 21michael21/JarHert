@@ -6,6 +6,7 @@ from dataclasses import replace
 from io import BytesIO
 
 from assistant.transcription import OpenAITranscriber, TranscriptionError
+from assistant.tracing import new_trace_id
 from assistant.types import AssistantReply, Intent
 from backend.stores import SqlDeliveryOutboxStore
 from gateway_bot.blocking_executor import BlockingCallTimeout, get_shared_executor
@@ -64,6 +65,7 @@ def create_dispatcher():
         user_id: int,
         chat_id: int,
         root_key: str,
+        trace_id: str,
         work,
         accepted_text: str,
     ) -> None:
@@ -86,6 +88,7 @@ def create_dispatcher():
                 user_id,
                 chat_id,
                 accepted_text,
+                trace_id=trace_id,
                 idempotency_key=f"{root_key}:accepted",
             )
 
@@ -96,6 +99,7 @@ def create_dispatcher():
                 user_id,
                 chat_id,
                 _request_error_text(error),
+                trace_id=trace_id,
                 idempotency_key=f"{root_key}:{'error' if delayed else 'reply'}",
             )
 
@@ -125,6 +129,7 @@ def create_dispatcher():
             await message.answer("Не вижу Telegram user id, поэтому не могу обработать сообщение.")
             return
         root_key = _telegram_message_key(message)
+        trace_id = new_trace_id()
         await submit_reply(
             user_id=message.from_user.id,
             chat_id=message.chat.id,
@@ -135,8 +140,10 @@ def create_dispatcher():
                 message.from_user.id,
                 message.text or "",
                 idempotency_key=root_key,
+                trace_id=trace_id,
             ),
             accepted_text="Принял, обрабатываю. Итог пришлю отдельным сообщением.",
+            trace_id=trace_id,
         )
 
     @dp.message(F.voice)
@@ -173,6 +180,7 @@ def create_dispatcher():
             return
 
         root_key = _telegram_message_key(message)
+        trace_id = new_trace_id()
         await submit_reply(
             user_id=message.from_user.id,
             chat_id=message.chat.id,
@@ -183,8 +191,10 @@ def create_dispatcher():
                 transcriber=transcriber,
                 blocking_executor=blocking_executor,
                 root_key=root_key,
+                trace_id=trace_id,
             ),
             accepted_text="Принял голосовое, расшифровываю. Итог пришлю отдельным сообщением.",
+            trace_id=trace_id,
         )
 
     @dp.callback_query(F.data.startswith("ai:"))
@@ -194,16 +204,19 @@ def create_dispatcher():
             return
         await callback.answer()
         if callback.message is not None:
+            trace_id = new_trace_id()
             await submit_reply(
                 user_id=callback.from_user.id,
                 chat_id=callback.message.chat.id,
                 root_key=f"telegram:callback:{callback.id}",
+                trace_id=trace_id,
                 work=blocking_executor.run_blocking(
                     callback.from_user.id,
                     handle_callback_data,
                     service,
                     callback.from_user.id,
                     callback.data or "",
+                    update_trace_id=trace_id,
                 ),
                 accepted_text="Принял, выполняю подтверждённое действие.",
             )
@@ -235,7 +248,7 @@ def _enqueue_reply(
 ) -> None:
     service = get_gateway_service()
     db_user = service.users.get_or_create(tg_user_id) if service.users is not None else None
-    outbox.enqueue(
+    message = outbox.enqueue(
         user_id=db_user.id if db_user is not None else tg_user_id,
         chat_id=chat_id,
         text=text,
@@ -243,6 +256,13 @@ def _enqueue_reply(
         buttons=buttons,
         idempotency_key=idempotency_key,
     )
+    if service.events is not None:
+        service.events.log(
+            db_user.id if db_user is not None else tg_user_id,
+            "outbox_enqueued",
+            {"delivery_id": message.id, "has_buttons": bool(buttons)},
+            trace_id=trace_id,
+        )
 
 
 def _telegram_message_key(message: Message) -> str:
@@ -256,6 +276,7 @@ async def _process_voice(
     transcriber: OpenAITranscriber,
     blocking_executor,
     root_key: str,
+    trace_id: str = "",
 ) -> AssistantReply:
     assert message.from_user is not None
     assert message.voice is not None
@@ -288,12 +309,14 @@ async def _process_voice(
                 text="Не смог расшифровать голосовое. Пришли текстом или попробуй ещё раз.",
                 intent=Intent.UNKNOWN,
             )
+        trace_kwargs = {"trace_id": trace_id} if trace_id else {}
         reply = await blocking_executor.run_blocking_unlocked(
             user_id,
             service.handle_text,
             user_id,
             text,
             idempotency_key=root_key,
+            **trace_kwargs,
         )
         return replace(reply, text=f"Расшифровал: {text}\n\n{reply.text}")
 

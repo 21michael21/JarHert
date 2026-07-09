@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from assistant.observability import sanitize_observability_meta
 from backend.models import AgentActionRecord, AgentJobRecord, DeliveryOutboxRecord, Event
 
 
@@ -14,7 +15,7 @@ class TraceJob:
     id: int
     user_id: int
     status: str
-    goal: str
+    goal_length: int
     created_at: datetime
 
 
@@ -87,7 +88,7 @@ class SqlTraceStore:
                     id=record.id,
                     user_id=record.user_id,
                     status=record.status,
-                    goal=record.goal,
+                    goal_length=len(record.goal or ""),
                     created_at=record.created_at,
                 )
                 for record in db.scalars(jobs_query.order_by(AgentJobRecord.created_at, AgentJobRecord.id)).all()
@@ -126,7 +127,7 @@ class SqlTraceStore:
                     id=record.id,
                     user_id=record.user_id,
                     type=record.type,
-                    meta=dict(record.meta or {}),
+                    meta=sanitize_observability_meta(dict(record.meta or {})),
                     created_at=record.created_at,
                 )
                 for record in db.scalars(events_query.order_by(Event.created_at, Event.id)).all()

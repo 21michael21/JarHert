@@ -7,6 +7,7 @@ from assistant.action_queue import ActionStatus
 from assistant.job_orchestration import compute_job_status
 from assistant.pipeline import AssistantPipeline
 from assistant.tool_result_ids import compact_result_meta
+from assistant.tracing import new_trace_id
 from assistant.types import AssistantReply, Intent, ReplyButton, UserContext
 from backend.stores import EventStore, UserStore
 from backend.trace_store import SqlTraceStore, TraceSnapshot
@@ -27,7 +28,14 @@ class GatewayService:
             return True
         return tg_user_id in self.allowed_tg_user_ids
 
-    def handle_text(self, tg_user_id: int, text: str, *, idempotency_key: str = "") -> AssistantReply:
+    def handle_text(
+        self,
+        tg_user_id: int,
+        text: str,
+        *,
+        idempotency_key: str = "",
+        trace_id: str = "",
+    ) -> AssistantReply:
         if not self.is_allowed(tg_user_id):
             return AssistantReply(
                 text="Этот бот пока закрыт. Попроси владельца добавить твой Telegram ID в allowlist.",
@@ -39,6 +47,7 @@ class GatewayService:
             return self.trace_status(tg_user_id, trace_text.partition(" ")[2].strip())
         db_user = self.users.get_or_create(tg_user_id) if self.users is not None else None
         user_id = db_user.id if db_user is not None else tg_user_id
+        trace_id = trace_id or new_trace_id()
         user = UserContext(
             user_id=user_id,
             tg_user_id=tg_user_id,
@@ -47,7 +56,7 @@ class GatewayService:
         if trace_text == "/admin_status perf":
             return self.perf_status(user)
         if idempotency_key and self.inbound_updates is not None:
-            claim = self.inbound_updates.claim(user_id, idempotency_key)
+            claim = self.inbound_updates.claim(user_id, idempotency_key, trace_id=trace_id)
             if not claim.acquired:
                 if claim.status == "completed" and claim.response:
                     return _reply_from_payload(claim.response)
@@ -58,8 +67,15 @@ class GatewayService:
                     trace_id=claim.trace_id,
                     suppress_delivery=True,
                 )
+        if self.events is not None:
+            self.events.log(
+                user_id,
+                "telegram_update_received",
+                {"source": "telegram", "idempotent": bool(idempotency_key)},
+                trace_id=trace_id,
+            )
         try:
-            reply = self.pipeline.handle_text(user, text, idempotency_key=idempotency_key)
+            reply = self.pipeline.handle_text(user, text, idempotency_key=idempotency_key, trace_id=trace_id)
         except Exception:
             if idempotency_key and self.inbound_updates is not None:
                 self.inbound_updates.mark_failed(user_id, idempotency_key)
@@ -281,9 +297,8 @@ class GatewayService:
                     else ""
                 )
                 ids = f" ids={compact_result_meta(action.result_meta)}" if action.result_meta else ""
-                error = f" error={_compact(action.last_error, limit=80)}" if action.last_error else ""
                 lines.append(
-                    f"{action.id}. {action.type.value} — {action.status.value}{dependency}{compensation}{ids}{error}"
+                    f"{action.id}. {action.type.value} — {action.status.value}{dependency}{compensation}{ids}"
                 )
         buttons = []
         if any(action.status == ActionStatus.NEEDS_CONFIRMATION for action in actions):
@@ -360,11 +375,10 @@ def _format_trace(snapshot: TraceSnapshot) -> str:
         for job in snapshot.jobs[:8]:
             computed_status = _computed_job_status(job.id, snapshot)
             status = job.status if computed_status == job.status else f"{job.status} computed={computed_status}"
-            lines.append(f"- #{job.id} {status}: {_compact(job.goal)}")
+            lines.append(f"- #{job.id} {status}: goal=<redacted:{job.goal_length} chars>")
     if snapshot.actions:
         lines.append("Actions:")
         for action in snapshot.actions[:12]:
-            suffix = f" error={_compact(action.last_error, limit=80)}" if action.last_error else ""
             dependency = f" after={action.depends_on_action_id}" if action.depends_on_action_id else ""
             compensation = (
                 f" compensation={action.compensation_status}"
@@ -374,13 +388,12 @@ def _format_trace(snapshot: TraceSnapshot) -> str:
             ids = f" ids={compact_result_meta(action.result_meta)}" if action.result_meta else ""
             lines.append(
                 f"- #{action.id} job={action.job_id or '-'} {action.type} "
-                f"{action.status} attempts={action.attempts}{dependency}{compensation}{ids}{suffix}"
+                f"{action.status} attempts={action.attempts}{dependency}{compensation}{ids}"
             )
     if snapshot.deliveries:
         lines.append("Delivery:")
         for delivery in snapshot.deliveries[:12]:
-            suffix = f" error={_compact(delivery.last_error, limit=80)}" if delivery.last_error else ""
-            lines.append(f"- #{delivery.id} {delivery.status} attempts={delivery.attempts}{suffix}")
+            lines.append(f"- #{delivery.id} {delivery.status} attempts={delivery.attempts}")
     if snapshot.events:
         lines.append("Events:")
         for event in snapshot.events[:20]:
@@ -411,6 +424,18 @@ def _event_meta_summary(meta: dict) -> str:
         "blocked_by_action_id",
         "failed_action_id",
         "result_meta",
+        "delivery_id",
+        "queue_lag_ms",
+        "delivery_latency_ms",
+        "latency_ms",
+        "worker",
+        "owner_id",
+        "generation",
+        "recovered",
+        "recovered_items",
+        "delay_seconds",
+        "error_type",
+        "has_buttons",
     )
     parts = []
     for key in allowed_keys:

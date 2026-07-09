@@ -52,6 +52,23 @@ def test_gateway_service_allows_user_in_allowlist() -> None:
     assert "привет" in reply.text
 
 
+def test_gateway_creates_root_trace_for_telegram_update_without_logging_text(tmp_path) -> None:
+    factory = session_factory(tmp_path)
+    events = EventStore(factory)
+    service = GatewayService(
+        pipeline=AssistantPipeline(FakeHermesClient(), DailyLimitStore()),
+        users=UserStore(factory),
+        events=events,
+    )
+
+    reply = service.handle_text(1001, "/ask личный запрос", idempotency_key="telegram:1:2")
+
+    assert reply.trace_id
+    trace_events = SqlTraceStore(factory).get(reply.trace_id).events
+    assert [event.type for event in trace_events] == ["telegram_update_received", "assistant_ask"]
+    assert "личный запрос" not in str(trace_events)
+
+
 def test_admin_status_requires_admin() -> None:
     service = make_service()
     reply = service.handle_text(1001, "/admin_status")

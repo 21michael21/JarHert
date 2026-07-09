@@ -41,7 +41,7 @@ def build_background_runtime(bot, *, blocking_executor=None) -> AutomationRuntim
         tg_user_id = _tg_user_id_for_internal_user(reminder.user_id)
         if tg_user_id is None:
             return
-        outbox.enqueue(
+        message = outbox.enqueue(
             user_id=reminder.user_id,
             chat_id=tg_user_id,
             text=f"Напоминание #{reminder.id}: {reminder.text}",
@@ -51,8 +51,8 @@ def build_background_runtime(bot, *, blocking_executor=None) -> AutomationRuntim
         if service.events is not None:
             service.events.log(
                 reminder.user_id,
-                "delivery_queued",
-                {"reminder_id": reminder.id},
+                "outbox_enqueued",
+                {"delivery_id": message.id, "reminder_id": reminder.id},
                 trace_id=f"reminder-{reminder.id}",
             )
 
@@ -74,7 +74,7 @@ def build_background_runtime(bot, *, blocking_executor=None) -> AutomationRuntim
         tg_user_id = _tg_user_id_for_internal_user(action.user_id)
         if tg_user_id is None:
             return
-        outbox.enqueue(
+        message = outbox.enqueue(
             user_id=action.user_id,
             chat_id=tg_user_id,
             text=text,
@@ -89,8 +89,8 @@ def build_background_runtime(bot, *, blocking_executor=None) -> AutomationRuntim
         if service.events is not None:
             service.events.log(
                 action.user_id,
-                "delivery_queued",
-                {"action_id": action.id, "job_id": action.job_id},
+                "outbox_enqueued",
+                {"delivery_id": message.id, "action_id": action.id, "job_id": action.job_id},
                 trace_id=action.trace_id,
             )
 

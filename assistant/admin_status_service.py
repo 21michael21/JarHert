@@ -11,6 +11,8 @@ def build_admin_status_text(
     provider_health,
     delivery_outbox,
     task_center,
+    events=None,
+    worker_leases=None,
 ) -> str:
     remaining = limits.remaining_for_user(user.user_id)
     lines = [
@@ -22,6 +24,7 @@ def build_admin_status_text(
     lines.extend(provider_health_lines(provider_health))
     lines.extend(delivery_health_lines(delivery_outbox))
     lines.extend(task_center_health_lines(task_center))
+    lines.extend(observability_lines(events, worker_leases))
     return "\n".join(lines)
 
 
@@ -104,6 +107,28 @@ def build_perf_status_text(events, *, limit: int = 200) -> str:
             f"{key}: count={len(values)} p50={_percentile(values, 50)}ms p95={_percentile(values, 95)}ms"
         )
     return "\n".join(lines)
+
+
+def observability_lines(events, worker_leases) -> list[str]:
+    lines: list[str] = []
+    if events is not None and hasattr(events, "recent_metric_values"):
+        lines.append("Observability:")
+        for label, event_type, metric in (
+            ("provider_latency_ms", "provider_attempt_succeeded", "latency_ms"),
+            ("queue_lag_ms", "action_started", "queue_lag_ms"),
+            ("delivery_latency_ms", "delivery_sent", "delivery_latency_ms"),
+        ):
+            values = events.recent_metric_values(event_type, metric)
+            if values:
+                lines.append(f"{label}: p50={_percentile(values, 50)}ms p95={_percentile(values, 95)}ms")
+    if worker_leases is not None and hasattr(worker_leases, "list_all"):
+        workers = worker_leases.list_all()
+        if workers:
+            lines.append("Workers:")
+            for worker in workers:
+                heartbeat = worker.heartbeat_at.isoformat() if worker.heartbeat_at else "never"
+                lines.append(f"{worker.worker_name} status={worker.status} heartbeat={heartbeat}")
+    return lines
 
 
 def _percentile(values: list[int], percentile: int) -> int:

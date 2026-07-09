@@ -116,10 +116,11 @@ def test_gateway_logs_events(tmp_path) -> None:
 
     with factory() as db:
         events = db.query(Event).all()
-    assert len(events) == 1
-    assert events[0].type == "assistant_ask"
-    assert events[0].meta["provider"] == "fake"
-    assert events[0].meta["perf_ms"]["total_response_ms"] >= 0
+    by_type = {event.type: event for event in events}
+    assert set(by_type) == {"telegram_update_received", "assistant_ask"}
+    assert by_type["telegram_update_received"].meta == {"source": "telegram", "idempotent": False}
+    assert by_type["assistant_ask"].meta["provider"] == "fake"
+    assert by_type["assistant_ask"].meta["perf_ms"]["total_response_ms"] >= 0
 
 
 def test_reminder_worker_claims_due_once(tmp_path) -> None:
