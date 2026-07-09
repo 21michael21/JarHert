@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
 
 try:
     from dotenv import load_dotenv
@@ -101,10 +100,7 @@ class Settings:
     google_client_id: str = os.getenv("GOOGLE_CLIENT_ID", "")
     google_client_x509_cert_url: str = os.getenv("GOOGLE_CLIENT_X509_CERT_URL", "")
     task_command_center_enabled: bool = _bool_env("TASK_COMMAND_CENTER_ENABLED", True)
-    task_command_center_dir: str = os.getenv(
-        "TASK_COMMAND_CENTER_DIR",
-        str(Path.home() / "Documents" / "New project" / "task-command-center"),
-    )
+    task_command_center_dir: str = os.getenv("TASK_COMMAND_CENTER_DIR", "")
     task_command_center_python: str = os.getenv("TASK_COMMAND_CENTER_PYTHON", ".venv/bin/python")
     task_command_center_timeout_seconds: float = float(os.getenv("TASK_COMMAND_CENTER_TIMEOUT_SECONDS", "45"))
 

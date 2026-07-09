@@ -185,6 +185,9 @@ def build_docs_sync():
 def build_task_center() -> TaskCommandCenter | None:
     if not settings.task_command_center_enabled:
         return None
+    if not settings.task_command_center_dir.strip():
+        logger.warning("Task Command Center is enabled but TASK_COMMAND_CENTER_DIR is empty")
+        return None
     return TaskCommandCenter(
         root=Path(settings.task_command_center_dir),
         python_executable=settings.task_command_center_python,

@@ -5,6 +5,8 @@ services:
     env_file: .env
     volumes:
       - ./data:/app/data
+      # VPS only, if TASK_COMMAND_CENTER_ENABLED=true:
+      # - /opt/task-command-center:/opt/task-command-center:ro
     ports:
       - "8000:8000"
     restart: unless-stopped
@@ -20,6 +22,8 @@ services:
     env_file: .env
     volumes:
       - ./data:/app/data
+      # VPS only, if TASK_COMMAND_CENTER_ENABLED=true:
+      # - /opt/task-command-center:/opt/task-command-center:ro
     restart: unless-stopped
     depends_on:
       - backend

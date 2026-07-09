@@ -60,6 +60,19 @@ def _check_telegram_webhook(token: str, timeout: float = 5) -> tuple[bool, str]:
     return True, f"{mode} pending_updates={pending}"
 
 
+def _validate_task_center_config(settings: Settings) -> list[str]:
+    if not settings.task_command_center_enabled:
+        return []
+    if not settings.task_command_center_dir.strip():
+        return ["TASK_COMMAND_CENTER_ENABLED=true, but TASK_COMMAND_CENTER_DIR is empty"]
+    root = Path(settings.task_command_center_dir).expanduser()
+    if not root.exists():
+        return [f"TASK_COMMAND_CENTER_ENABLED=true, but TASK_COMMAND_CENTER_DIR does not exist: {root}"]
+    if not root.is_dir():
+        return [f"TASK_COMMAND_CENTER_DIR is not a directory: {root}"]
+    return []
+
+
 def main() -> int:
     settings = Settings()
     failures: list[str] = []
@@ -137,7 +150,12 @@ def main() -> int:
         print(f"hermes=unsupported mode {settings.hermes_mode}")
         failures.append("unsupported HERMES_MODE")
 
-    if settings.task_command_center_enabled:
+    task_center_config_errors = _validate_task_center_config(settings)
+    if task_center_config_errors:
+        for error in task_center_config_errors:
+            print(f"task_center=fail {error}")
+        failures.extend(task_center_config_errors)
+    elif settings.task_command_center_enabled:
         center = build_task_center()
         if center is None:
             print("task_center=disabled")

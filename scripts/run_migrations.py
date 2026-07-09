@@ -24,8 +24,11 @@ APP_TABLES = {
     "user_preferences",
     "provider_health",
     "delivery_outbox",
+    "monitor_jobs",
+    "monitor_runs",
     "usage_daily",
     "events",
+    "messages",
 }
 
 
