@@ -10,7 +10,8 @@ from assistant.job_orchestration import compute_job_status
 from assistant.types import UserContext
 from backend.automation_store import SqlAutomationLeaseStore
 from backend.stores import SqlActionQueueStore, SqlDeliveryOutboxStore, SqlReminderStore
-from gateway_bot.main import get_gateway_service, get_session_factory
+from gateway_bot.blocking_executor import get_shared_executor
+from gateway_bot.main import get_gateway_service, get_session_factory, settings
 from gateway_bot.telegram_callbacks import reply_markup
 from reminders.worker import ReminderWorkerAdapter
 
@@ -25,12 +26,16 @@ async def start_background_workers(bot) -> None:
     task.add_done_callback(_background_tasks.discard)
 
 
-def build_background_runtime(bot) -> AutomationRuntime:
+def build_background_runtime(bot, *, blocking_executor=None) -> AutomationRuntime:
     service = get_gateway_service()
     session_factory = get_session_factory()
     action_queue = SqlActionQueueStore(session_factory)
     reminder_store = SqlReminderStore(session_factory)
     outbox = SqlDeliveryOutboxStore(session_factory)
+    blocking_executor = blocking_executor or get_shared_executor(
+        max_concurrency=settings.telegram_blocking_max_concurrency,
+        timeout_seconds=settings.telegram_blocking_timeout_seconds,
+    )
 
     async def enqueue_reminder(reminder) -> None:
         tg_user_id = _tg_user_id_for_internal_user(reminder.user_id)
@@ -58,7 +63,8 @@ def build_background_runtime(bot) -> AutomationRuntime:
         tg_user_id = _tg_user_id_for_internal_user(action.user_id)
         if tg_user_id is None:
             raise RuntimeError(f"Telegram user not found for internal user {action.user_id}")
-        return await asyncio.to_thread(
+        return await blocking_executor.run_blocking(
+            action.user_id,
             service.pipeline.execute_queued_action_result,
             UserContext(user_id=action.user_id, tg_user_id=tg_user_id),
             action,

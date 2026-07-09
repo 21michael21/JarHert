@@ -80,3 +80,37 @@ def test_first_runtime_tick_recovers_action_stuck_before_lease_table(tmp_path) -
     assert saved.status == ActionStatus.SUCCEEDED
     assert saved.attempts == 2
     assert delivered == [f"Action #{action.id}: recovered"]
+
+
+def test_action_worker_uses_shared_bounded_executor(tmp_path, monkeypatch) -> None:
+    factory = make_session_factory(f"sqlite:///{tmp_path / 'bounded-actions.sqlite3'}")
+    init_db(factory)
+    user = UserStore(factory).get_or_create(9010)
+    actions = SqlActionQueueStore(factory)
+    action = actions.enqueue(user_id=user.id, action_type=ActionType.IDEA_SAVE, payload={"text": "bounded"})
+
+    class Pipeline:
+        def execute_queued_action_result(self, _user, _action):
+            return "done"
+
+    class Service:
+        events = None
+        pipeline = Pipeline()
+
+    class RecordingExecutor:
+        def __init__(self) -> None:
+            self.user_ids: list[int] = []
+
+        async def run_blocking(self, user_id, func, *args, **kwargs):
+            self.user_ids.append(user_id)
+            return func(*args, **kwargs)
+
+    bounded = RecordingExecutor()
+    monkeypatch.setattr(telegram_workers, "get_gateway_service", lambda: Service())
+    monkeypatch.setattr(telegram_workers, "get_session_factory", lambda: factory)
+
+    runtime = telegram_workers.build_background_runtime(bot=object(), blocking_executor=bounded)
+    asyncio.run(runtime.tick())
+
+    assert bounded.user_ids == [user.id]
+    assert next(item for item in actions.list_for_user(user.id) if item.id == action.id).status == ActionStatus.SUCCEEDED

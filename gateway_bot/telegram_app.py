@@ -4,6 +4,7 @@ import asyncio
 import logging
 
 from gateway_bot.main import settings
+from gateway_bot.blocking_executor import close_shared_executor
 from gateway_bot.telegram_handlers import START_TEXT, create_dispatcher, ensure_aiogram
 from gateway_bot.telegram_workers import start_background_workers
 
@@ -28,7 +29,10 @@ async def run_polling() -> None:
     dp = create_dispatcher()
     await start_background_workers(bot)
     logger.info("Starting Telegram AI Brooch polling in %s mode", settings.hermes_mode)
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        close_shared_executor()
 
 
 if __name__ == "__main__":

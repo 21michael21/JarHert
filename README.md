@@ -141,7 +141,12 @@ GOOGLE_CLIENT_X509_CERT_URL=
 ```env
 OPENAI_TRANSCRIBE_MODEL=gpt-4o-mini-transcribe
 VOICE_MAX_BYTES=10485760
+TELEGRAM_BLOCKING_MAX_CONCURRENCY=4
+TELEGRAM_BLOCKING_TIMEOUT_SECONDS=60
+TELEGRAM_FAST_ACK_SECONDS=0.6
 ```
+
+`TELEGRAM_BLOCKING_MAX_CONCURRENCY` ограничивает суммарное число LLM, STT и Task Command Center вызовов. Сообщения одного пользователя выполняются по порядку, а разные пользователи не блокируют друг друга. Если работа не укладывается в `TELEGRAM_FAST_ACK_SECONDS`, бот быстро отправляет «Принял» и доставляет итог через outbox.
 
 ## Trello и Google Calendar через Task Command Center
 
