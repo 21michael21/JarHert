@@ -1119,6 +1119,29 @@ scripts/production_smoke.sh
 
 Это отправит реальные сообщения в Telegram и создаст тестовые task/calendar-действия через `scripts/live_e2e.py`.
 
+## Release 9.5 gate
+
+Единый release gate запускается только из чистого Git working tree:
+
+```bash
+RELEASE_GATE_TG_USER_ID=<your_tg_user_id> \
+RELEASE_GATE_VOICE_FILE=dev/voice_fixtures/live.oga \
+RELEASE_GATE_BOT_USERNAME=<bot_username> \
+scripts/release_95_gate.sh
+```
+
+В одном запуске проверяются clean clone, Alembic lifecycle, весь pytest, golden dialogs, живой provider benchmark, поиск секретов в HEAD и всей Git history, конкурентные claims, bounded load, kill-worker recovery, backup/restore canary и полный Telegram text/voice → provider → approval → Trello/Calendar/reminder → outbox путь.
+
+Отчёт сохраняется в `reports/release_95/<timestamp>/scorecard.json`. Оценка `9.5` возможна только когда все обязательные gates имеют статус `passed` в одном отчёте. Ошибка, отсутствующая конфигурация или `skipped` дают ненулевой exit code.
+
+Для локальной диагностики без сообщений и side effects в Telegram можно явно выполнить:
+
+```bash
+RELEASE_GATE_SKIP_LIVE=1 scripts/release_95_gate.sh
+```
+
+Этот режим намеренно остаётся красным: scorecard отмечает live Telegram как `skipped` и не выдаёт 9.5. Provider benchmark также не допускает пустой набор настроенных providers.
+
 ## Документация для первых пользователей
 
 Короткий старт для друзей лежит в:
