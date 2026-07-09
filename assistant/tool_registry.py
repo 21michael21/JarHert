@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 
 from assistant.action_schema import ActionType, PlannedAction
@@ -51,6 +52,8 @@ class ToolContext:
     task_center: TaskCommandCenter | None = None
     agent_jobs: object | None = None
     knowledge: object | None = None
+    contact_book: object | None = None
+    delivery_outbox: object | None = None
     telegram_reply: Callable[[int, str], None] | None = None
     preferences: UserPreferences | None = None
     idempotency_key: str = ""
@@ -196,6 +199,15 @@ def _default_tool_specs() -> list[ToolSpec]:
             handler=_telegram_reply,
             retryable_errors=("timeout", "tempor", "network", "rate"),
             permanent_errors=("validation", "not_configured"),
+        ),
+        ToolSpec(
+            name=ActionType.TELEGRAM_SEND_MESSAGE,
+            input_schema=InputSchema(required=("recipient", "text"), optional=("send_at",), max_chars=3500),
+            timeout_seconds=5,
+            risk=ToolRisk.MEDIUM,
+            handler=_telegram_send_message,
+            retryable_errors=("timeout", "tempor", "network", "rate"),
+            permanent_errors=("validation", "not_configured", "not_found"),
         ),
         ToolSpec(
             name=ActionType.AGENT_JOB_CREATE,
@@ -345,6 +357,35 @@ def _telegram_reply(payload: dict[str, str], context: ToolContext) -> ToolExecut
     return ToolExecutionResult("Отправил ответ в Telegram.")
 
 
+def _telegram_send_message(payload: dict[str, str], context: ToolContext) -> ToolExecutionResult:
+    if context.contact_book is None:
+        raise ToolExecutionError("Contact book не подключён.", kind="not_configured")
+    if context.delivery_outbox is None:
+        raise ToolExecutionError("Delivery outbox не подключён.", kind="not_configured")
+    contact = context.contact_book.resolve(context.user.user_id, payload["recipient"])
+    if contact is None:
+        raise ToolExecutionError(f"Не нашёл контакт: {payload['recipient']}", kind="not_found")
+    chat_id = contact.chat_id or contact.tg_user_id
+    if chat_id is None:
+        raise ToolExecutionError(f"У контакта {contact.name} нет Telegram chat_id/tg_user_id.", kind="validation")
+    message = context.delivery_outbox.enqueue(
+        user_id=context.user.user_id,
+        chat_id=int(chat_id),
+        text=payload["text"],
+        next_attempt_at=_parse_send_at(payload.get("send_at")),
+        idempotency_key=(f"{context.idempotency_key}:delivery" if context.idempotency_key else None),
+    )
+    when = f" на {payload['send_at']}" if payload.get("send_at") else ""
+    return ToolExecutionResult(
+        f"Поставил отправку {contact.name}{when}.",
+        meta={
+            "delivery_id": str(message.id),
+            "contact_id": str(contact.id),
+            "telegram_chat_id": str(chat_id),
+        },
+    )
+
+
 def _agent_job_create(payload: dict[str, str], context: ToolContext) -> ToolExecutionResult:
     if context.agent_jobs is None:
         raise ToolExecutionError("Agent job store не подключён.", kind="permanent")
@@ -373,3 +414,21 @@ def _require_task_center(context: ToolContext) -> TaskCommandCenter:
     if context.task_center is None:
         raise ToolExecutionError("Task Command Center не подключён.", kind="permanent")
     return context.task_center
+
+
+def _parse_send_at(value: str | None) -> datetime | None:
+    clean = (value or "").strip().lower()
+    if not clean:
+        return None
+    now = datetime.now(timezone.utc)
+    if clean == "сегодня":
+        return now
+    if clean == "завтра":
+        return (now + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+    relative_minutes = re.match(r"^через\s+(?P<num>\d+)\s+минут[уы]?$", clean)
+    if relative_minutes:
+        return now + timedelta(minutes=int(relative_minutes.group("num")))
+    relative_hours = re.match(r"^через\s+(?P<num>\d+)\s+час(?:а|ов)?$", clean)
+    if relative_hours:
+        return now + timedelta(hours=int(relative_hours.group("num")))
+    return None

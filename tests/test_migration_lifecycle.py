@@ -71,14 +71,15 @@ def test_one_revision_rollback_and_reupgrade_are_reproducible(tmp_path) -> None:
     run_migrations(database_url)
 
     command.downgrade(config, "-1")
-    assert current_revision(database_url) == "0010_provider_policy"
+    assert current_revision(database_url) == "0011_personal_knowledge"
     downgraded_columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("agent_actions")}
     assert {"depends_on_action_id", "compensation_for_action_id", "compensation_status"} <= downgraded_columns
     downgraded_health_columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("provider_health")}
     assert {"quality_score", "quality_sample_count"} <= downgraded_health_columns
     downgraded_tables = set(inspect(create_engine(database_url)).get_table_names())
     assert {"provider_budget_daily", "provider_budget_entries"} <= downgraded_tables
-    assert {"notes", "note_history"}.isdisjoint(downgraded_tables)
+    assert {"notes", "note_history"} <= downgraded_tables
+    assert {"contacts", "contact_aliases"}.isdisjoint(downgraded_tables)
     command.upgrade(config, "head")
 
     assert current_revision(database_url) == head_revision()
@@ -89,6 +90,7 @@ def test_one_revision_rollback_and_reupgrade_are_reproducible(tmp_path) -> None:
     upgraded_tables = set(inspect(create_engine(database_url)).get_table_names())
     assert {"provider_budget_daily", "provider_budget_entries"} <= upgraded_tables
     assert {"notes", "note_history"} <= upgraded_tables
+    assert {"contacts", "contact_aliases"} <= upgraded_tables
 
 
 def test_stale_versioned_database_is_rejected_at_service_start(tmp_path) -> None:

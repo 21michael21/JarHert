@@ -123,6 +123,47 @@ class NoteHistoryRecord(Base):
     )
 
 
+class ContactRecord(Base):
+    __tablename__ = "contacts"
+    __table_args__ = (
+        UniqueConstraint("user_id", "normalized_name", name="uq_contacts_user_normalized_name"),
+        Index("ix_contacts_user_name", "user_id", "normalized_name"),
+        Index("ix_contacts_tg_user", "tg_user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String(180), nullable=False)
+    tg_user_id: Mapped[int | None] = mapped_column(BigInteger)
+    chat_id: Mapped[int | None] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class ContactAliasRecord(Base):
+    __tablename__ = "contact_aliases"
+    __table_args__ = (
+        UniqueConstraint("user_id", "normalized_alias", name="uq_contact_aliases_user_alias"),
+        Index("ix_contact_aliases_contact", "contact_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    contact_id: Mapped[int] = mapped_column(ForeignKey("contacts.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    alias: Mapped[str] = mapped_column(String(160), nullable=False)
+    normalized_alias: Mapped[str] = mapped_column(String(180), nullable=False)
+
+
 class ReminderRecord(Base):
     __tablename__ = "reminders"
     __table_args__ = (Index("ix_reminders_status_due", "status", "remind_at"),)

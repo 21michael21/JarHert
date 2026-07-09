@@ -17,6 +17,7 @@ REQUIRED_FIELDS = {
     ActionType.CALENDAR_CREATE: ("title", "start", "end"),
     ActionType.CALENDAR_MOVE: ("title", "start"),
     ActionType.TELEGRAM_REPLY: ("text",),
+    ActionType.TELEGRAM_SEND_MESSAGE: ("recipient", "text"),
     ActionType.AGENT_JOB_CREATE: ("goal",),
 }
 

@@ -6,6 +6,7 @@ from assistant.action_queue import AgentAction, ActionStatus
 from assistant.action_schema import ActionType
 from assistant.agent_jobs import AgentJob
 from assistant.context_store import ConversationTurn
+from assistant.contact_book import Contact
 from assistant.delivery_outbox import DeliveryMessage, DeliveryStatus
 from assistant.ideas import Idea
 from assistant.memory import Memory
@@ -15,6 +16,8 @@ from assistant.provider_router import ProviderFailureKind, ProviderHealth
 from backend.models import (
     AgentActionRecord,
     AgentJobRecord,
+    ContactAliasRecord,
+    ContactRecord,
     ConversationTurnRecord,
     DeliveryOutboxRecord,
     IdeaRecord,
@@ -71,6 +74,19 @@ def note_history_from_record(record: NoteHistoryRecord) -> NoteHistory:
         before_text=record.before_text,
         after_text=record.after_text,
         created_at=_aware(record.created_at) or record.created_at,
+    )
+
+
+def contact_from_record(record: ContactRecord, aliases: list[ContactAliasRecord] | None = None) -> Contact:
+    return Contact(
+        id=record.id,
+        user_id=record.user_id,
+        name=record.name,
+        aliases=tuple(alias.alias for alias in aliases or []),
+        tg_user_id=record.tg_user_id,
+        chat_id=record.chat_id,
+        created_at=_aware(record.created_at) or record.created_at,
+        updated_at=_aware(record.updated_at) or record.updated_at,
     )
 
 

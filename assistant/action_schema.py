@@ -16,6 +16,7 @@ class ActionType(str, Enum):
     CALENDAR_CREATE = "calendar.create"
     CALENDAR_MOVE = "calendar.move"
     TELEGRAM_REPLY = "telegram.reply"
+    TELEGRAM_SEND_MESSAGE = "telegram.send_message"
     AGENT_JOB_CREATE = "agent.job.create"
 
 

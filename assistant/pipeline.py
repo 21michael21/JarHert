@@ -15,6 +15,7 @@ from assistant.command_handlers import (
     task_payload,
     task_text_with_preferences,
 )
+from assistant.contact_book import InMemoryContactBookStore
 from assistant.context_store import InMemoryConversationStore, actions_to_dicts
 from assistant.google_docs_sync import DocsSync, NullDocsSync
 from assistant.ideas import InMemoryIdeaStore
@@ -59,6 +60,7 @@ class AssistantPipeline:
         memories: InMemoryMemoryStore | None = None,
         ideas: InMemoryIdeaStore | None = None,
         knowledge: InMemoryPersonalKnowledgeStore | None = None,
+        contact_book: InMemoryContactBookStore | None = None,
         reminders: InMemoryReminderStore | None = None,
         docs_sync: DocsSync | None = None,
         task_center: TaskCommandCenter | None = None,
@@ -85,6 +87,7 @@ class AssistantPipeline:
         self._explicit_memories = memories
         self._explicit_ideas = ideas
         self.knowledge = knowledge or _knowledge_from_legacy(self.memories, self.ideas) or InMemoryPersonalKnowledgeStore()
+        self.contact_book = contact_book or InMemoryContactBookStore()
         self.reminders = reminders or InMemoryReminderStore()
         self.docs_sync = docs_sync or NullDocsSync()
         self.task_center = task_center
@@ -223,6 +226,10 @@ class AssistantPipeline:
             return self._note_edit_last(user, parsed.text)
         if parsed.intent == Intent.NOTE_DELETE:
             return self._note_delete_last(user)
+        if parsed.intent == Intent.CONTACT_ADD:
+            return self._contact_add(user, parsed.text)
+        if parsed.intent == Intent.CONTACTS:
+            return self._contacts(user)
         if parsed.intent == Intent.REMIND:
             return self._remind(user, parsed.text)
         if parsed.intent == Intent.REMINDERS:
@@ -472,6 +479,49 @@ class AssistantPipeline:
         if not deleted:
             return AssistantReply(text=f"Не нашёл заметку #{note_id}.", intent=Intent.NOTE_DELETE)
         return AssistantReply(text=f"Удалил заметку #{note_id}.", intent=Intent.NOTE_DELETE)
+
+    def _contact_add(self, user: UserContext, text: str) -> AssistantReply:
+        fields = fields_payload(text, fallback_key="name")
+        name = (fields.get("name") or "").strip()
+        if name.lower().startswith("add "):
+            name = name[4:].strip()
+        if not name:
+            return AssistantReply(
+                text="Формат: /contact add Илья | alias=илье,илюха | tg_user_id=123 | chat_id=123",
+                intent=Intent.CONTACT_ADD,
+                blocked_reason="contact_name_empty",
+            )
+        aliases = _split_aliases(fields.get("aliases") or fields.get("alias") or "")
+        tg_user_id = _parse_optional_int(fields.get("tg_user_id"))
+        chat_id = _parse_optional_int(fields.get("chat_id"))
+        if tg_user_id is None and chat_id is None:
+            return AssistantReply(
+                text="Укажи tg_user_id или chat_id контакта.",
+                intent=Intent.CONTACT_ADD,
+                blocked_reason="contact_telegram_id_missing",
+            )
+        try:
+            contact = self.contact_book.upsert(
+                user_id=user.user_id,
+                name=name,
+                aliases=aliases,
+                tg_user_id=tg_user_id,
+                chat_id=chat_id,
+            )
+        except ValueError as exc:
+            return AssistantReply(text=str(exc), intent=Intent.CONTACT_ADD, blocked_reason="contact_invalid")
+        return AssistantReply(text=f"Сохранил контакт #{contact.id}: {contact.name}.", intent=Intent.CONTACT_ADD)
+
+    def _contacts(self, user: UserContext) -> AssistantReply:
+        contacts = self.contact_book.list_for_user(user.user_id)
+        if not contacts:
+            return AssistantReply(text="Контактов пока нет.", intent=Intent.CONTACTS)
+        lines = []
+        for contact in contacts:
+            aliases = f" ({', '.join(contact.aliases)})" if contact.aliases else ""
+            target = contact.chat_id or contact.tg_user_id or "no telegram id"
+            lines.append(f"{contact.id}. {contact.name}{aliases} — {target}")
+        return AssistantReply(text="Контакты:\n" + "\n".join(lines), intent=Intent.CONTACTS)
 
     def _remind(self, user: UserContext, text: str) -> AssistantReply:
         parsed = parse_reminder(text, default_time=self.preferences.get(user.user_id).default_reminder_time)
@@ -849,6 +899,8 @@ class AssistantPipeline:
             task_center=self.task_center,
             agent_jobs=self.agent_jobs,
             knowledge=self.knowledge,
+            contact_book=self.contact_book,
+            delivery_outbox=self.delivery_outbox,
             preferences=self.preferences.get(user.user_id),
             idempotency_key=idempotency_key,
         )
@@ -940,3 +992,7 @@ def _parse_optional_int(value: str | None) -> int | None:
         return None
     parsed = int(clean)
     return parsed if parsed > 0 else None
+
+
+def _split_aliases(value: str) -> list[str]:
+    return [item.strip() for item in (value or "").split(",") if item.strip()]

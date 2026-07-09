@@ -16,6 +16,8 @@ class Intent(str, Enum):
     NOTE_EDIT = "note_edit"
     NOTE_DELETE = "note_delete"
     NOTES = "notes"
+    CONTACT_ADD = "contact_add"
+    CONTACTS = "contacts"
     REMIND = "remind"
     REMINDERS = "reminders"
     CANCEL_REMINDER = "cancel_reminder"

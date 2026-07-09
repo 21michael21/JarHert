@@ -12,6 +12,8 @@ COMMAND_INTENTS = {
     "/idea": Intent.IDEA,
     "/ideas": Intent.IDEAS,
     "/notes": Intent.NOTES,
+    "/contact": Intent.CONTACT_ADD,
+    "/contacts": Intent.CONTACTS,
     "/remind": Intent.REMIND,
     "/reminders": Intent.REMINDERS,
     "/cancel_reminder": Intent.CANCEL_REMINDER,

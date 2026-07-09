@@ -73,6 +73,7 @@ def _route_single(
     matchers = (
         lambda value: _idea_action(value, context_text=context_text),
         lambda value: _memory_action(value, context_text=context_text),
+        lambda value: _telegram_send_action(value, context_text=context_text),
         _reminder_action,
         _task_list_action,
         _task_done_action,
@@ -112,6 +113,65 @@ def _memory_action(text: str, *, context_text: str | None = None) -> list[Planne
     if not match:
         return []
     return [_action(ActionType.MEMORY_SAVE, text=_strip_optional_colon(match.group("text").strip()))]
+
+
+def _telegram_send_action(text: str, *, context_text: str | None = None) -> list[PlannedAction]:
+    prepared = re.match(
+        r"^(?:подготовь|напиши|составь)\s+сообщение\s+(?P<recipient>[^:]+?)(?:[:\s]+(?P<message>.+))?$",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if prepared:
+        message = _strip_optional_colon((prepared.group("message") or "").strip())
+        if not message:
+            message = "Подготовленное сообщение"
+        return [
+            PlannedAction(
+                ActionType.TELEGRAM_SEND_MESSAGE,
+                payload={
+                    "recipient": prepared.group("recipient").strip(),
+                    "text": message,
+                },
+                confidence=0.86,
+            )
+        ]
+
+    direct = re.match(
+        r"^отправь\s+(?P<recipient>[А-Яа-яЁёA-Za-z0-9_@ .-]+?)\s*(?P<when>завтра|сегодня|через\s+\d+\s+минут[уы]?|через\s+\d+\s+час(?:а|ов)?)?(?:[:\s]+(?P<message>.+))?$",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if direct and (direct.group("message") or "").strip():
+        payload = {
+            "recipient": direct.group("recipient").strip(),
+            "text": _strip_optional_colon(direct.group("message").strip()),
+        }
+        when = (direct.group("when") or "").strip()
+        if when:
+            payload["send_at"] = when
+        return [PlannedAction(ActionType.TELEGRAM_SEND_MESSAGE, payload=payload, confidence=0.82)]
+
+    contextual = re.match(r"^отправь\s+(?P<when>завтра|сегодня)$", text, re.IGNORECASE)
+    if contextual and context_text:
+        payload = _prepared_message_payload(context_text)
+        if payload:
+            payload["send_at"] = contextual.group("when").strip().lower()
+            return [PlannedAction(ActionType.TELEGRAM_SEND_MESSAGE, payload=payload, confidence=0.78)]
+    return []
+
+
+def _prepared_message_payload(context_text: str) -> dict[str, str] | None:
+    match = re.match(
+        r"^(?:подготовь|напиши|составь)\s+сообщение\s+(?P<recipient>[^:]+?)(?:[:\s]+(?P<message>.+))?$",
+        (context_text or "").strip(),
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return None
+    message = _strip_optional_colon((match.group("message") or "").strip())
+    if not message:
+        return None
+    return {"recipient": match.group("recipient").strip(), "text": message}
 
 
 def _reminder_action(text: str) -> list[PlannedAction]:
