@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.db import Base
@@ -228,6 +228,52 @@ class DeliveryOutboxRecord(Base):
         DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class MonitorJobRecord(Base):
+    __tablename__ = "monitor_jobs"
+    __table_args__ = (
+        Index("ix_monitor_jobs_enabled_created", "enabled", "created_at"),
+        Index("ix_monitor_jobs_user_enabled", "user_id", "enabled"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    source_config: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict, server_default=text("'{}'"))
+    condition_text: Mapped[str] = mapped_column(Text, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("1"))
+    last_state_hash: Mapped[str | None] = mapped_column(String(64))
+    last_payload: Mapped[dict | None] = mapped_column(JSON)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class MonitorRunRecord(Base):
+    __tablename__ = "monitor_runs"
+    __table_args__ = (Index("ix_monitor_runs_job_created", "monitor_job_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    monitor_job_id: Mapped[int] = mapped_column(ForeignKey("monitor_jobs.id", ondelete="CASCADE"), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    triggered: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("0"))
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
         nullable=False,
     )
 

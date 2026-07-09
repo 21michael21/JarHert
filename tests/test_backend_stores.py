@@ -15,6 +15,7 @@ from backend.stores import (
     SqlDeliveryOutboxStore,
     SqlIdeaStore,
     SqlMemoryStore,
+    SqlMonitorJobStore,
     SqlReminderStore,
     UserStore,
 )
@@ -211,3 +212,53 @@ def test_sql_agent_jobs_persist_and_are_user_scoped(tmp_path) -> None:
     assert store_two.get_for_user(user_one.id, created.id).goal == "проверить календарь"
     assert store_two.get_for_user(user_two.id, created.id) is None
     assert store_two.list_for_user(user_two.id) == []
+
+
+def test_sql_monitor_jobs_persist_and_record_runs(tmp_path) -> None:
+    factory = session_factory(tmp_path)
+    users = UserStore(factory)
+    user_one = users.get_or_create(7201)
+    user_two = users.get_or_create(7202)
+    store = SqlMonitorJobStore(factory)
+
+    created = store.create(
+        user_id=user_one.id,
+        chat_id=user_one.tg_user_id,
+        source_type="github_releases",
+        source_config={"owner": "owner", "repo": "repo"},
+        condition_text="напиши если новый релиз",
+    )
+    store.mark_checked(created.id, state_hash="abc", payload={"tag": "v1"})
+    run = store.record_run(created.id, status="not_triggered", triggered=False)
+
+    own = store.list_enabled()
+    assert own[0].source_config == {"owner": "owner", "repo": "repo"}
+    assert own[0].chat_id == user_one.tg_user_id
+    assert own[0].last_state_hash == "abc"
+    assert own[0].last_payload == {"tag": "v1"}
+    assert run.status == "not_triggered"
+    assert user_two.id != own[0].user_id
+
+
+def test_sql_monitor_jobs_are_user_scoped_when_disabled(tmp_path) -> None:
+    factory = session_factory(tmp_path)
+    users = UserStore(factory)
+    user_one = users.get_or_create(7211)
+    user_two = users.get_or_create(7212)
+    store = SqlMonitorJobStore(factory)
+    created = store.create(
+        user_id=user_one.id,
+        chat_id=user_one.tg_user_id,
+        source_type="github_releases",
+        source_config={"owner": "openai", "repo": "codex"},
+        condition_text="напиши если важный релиз",
+    )
+
+    assert store.disable_for_user(user_two.id, created.id) is False
+    assert store.get(created.id).enabled is True
+    assert store.disable_for_user(user_one.id, created.id) is True
+
+    disabled = store.get(created.id)
+    assert disabled.enabled is False
+    assert store.list_for_user(user_one.id)[0].id == created.id
+    assert store.list_for_user(user_two.id) == []
