@@ -5,6 +5,7 @@ import logging
 from dataclasses import replace
 from io import BytesIO
 
+from assistant.input_router import InputKind, UnifiedInput, input_from_telegram_message
 from assistant.transcription import OpenAITranscriber, TranscriptionError
 from assistant.tracing import new_trace_id
 from assistant.types import AssistantReply, Intent
@@ -136,13 +137,36 @@ def create_dispatcher():
             root_key=root_key,
             work=blocking_executor.run_blocking(
                 message.from_user.id,
-                service.handle_text,
+                service.handle_input,
                 message.from_user.id,
-                message.text or "",
+                input_from_telegram_message(message),
                 idempotency_key=root_key,
                 trace_id=trace_id,
             ),
             accepted_text="Принял, обрабатываю. Итог пришлю отдельным сообщением.",
+            trace_id=trace_id,
+        )
+
+    @dp.message(F.document | F.photo | F.audio | F.video)
+    async def handle_file(message: Message) -> None:
+        if message.from_user is None:
+            await message.answer("Не вижу Telegram user id, поэтому не могу обработать файл.")
+            return
+        root_key = _telegram_message_key(message)
+        trace_id = new_trace_id()
+        await submit_reply(
+            user_id=message.from_user.id,
+            chat_id=message.chat.id,
+            root_key=root_key,
+            work=blocking_executor.run_blocking(
+                message.from_user.id,
+                service.handle_input,
+                message.from_user.id,
+                input_from_telegram_message(message, default_kind=InputKind.FILE),
+                idempotency_key=root_key,
+                trace_id=trace_id,
+            ),
+            accepted_text="Принял файл, обрабатываю подпись. Итог пришлю отдельным сообщением.",
             trace_id=trace_id,
         )
 
@@ -312,9 +336,9 @@ async def _process_voice(
         trace_kwargs = {"trace_id": trace_id} if trace_id else {}
         reply = await blocking_executor.run_blocking_unlocked(
             user_id,
-            service.handle_text,
+            service.handle_input if hasattr(service, "handle_input") else service.handle_text,
             user_id,
-            text,
+            UnifiedInput(kind=InputKind.VOICE, text=text) if hasattr(service, "handle_input") else text,
             idempotency_key=root_key,
             **trace_kwargs,
         )

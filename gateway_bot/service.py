@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from assistant.admin_status_service import build_perf_status_text
 from assistant.action_queue import ActionStatus
+from assistant.input_router import UnifiedInput, normalize_input_text
 from assistant.job_orchestration import compute_job_status
 from assistant.pipeline import AssistantPipeline
 from assistant.tool_result_ids import compact_result_meta
@@ -100,6 +101,24 @@ class GatewayService:
                 trace_id=reply.trace_id,
             )
         return reply
+
+    def handle_input(
+        self,
+        tg_user_id: int,
+        inbound: UnifiedInput,
+        *,
+        idempotency_key: str = "",
+        trace_id: str = "",
+    ) -> AssistantReply:
+        text = normalize_input_text(inbound)
+        if not text:
+            return AssistantReply(
+                text="Что сделать с этим файлом или сообщением?",
+                intent=Intent.UNKNOWN,
+                blocked_reason="input_needs_clarification",
+                trace_id=trace_id,
+            )
+        return self.handle_text(tg_user_id, text, idempotency_key=idempotency_key, trace_id=trace_id)
 
     def perf_status(self, user: UserContext) -> AssistantReply:
         if not user.is_admin:

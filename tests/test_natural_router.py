@@ -175,3 +175,51 @@ def test_context_placeholder_memory_needs_confirmation() -> None:
     result = route_natural_text("запиши это как важное")
 
     assert result.actions[0].needs_confirmation
+
+
+def test_context_placeholder_memory_uses_previous_text() -> None:
+    result = route_natural_text("сохрани это как важное", context_text="OAuth refresh протухает раз в неделю")
+
+    assert [action.type for action in result.actions] == [ActionType.MEMORY_SAVE]
+    assert result.actions[0].payload["text"] == "OAuth refresh протухает раз в неделю"
+    assert not result.actions[0].needs_confirmation
+
+
+def test_reminder_pronoun_without_context_needs_clarification() -> None:
+    result = route_natural_text("напомни это завтра")
+
+    assert [action.type for action in result.actions] == [ActionType.REMINDER_CREATE]
+    assert result.actions[0].needs_confirmation
+
+
+def test_reminder_pronoun_uses_previous_text() -> None:
+    result = route_natural_text("напомни это завтра", context_text="обновить OAuth token")
+
+    assert [action.type for action in result.actions] == [ActionType.REMINDER_CREATE]
+    assert result.actions[0].payload["text"] == "завтра обновить OAuth token"
+
+
+def test_ambiguous_that_meeting_asks_clarification() -> None:
+    result = route_natural_text("перенеси ту встречу на завтра")
+
+    assert [action.type for action in result.actions] == [ActionType.CALENDAR_MOVE]
+    assert result.actions[0].needs_confirmation
+    assert result.actions[0].payload["title"] == "ту встречу"
+
+
+def test_as_usual_task_uses_preferences_and_clean_title() -> None:
+    from assistant.preferences import UserPreferences
+
+    result = route_natural_text(
+        "как обычно завтра в 10 проверь сервер",
+        preferences=UserPreferences(user_id=1, default_trello_list="Today", default_project="JarHert"),
+    )
+
+    assert [action.type for action in result.actions] == [ActionType.TASK_CREATE]
+    assert result.actions[0].payload == {
+        "title": "проверь сервер",
+        "start": "tomorrow 10:00",
+        "end": "tomorrow 10:30",
+        "list": "Today",
+        "project": "JarHert",
+    }

@@ -74,7 +74,7 @@ def _route_single(
         lambda value: _idea_action(value, context_text=context_text),
         lambda value: _memory_action(value, context_text=context_text),
         lambda value: _telegram_send_action(value, context_text=context_text),
-        _reminder_action,
+        lambda value: _reminder_action(value, context_text=context_text),
         _task_list_action,
         _task_done_action,
         _task_move_action,
@@ -174,7 +174,19 @@ def _prepared_message_payload(context_text: str) -> dict[str, str] | None:
     return {"recipient": match.group("recipient").strip(), "text": message}
 
 
-def _reminder_action(text: str) -> list[PlannedAction]:
+def _reminder_action(text: str, *, context_text: str | None = None) -> list[PlannedAction]:
+    context_match = re.match(r"^напомни\s+(?:это|об\s+этом)\s+(?P<when>.+)$", text, re.IGNORECASE)
+    if context_match:
+        if context_text:
+            return [_action(ActionType.REMINDER_CREATE, text=f"{context_match.group('when').strip()} {context_text}")]
+        return [
+            PlannedAction(
+                ActionType.REMINDER_CREATE,
+                payload={"text": "это"},
+                confidence=0.55,
+                needs_confirmation=True,
+            )
+        ]
     match = re.match(r"^(?:напомни|поставь\s+напоминание)[:\s]+(?P<text>.+)$", text, re.IGNORECASE)
     if not match:
         return []
@@ -212,11 +224,14 @@ def _task_move_action(text: str) -> list[PlannedAction]:
 
 
 def _ambiguous_move_action(text: str, *, preferences: UserPreferences | None = None) -> list[PlannedAction]:
-    match = re.match(r"^перенеси\s+(?:её|ее|его|это)\s+на\s+(?P<when>.+)$", text, re.IGNORECASE)
+    match = re.match(r"^перенеси\s+(?P<title>её|ее|его|это|ту\s+встречу)\s+на\s+(?P<when>.+)$", text, re.IGNORECASE)
     if not match:
         return []
     _, start, end = _timed_title(match.group("when"), preferences=preferences)
-    payload = {"title": "это"}
+    if not start or not end:
+        start, end = _default_calendar_window(match.group("when"), preferences=preferences)
+    raw_title = match.group("title").strip().lower()
+    payload = {"title": "ту встречу" if raw_title == "ту встречу" else "это"}
     if start:
         payload["start"] = start
     if end:
@@ -230,6 +245,8 @@ def _calendar_move_action(text: str, *, preferences: UserPreferences | None = No
         return []
     title = f"{match.group('title')}{match.group('rest')}".strip()
     _, start, end = _timed_title(match.group("when"), preferences=preferences)
+    if not start or not end:
+        start, end = _default_calendar_window(match.group("when"), preferences=preferences)
     payload = {"title": title}
     if start:
         payload["start"] = start
@@ -335,6 +352,11 @@ def _period_clock(text: str, *, preferences: UserPreferences | None = None) -> s
     return None
 
 
+def _default_calendar_window(text: str, *, preferences: UserPreferences | None = None) -> tuple[str, str]:
+    clock = preferences.morning_time if preferences else PERIOD_CLOCKS["утром"]
+    return f"{_date_prefix(text)} {clock}", f"{_date_prefix(text)} {_add_minutes(clock, 30)}"
+
+
 def _normalize_clock(value: str) -> str:
     if ":" in value:
         hours, minutes = value.split(":", 1)
@@ -349,7 +371,8 @@ def _add_minutes(clock: str, minutes: int) -> str:
 
 
 def _clean_title(value: str) -> str:
-    title = re.sub(r"\b(?:сегодня|завтра|послезавтра)\b", "", value, flags=re.IGNORECASE)
+    title = re.sub(r"\bкак\s+обычно\b", "", value, flags=re.IGNORECASE)
+    title = re.sub(r"\b(?:сегодня|завтра|послезавтра)\b", "", title, flags=re.IGNORECASE)
     title = re.sub(r"\b(?:утром|вечером)\b", "", title, flags=re.IGNORECASE)
     title = re.sub(r"\b(?:понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье)\b", "", title, flags=re.IGNORECASE)
     title = re.sub(r"^(?:поставь|добавь|создай|событие|задачу)\\s+", "", title, flags=re.IGNORECASE)
