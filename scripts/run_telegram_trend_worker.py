@@ -1,0 +1,59 @@
+#!/usr/bin/env python
+from __future__ import annotations
+
+import argparse
+import asyncio
+import logging
+import os
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from assistant.telegram_trends import run_telegram_trend_worker
+from backend.config import Settings
+from backend.message_store import SqlCollectedMessageStore
+from backend.stores import SqlDeliveryOutboxStore, UserStore
+from gateway_bot.main import build_hermes_client, get_session_factory
+from scripts.run_migrations import run_migrations
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run Telegram trendwatch worker.")
+    parser.add_argument("--once", action="store_true", help="Run one tick and exit.")
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    run_migrations()
+    settings = Settings()
+    tg_user_id = _target_tg_user_id(settings)
+    session_factory = get_session_factory()
+    user = UserStore(session_factory).get_or_create(tg_user_id)
+    asyncio.run(
+        run_telegram_trend_worker(
+            SqlCollectedMessageStore(session_factory),
+            build_hermes_client(),
+            SqlDeliveryOutboxStore(session_factory),
+            user_id=user.id,
+            chat_id=tg_user_id,
+            interval_seconds=float(os.getenv("TELEGRAM_TREND_INTERVAL_SECONDS", "3600")),
+            lookback_hours=int(os.getenv("TELEGRAM_TREND_LOOKBACK_HOURS", "6")),
+            limit=int(os.getenv("TELEGRAM_TREND_BATCH_LIMIT", "300")),
+            stop_after_one_tick=args.once,
+        )
+    )
+    return 0
+
+
+def _target_tg_user_id(settings: Settings) -> int:
+    explicit = os.getenv("TELEGRAM_TREND_TG_USER_ID", "").strip()
+    if explicit:
+        return int(explicit)
+    if settings.admin_tg_user_ids:
+        return sorted(settings.admin_tg_user_ids)[0]
+    raise RuntimeError("Set TELEGRAM_TREND_TG_USER_ID or ADMIN_TG_USER_IDS for trend delivery")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -46,3 +46,19 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  trend_worker:
+    build: .
+    command: ["scripts/docker_start_trend_worker.sh"]
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    profiles: ["collector"]
+    depends_on:
+      - bot
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
