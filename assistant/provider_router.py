@@ -3,10 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+import time
 from typing import Callable
 
 from assistant.provider_clients import HermesClient
 from assistant.provider_diagnostics import HermesClientError
+from assistant.provider_policy import ProviderSelectionPolicy
 from assistant.provider_registry import ProviderRegistry, ProviderSpec
 from assistant.quality_gates import check_output
 from assistant.types import HermesRequest, HermesResponse
@@ -34,6 +36,8 @@ class ProviderHealth:
     timeout_count: int = 0
     quality_error_count: int = 0
     other_error_count: int = 0
+    quality_score: int = 100
+    quality_sample_count: int = 0
     cooldown_until: datetime | None = None
     updated_at: datetime | None = None
 
@@ -52,16 +56,32 @@ class InMemoryProviderHealthStore:
     def list_all(self) -> list[ProviderHealth]:
         return list(self._items.values())
 
-    def record_success(self, name: str, model: str, *, latency_ms: int | None = None) -> ProviderHealth:
+    def record_success(
+        self,
+        name: str,
+        model: str,
+        *,
+        latency_ms: int | None = None,
+        quality_score: int | None = None,
+    ) -> ProviderHealth:
         now = datetime.now(timezone.utc)
         current = self.get(name)
+        values = {
+            "model": model,
+            "last_success_at": now,
+            "latency_ms": latency_ms,
+            "cooldown_until": None,
+            "updated_at": now,
+        }
+        if quality_score is not None:
+            values["quality_score"], values["quality_sample_count"] = rolling_quality_score(
+                current.quality_score,
+                current.quality_sample_count,
+                quality_score,
+            )
         updated = replace(
             current,
-            model=model,
-            last_success_at=now,
-            latency_ms=latency_ms,
-            cooldown_until=None,
-            updated_at=now,
+            **values,
         )
         self._items[name] = updated
         return updated
@@ -86,6 +106,12 @@ class InMemoryProviderHealthStore:
         }
         counter = _counter_field(failure_kind)
         values[counter] = getattr(current, counter) + 1
+        if failure_kind == ProviderFailureKind.QUALITY:
+            values["quality_score"], values["quality_sample_count"] = rolling_quality_score(
+                current.quality_score,
+                current.quality_sample_count,
+                0,
+            )
         updated = replace(current, **values)
         self._items[name] = updated
         return updated
@@ -102,20 +128,43 @@ class ProviderRouterClient:
         health_store,
         client_factory: ClientFactory,
         cooldown_seconds: int = 120,
+        policy: ProviderSelectionPolicy | None = None,
     ) -> None:
         self.registry = registry
         self.health_store = health_store
         self.client_factory = client_factory
-        self.cooldown_seconds = cooldown_seconds
+        self.policy = policy or ProviderSelectionPolicy(
+            cost_mode="free_only",
+            deadline_seconds=15,
+            max_attempts=2,
+            cooldown_seconds=cooldown_seconds,
+        )
 
     def ask(self, request: HermesRequest) -> HermesResponse:
         failures: list[str] = []
         attempted = 0
         now = datetime.now(timezone.utc)
-        for provider in self.registry.enabled():
-            health = self.health_store.get(provider.name)
-            if health.in_cooldown(now=now):
-                failures.append(f"{provider.name}: cooldown")
+        started = time.monotonic()
+        deadline = started + self.policy.deadline_seconds
+        selection = self.policy.select(
+            registry=self.registry,
+            health_store=self.health_store,
+            request=request,
+            remaining_seconds=self.policy.deadline_seconds,
+            now=now,
+        )
+        failures.extend(selection.skipped)
+        for selected_provider in selection.providers:
+            remaining_seconds = deadline - time.monotonic()
+            if remaining_seconds <= 0:
+                failures.append("deadline_exceeded")
+                break
+            if attempted >= self.policy.max_attempts:
+                failures.append("max_attempts")
+                break
+            provider = replace(selected_provider, timeout_seconds=min(selected_provider.timeout_seconds, remaining_seconds))
+            if not self.policy.reserve_budget(provider, now=now):
+                failures.append(f"{provider.name}: budget")
                 continue
             attempted += 1
             client = self.client_factory(provider)
@@ -123,7 +172,7 @@ class ProviderRouterClient:
                 response = client.ask(request)
             except Exception as exc:
                 failure_kind = classify_provider_failure(exc)
-                cooldown_until = _cooldown_until(failure_kind, seconds=self.cooldown_seconds)
+                cooldown_until = _cooldown_until(failure_kind, seconds=self.policy.cooldown_seconds)
                 self.health_store.record_failure(
                     provider.name,
                     provider.model,
@@ -133,6 +182,18 @@ class ProviderRouterClient:
                 )
                 failures.append(f"{provider.name}: {failure_kind.value}")
                 continue
+
+            if time.monotonic() > deadline:
+                cooldown_until = _cooldown_until(ProviderFailureKind.TIMEOUT, seconds=self.policy.cooldown_seconds)
+                self.health_store.record_failure(
+                    provider.name,
+                    provider.model,
+                    ProviderFailureKind.TIMEOUT,
+                    latency_ms=response.latency_ms,
+                    cooldown_until=cooldown_until,
+                )
+                failures.append(f"{provider.name}: deadline_exceeded")
+                break
 
             output_gate = check_output(response.text)
             if not output_gate.ok:
@@ -146,7 +207,12 @@ class ProviderRouterClient:
                 failures.append(f"{provider.name}: {output_gate.reason}")
                 continue
 
-            self.health_store.record_success(provider.name, provider.model, latency_ms=response.latency_ms)
+            self.health_store.record_success(
+                provider.name,
+                provider.model,
+                latency_ms=response.latency_ms,
+                quality_score=100,
+            )
             return HermesResponse(
                 text=response.text,
                 provider=provider.name,
@@ -206,3 +272,10 @@ def _counter_field(failure_kind: ProviderFailureKind) -> str:
 def _latency_from_error(error: Exception) -> int | None:
     value = getattr(error, "latency_ms", None)
     return value if isinstance(value, int) else None
+
+
+def rolling_quality_score(current_score: int, sample_count: int, sample_score: int, *, window: int = 20) -> tuple[int, int]:
+    previous_weight = min(max(0, sample_count), max(0, window - 1))
+    normalized_sample = min(100, max(0, sample_score))
+    score = round((current_score * previous_weight + normalized_sample) / (previous_weight + 1))
+    return score, min(window, sample_count + 1)

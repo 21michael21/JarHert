@@ -67,3 +67,16 @@ def test_provider_registry_respects_free_only_cost_mode() -> None:
 
     assert [provider.cost_mode for provider in registry.enabled()][0] == ProviderCostMode.FREE
     assert all(provider.cost_mode != ProviderCostMode.PAID for provider in registry.enabled())
+
+
+def test_registry_does_not_label_non_free_openrouter_or_cli_models_as_free() -> None:
+    registry = build_provider_registry(
+        settings(
+            openrouter_model="openai/gpt-5-nano",
+            hermes_cli_models=["openrouter/free", "openai/gpt-5-nano"],
+        )
+    )
+
+    assert registry.get("openrouter_free").cost_mode == ProviderCostMode.CHEAP
+    assert registry.get("hermes_cli_openrouter_free").cost_mode == ProviderCostMode.FREE
+    assert registry.get("hermes_cli_openai_gpt_5_nano").cost_mode == ProviderCostMode.CHEAP

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 
@@ -32,6 +32,8 @@ class ProviderSpec:
     credential_env: str = ""
     base_url: str = ""
     command_template: str = ""
+    capabilities: frozenset[str] = field(default_factory=lambda: frozenset({"chat"}))
+    estimated_cost_micro_usd: int = 0
 
 
 class ProviderRegistry:
@@ -55,11 +57,13 @@ def build_provider_registry(settings) -> ProviderRegistry:
     providers: list[ProviderSpec] = []
 
     if getattr(settings, "openrouter_api_key", ""):
+        openrouter_model = getattr(settings, "openrouter_model", "openrouter/free")
+        openrouter_cost_mode = _model_cost_mode(openrouter_model)
         providers.append(
             ProviderSpec(
                 name="openrouter_free",
-                model=getattr(settings, "openrouter_model", "openrouter/free"),
-                cost_mode=ProviderCostMode.FREE,
+                model=openrouter_model,
+                cost_mode=openrouter_cost_mode,
                 timeout_seconds=float(getattr(settings, "openrouter_timeout_seconds", 12.0)),
                 max_tokens=int(getattr(settings, "openrouter_max_output_tokens", 500)),
                 supports_json=True,
@@ -67,6 +71,10 @@ def build_provider_registry(settings) -> ProviderRegistry:
                 kind=ProviderKind.OPENAI_CHAT,
                 credential_env="OPENROUTER_API_KEY",
                 base_url=getattr(settings, "openrouter_base_url", "https://openrouter.ai/api/v1"),
+                estimated_cost_micro_usd=_estimated_model_cost(
+                    openrouter_cost_mode,
+                    int(getattr(settings, "openrouter_estimated_cost_micro_usd", 1_000)),
+                ),
             )
         )
 
@@ -83,22 +91,28 @@ def build_provider_registry(settings) -> ProviderRegistry:
                 kind=ProviderKind.OPENAI_RESPONSES,
                 credential_env="OPENAI_API_KEY",
                 base_url=getattr(settings, "openai_base_url", "https://api.openai.com/v1"),
+                estimated_cost_micro_usd=int(getattr(settings, "openai_estimated_cost_micro_usd", 1_000)),
             )
         )
 
     for index, model in enumerate(getattr(settings, "hermes_cli_models", []) or [], start=1):
         safe_name = _safe_provider_name(model)
+        cli_cost_mode = _model_cost_mode(model)
         providers.append(
             ProviderSpec(
                 name=f"hermes_cli_{safe_name}",
                 model=model,
-                cost_mode=ProviderCostMode.LOCAL,
+                cost_mode=cli_cost_mode,
                 timeout_seconds=float(getattr(settings, "hermes_timeout_seconds", 25.0)),
                 max_tokens=int(getattr(settings, "openai_max_output_tokens", 600)),
                 supports_json=False,
                 priority=30 + index,
                 kind=ProviderKind.HERMES_CLI,
                 command_template=getattr(settings, "hermes_cli_command_template", ""),
+                estimated_cost_micro_usd=_estimated_model_cost(
+                    cli_cost_mode,
+                    int(getattr(settings, "hermes_cli_estimated_cost_micro_usd", 1_000)),
+                ),
             )
         )
 
@@ -116,6 +130,7 @@ def build_provider_registry(settings) -> ProviderRegistry:
                     priority=80 + index,
                     kind=ProviderKind.HERMES_CLI,
                     command_template=getattr(settings, "hermes_cli_command_template", ""),
+                    estimated_cost_micro_usd=int(getattr(settings, "paid_estimated_cost_micro_usd", 10_000)),
                 )
             )
 
@@ -132,6 +147,7 @@ def build_provider_registry(settings) -> ProviderRegistry:
                 kind=ProviderKind.OPENAI_CHAT,
                 credential_env="GROQ_API_KEY",
                 base_url=getattr(settings, "groq_base_url", "https://api.groq.com/openai/v1"),
+                estimated_cost_micro_usd=0,
             )
         )
 
@@ -148,6 +164,7 @@ def build_provider_registry(settings) -> ProviderRegistry:
                 kind=ProviderKind.OPENAI_CHAT,
                 credential_env="HF_API_KEY",
                 base_url=getattr(settings, "hf_base_url", "https://router.huggingface.co/v1"),
+                estimated_cost_micro_usd=0,
             )
         )
 
@@ -156,3 +173,18 @@ def build_provider_registry(settings) -> ProviderRegistry:
 
 def _safe_provider_name(value: str) -> str:
     return "".join(ch if ch.isalnum() else "_" for ch in value.lower()).strip("_")
+
+
+def _model_cost_mode(model: str) -> ProviderCostMode:
+    normalized = model.strip().lower()
+    if normalized.startswith(("local/", "ollama/")):
+        return ProviderCostMode.LOCAL
+    if normalized == "openrouter/free" or normalized.endswith(":free"):
+        return ProviderCostMode.FREE
+    return ProviderCostMode.CHEAP
+
+
+def _estimated_model_cost(cost_mode: ProviderCostMode, configured_cost_micro_usd: int) -> int:
+    if cost_mode in {ProviderCostMode.FREE, ProviderCostMode.LOCAL}:
+        return 0
+    return max(0, configured_cost_micro_usd)
