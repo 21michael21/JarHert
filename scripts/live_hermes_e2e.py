@@ -75,22 +75,30 @@ async def send_plain(client, entity, text: str, timeout: int) -> tuple[Any, int]
     return reply, int((time.perf_counter() - started) * 1000)
 
 
-async def send_confirmed(client, entity, text: str, timeout: int) -> tuple[Any, int]:
+async def send_confirmed(
+    client,
+    entity,
+    text: str,
+    timeout: int,
+    *,
+    approval_text: str = "Выполнить",
+) -> tuple[Any, int]:
     started = time.perf_counter()
     sent = await client.send_message(entity, text)
     approval = await wait_message(
         client,
         entity,
         after_id=int(sent.id),
-        predicate=lambda message: "Выполнить" in buttons(message),
+        predicate=lambda message: approval_text in buttons(message),
         timeout=timeout,
     )
-    await approval.click(text="Выполнить")
+    await approval.click(text=approval_text)
     result = await wait_message(
         client,
         entity,
-        after_id=int(approval.id),
-        predicate=lambda message: bool(str(message.message or "").strip()) or message.file is not None,
+        after_id=int(approval.id) - 1,
+        predicate=lambda message: approval_text not in buttons(message)
+        and (bool(str(message.message or "").strip()) or message.file is not None),
         timeout=timeout,
     )
     if has_bad_reply(result):
@@ -98,7 +106,7 @@ async def send_confirmed(client, entity, text: str, timeout: int) -> tuple[Any, 
     return result, int((time.perf_counter() - started) * 1000)
 
 
-async def run(args) -> list[Step]:
+async def run(args, steps: list[Step]) -> None:
     try:
         from telethon import TelegramClient
     except ModuleNotFoundError as error:
@@ -116,7 +124,6 @@ async def run(args) -> list[Step]:
     run_id = uuid.uuid4().hex[:8]
     task_title = f"JarHert E2E {run_id}"
     event_title = f"JarHert Calendar E2E {run_id}"
-    steps: list[Step] = []
     try:
         reply, latency = await send_plain(client, entity, "Ответь одной короткой фразой: ты на связи?", args.timeout)
         steps.append(Step("llm_reply", True, latency, int(reply.id)))
@@ -147,6 +154,7 @@ async def run(args) -> list[Step]:
             entity,
             f"Экспортируй текст из чата @{username} в TXT, максимум 20 сообщений",
             args.timeout,
+            approval_text="Экспортировать",
         )
         filename = str(getattr(reply.file, "name", "") or "") if reply.file else ""
         if not filename.lower().endswith(".txt"):
@@ -154,7 +162,6 @@ async def run(args) -> list[Step]:
         steps.append(Step("chat_export", True, latency, int(reply.id), detail="txt_document"))
     finally:
         await client.disconnect()
-    return steps
 
 
 def main() -> int:
@@ -165,12 +172,12 @@ def main() -> int:
     args = parser.parse_args()
     load_env(args.profile_home / ".env")
     started_at = datetime.now(timezone.utc).isoformat()
+    steps: list[Step] = []
     try:
-        steps = asyncio.run(run(args))
+        asyncio.run(run(args, steps))
         ok = all(step.ok for step in steps) and len(steps) == 6
         error = None
     except Exception as exc:
-        steps = []
         ok = False
         error = f"{type(exc).__name__}: {exc}"
     payload = {"ok": ok, "started_at": started_at, "steps": [asdict(step) for step in steps], "error": error}
