@@ -23,11 +23,60 @@ jarhert skills list
 keeps API keys, Telegram token, memories, sessions and runtime databases in the
 local profile and never takes them from git.
 
-Expected skills:
+Expected native skills:
 
 - `personal-operating-center` — plan today, triage inbox, evening review;
 - `personal-memory` — notes, promises, projects, and contacts;
+- `contact-messaging` — one preview and one confirmation for a complete
+  scheduled Telegram message plan;
+- `event-monitors` — deterministic hash/diff checks before any model call;
 - `sandboxed-coding` — repository work only in an isolated workspace.
+
+### Native contacts and scheduled messages
+
+Contacts and outgoing plans live in the profile SQLite database, not in a
+second gateway. Add an exact contact name and aliases:
+
+```bash
+python ~/.hermes/profiles/jarhert/native_tools/cli.py contact add \
+  --name "Илья" --telegram-chat-id 123456 --alias "Илье"
+```
+
+Hermes creates one plan for every message in the user's request, shows one
+preview, and asks for one confirmation for the whole plan. One script-only cron
+job delivers due messages without an LLM call:
+
+```bash
+hermes cron create "* * * * *" \
+  --name "Personal OS message dispatcher" \
+  --script dispatch_due_messages.py --no-agent --deliver local
+```
+
+Delivery requires the Hermes Telegram gateway to be configured and running.
+Contact resolution is exact and alias-based; a similar name is never guessed.
+
+### Native diff-first monitors
+
+The first monitor source is GitHub Releases. The first successful check stores
+a silent baseline. Equal payloads produce no event and no model call. A changed
+payload creates a compact diff; only then may Hermes evaluate the user's
+condition.
+
+```bash
+python ~/.hermes/profiles/jarhert/native_tools/cli.py monitor add \
+  --name "codex-releases" \
+  --source-type github_releases \
+  --source-config-json '{"owner":"openai","repo":"codex"}' \
+  --condition "Напиши только если в релизе есть важные возможности"
+
+hermes cron create "every 30m" \
+  --name "Personal diff monitors" \
+  --script check_monitors.py --skill event-monitors --deliver origin
+```
+
+List monitors with `monitor list`. `monitor remove <id>` disables a monitor
+without deleting its state. Arbitrary URLs, shell commands, and browser tools
+are not accepted by this source adapter.
 
 Keep credentials in `~/.hermes/.env`. Use Hermes Telegram pairing or an
 explicit allowlist. Do not copy a token into this repository and do not start

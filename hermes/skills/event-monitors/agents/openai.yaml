@@ -1,0 +1,4 @@
+interface:
+  display_name: "Event Monitors"
+  short_description: "Hash/diff monitors that speak only on important changes"
+  default_prompt: "Use $event-monitors to check sources quietly and evaluate the user's condition only after a real change."

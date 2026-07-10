@@ -47,6 +47,8 @@ class GitHubReleasesSource:
             },
             10,
         )
+        if len(raw) > 1_000_000:
+            raise ValueError("GitHub release payload превышает лимит 1 MB.")
         payload = json.loads(raw)
         if not isinstance(payload, dict) or not payload.get("tag_name"):
             raise ValueError("GitHub release payload не содержит tag_name.")

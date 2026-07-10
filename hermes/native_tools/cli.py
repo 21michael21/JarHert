@@ -13,9 +13,13 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from native_tools.contacts import ContactStore, ContactStoreError
     from native_tools.delivery import HermesTelegramSender, dispatch_due_messages
+    from native_tools.events import EventStore
+    from native_tools.monitors import MonitorRegistry, MonitorRunner
 else:
     from .contacts import ContactStore, ContactStoreError
     from .delivery import HermesTelegramSender, dispatch_due_messages
+    from .events import EventStore
+    from .monitors import MonitorRegistry, MonitorRunner
 
 
 def database_path() -> Path:
@@ -52,14 +56,25 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch = commands.add_parser("dispatch")
     dispatch.add_argument("--limit", type=int, default=20)
     dispatch.add_argument("--now")
+
+    monitor = commands.add_parser("monitor")
+    monitor_commands = monitor.add_subparsers(dest="monitor_command", required=True)
+    monitor_add = monitor_commands.add_parser("add")
+    monitor_add.add_argument("--name", required=True)
+    monitor_add.add_argument("--source-type", choices=["github_releases"], required=True)
+    monitor_add.add_argument("--source-config-json", required=True)
+    monitor_add.add_argument("--condition", required=True)
+    monitor_commands.add_parser("list")
+    monitor_remove = monitor_commands.add_parser("remove")
+    monitor_remove.add_argument("monitor_id", type=int)
+    monitor_commands.add_parser("check")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    store = ContactStore(args.db)
     try:
-        payload = run_command(store, args)
+        payload = run_command(args)
     except (ContactStoreError, ValueError, json.JSONDecodeError) as error:
         print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False))
         return 2
@@ -67,7 +82,8 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def run_command(store: ContactStore, args: argparse.Namespace) -> Any:
+def run_command(args: argparse.Namespace) -> Any:
+    store = ContactStore(args.db)
     if args.command == "contact" and args.contact_command == "add":
         return store.add_contact(
             name=args.name,
@@ -88,6 +104,24 @@ def run_command(store: ContactStore, args: argparse.Namespace) -> Any:
     if args.command == "dispatch":
         now = datetime.fromisoformat(args.now) if args.now else None
         return dispatch_due_messages(store, HermesTelegramSender(), now=now, limit=args.limit)
+    if args.command == "monitor":
+        registry = MonitorRegistry(args.db)
+        if args.monitor_command == "add":
+            config = json.loads(args.source_config_json)
+            if not isinstance(config, dict):
+                raise ValueError("source-config-json должен быть JSON-объектом.")
+            return registry.add(
+                name=args.name,
+                source_type=args.source_type,
+                source_config=config,
+                condition=args.condition,
+            )
+        if args.monitor_command == "list":
+            return registry.list()
+        if args.monitor_command == "remove":
+            return registry.disable(args.monitor_id)
+        if args.monitor_command == "check":
+            return MonitorRunner(registry, EventStore(args.db)).run_once()
     raise ValueError("Неизвестная команда.")
 
 
