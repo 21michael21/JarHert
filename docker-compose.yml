@@ -16,7 +16,7 @@ services:
       # VPS only, if TASK_COMMAND_CENTER_ENABLED=true:
       # - /opt/task-command-center:/opt/task-command-center:ro
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     restart: unless-stopped
     depends_on:
       migrate:
@@ -56,7 +56,7 @@ services:
     volumes:
       - ./data:/app/data
     ports:
-      - "8091:8091"
+      - "127.0.0.1:8091:8091"
     restart: unless-stopped
     depends_on:
       migrate:
