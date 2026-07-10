@@ -41,6 +41,23 @@ resulting `SKILL.md` is staged through `skill_manage`, because
 `skills.write_approval` is enabled. Review it with `/skills pending` and
 `/skills diff <id>` before applying it.
 
+### Sandboxed coding and research
+
+The main chat keeps the local backend so ordinary Personal OS commands stay
+lightweight. Coding and bounded research use `personal-os sandbox run`, which
+starts the same `jarhert` profile with `TERMINAL_ENV=docker`. There is no second
+bot or second agent identity.
+
+The Docker workspace is ephemeral and limited to 1 CPU, 2 GB RAM, and 4 GB
+disk. No environment variables are forwarded into it. Coding accepts a GitHub
+HTTPS repository; research accepts sources whose hosts are explicitly listed
+in `HERMES_RESEARCH_ALLOWED_HOSTS`. Docker is a hard requirement: the worker
+refuses to fall back to the host.
+
+The container still has outbound network access for clone and research. The
+host allowlist validates declared sources but is not a network firewall. Use a
+proxy or Docker egress policy before handling hostile repositories.
+
 ### Native contacts and scheduled messages
 
 Contacts and outgoing plans live in the profile SQLite database, not in a

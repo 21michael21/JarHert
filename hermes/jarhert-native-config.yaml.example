@@ -8,6 +8,12 @@ skills:
   # write. After the workflow proves useful, this can be relaxed per skill.
   write_approval: true
   guard_agent_created: true
+  creation_nudge_interval: 0
+
+curator:
+  enabled: true
+  consolidate: false
+  prune_builtins: false
 
 memory:
   memory_enabled: true
@@ -21,7 +27,18 @@ cron:
   # notifications with a large wrapper.
   wrap_response: false
 
+terminal:
+  # Leave backend unset: normal turns use Hermes' local default, while the
+  # sandbox wrapper sets TERMINAL_ENV=docker only for its own process.
+  docker_image: "nikolaik/python-nodejs:python3.11-nodejs20"
+  docker_forward_env: []
+  docker_network: true
+  container_cpu: 1
+  container_memory: 2048
+  container_disk: 4096
+  container_persistent: false
+  timeout: 900
+
 # Do not configure Telegram here by copying a token into the repository.
 # Configure the Hermes gateway through ~/.hermes/.env and allow only paired or
 # explicitly allowlisted users. Do not run JarHert gateway_bot with that token.
-

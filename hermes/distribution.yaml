@@ -19,6 +19,10 @@ env_requires:
     description: "OpenAI, если используется стабильный cheap provider"
     required: false
     default: ""
+  - name: HERMES_RESEARCH_ALLOWED_HOSTS
+    description: "Comma-separated HTTPS hosts allowed as declared research sources"
+    required: false
+    default: "github.com,api.github.com"
 
 distribution_owned:
   - SOUL.md

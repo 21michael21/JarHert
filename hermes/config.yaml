@@ -21,3 +21,13 @@ memory:
 
 cron:
   wrap_response: false
+
+terminal:
+  docker_image: "nikolaik/python-nodejs:python3.11-nodejs20"
+  docker_forward_env: []
+  docker_network: true
+  container_cpu: 1
+  container_memory: 2048
+  container_disk: 4096
+  container_persistent: false
+  timeout: 900

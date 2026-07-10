@@ -16,12 +16,14 @@ if __package__ in {None, ""}:
     from native_tools.events import EventStore
     from native_tools.monitors import MonitorRegistry, MonitorRunner
     from native_tools.skill_distillation import SkillDistiller
+    from native_tools.sandbox_worker import SandboxTask, SandboxedHermesWorker
 else:
     from .contacts import ContactStore, ContactStoreError
     from .delivery import HermesTelegramSender, dispatch_due_messages
     from .events import EventStore
     from .monitors import MonitorRegistry, MonitorRunner
     from .skill_distillation import SkillDistiller
+    from .sandbox_worker import SandboxTask, SandboxedHermesWorker
 
 
 def database_path() -> Path:
@@ -86,6 +88,14 @@ def build_parser() -> argparse.ArgumentParser:
     skill_show.add_argument("workflow_key")
     skill_staged = skill_commands.add_parser("mark-staged")
     skill_staged.add_argument("workflow_key")
+
+    sandbox = commands.add_parser("sandbox")
+    sandbox_commands = sandbox.add_subparsers(dest="sandbox_command", required=True)
+    sandbox_run = sandbox_commands.add_parser("run")
+    sandbox_run.add_argument("--mode", choices=["coding", "research"], required=True)
+    sandbox_run.add_argument("--prompt", required=True)
+    sandbox_run.add_argument("--repository-url")
+    sandbox_run.add_argument("--source-url", action="append", default=[])
     return parser
 
 
@@ -93,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         payload = run_command(args)
-    except (ContactStoreError, ValueError, json.JSONDecodeError) as error:
+    except (ContactStoreError, RuntimeError, ValueError, json.JSONDecodeError) as error:
         print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False))
         return 2
     print(json.dumps({"ok": True, "result": _json_value(payload)}, ensure_ascii=False, separators=(",", ":")))
@@ -160,6 +170,18 @@ def run_command(args: argparse.Namespace) -> Any:
             return distiller.get_candidate(args.workflow_key)
         if args.skill_command == "mark-staged":
             return distiller.mark_staged(args.workflow_key)
+    if args.command == "sandbox" and args.sandbox_command == "run":
+        worker = SandboxedHermesWorker(
+            profile_binary=os.getenv("HERMES_PROFILE_BIN", "jarhert")
+        )
+        return worker.run(
+            SandboxTask(
+                mode=args.mode,
+                prompt=args.prompt,
+                repository_url=args.repository_url,
+                source_urls=tuple(args.source_url),
+            )
+        )
     raise ValueError("Неизвестная команда.")
 
 
