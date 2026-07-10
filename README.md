@@ -643,6 +643,17 @@ AI_PROVIDER_MIN_QUALITY_SCORE=60
 
 Budget ledger хранит **оценочный** расход на попытку в USD micro-units (`1_000` = `$0.001`), а не выдаёт себя за точный billing API. При `0` cheap/paid provider не резервируется; free/local request разрешён. Не-free `OPENROUTER_MODEL` или CLI model автоматически получает класс `cheap`, поэтому не может случайно пройти в `free_only`.
 
+Для стабильного production-профиля после benchmark сначала оставь только прошедший primary:
+
+```env
+AI_COST_MODE=cheap
+AI_PROVIDER_DAILY_BUDGET_MICRO_USD=1000000
+OPENROUTER_ENABLED=false
+HERMES_CLI_ENABLED=false
+```
+
+Ключи при этом можно сохранить в `.env`: flags выключают transport до вызова. Возвращай free gateways только после нового `scripts/provider_benchmark.py --gate`, если они снова проходят quality и latency thresholds.
+
 В `free_only` используй `HERMES_MODE=provider_router` или `cli_router`. Прямые `HERMES_MODE=cli` и `http` намеренно отклоняются: policy не может доказать стоимость непрозрачного внешнего маршрута.
 
 Проверка adapter без Telegram:

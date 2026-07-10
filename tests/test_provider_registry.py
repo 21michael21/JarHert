@@ -8,6 +8,7 @@ from assistant.provider_registry import ProviderCostMode, ProviderKind, build_pr
 def settings(**overrides):
     values = {
         "openrouter_api_key": "test-openrouter-key",
+        "openrouter_enabled": True,
         "openrouter_model": "openrouter/free",
         "openrouter_base_url": "https://openrouter.ai/api/v1",
         "openrouter_timeout_seconds": 12.0,
@@ -18,6 +19,7 @@ def settings(**overrides):
         "openai_max_output_tokens": 600,
         "hermes_cli_command_template": "hermes --provider openrouter --model {model} --oneshot {prompt}",
         "hermes_cli_models": ["openrouter/free"],
+        "hermes_cli_enabled": True,
         "hermes_timeout_seconds": 25.0,
         "groq_api_key": "",
         "groq_model": "llama-3.1-8b-instant",
@@ -60,6 +62,14 @@ def test_provider_registry_adds_optional_groq_and_hf_only_when_keys_exist() -> N
     assert "huggingface" not in {provider.name for provider in without_optional.enabled()}
     assert "groq" in {provider.name for provider in with_optional.enabled()}
     assert "huggingface" in {provider.name for provider in with_optional.enabled()}
+
+
+def test_provider_registry_can_disable_unstable_free_gateways_without_removing_keys() -> None:
+    registry = build_provider_registry(
+        settings(openrouter_enabled=False, hermes_cli_enabled=False)
+    )
+
+    assert [provider.name for provider in registry.enabled()] == ["openai_cheap"]
 
 
 def test_provider_registry_respects_free_only_cost_mode() -> None:

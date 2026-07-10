@@ -102,3 +102,4 @@ def test_release_shell_is_valid_and_declares_every_required_gate() -> None:
     assert all(f'run_gate "{name}"' in source for name in REQUIRED_GATES)
     assert "--require-live" in source
     assert "release_scorecard.py" in source
+    assert source.index('run_gate "live_telegram_e2e"') < source.index('run_gate "provider_benchmark"')

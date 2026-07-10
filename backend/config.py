@@ -74,10 +74,12 @@ class Settings:
         "hermes --provider openrouter --model {model} --oneshot {prompt}",
     )
     hermes_cli_models: list[str] = None  # type: ignore[assignment]
+    hermes_cli_enabled: bool = _bool_env("HERMES_CLI_ENABLED", True)
     hermes_paid_fallback_models: list[str] = None  # type: ignore[assignment]
     hermes_timeout_seconds: float = float(os.getenv("HERMES_TIMEOUT_SECONDS", "25"))
     hermes_tools_enabled: bool = _bool_env("HERMES_TOOLS_ENABLED", False)
     openrouter_api_key: str = os.getenv("OPENROUTER_API_KEY", "")
+    openrouter_enabled: bool = _bool_env("OPENROUTER_ENABLED", True)
     openrouter_base_url: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     openrouter_model: str = os.getenv("OPENROUTER_MODEL", "openrouter/free")
     openrouter_timeout_seconds: float = float(os.getenv("OPENROUTER_TIMEOUT_SECONDS", "12"))

@@ -174,18 +174,18 @@ run_gate "clean_clone" clean_clone_gate
 run_gate "migrations" migrations_gate
 run_gate "tests" tests_gate
 run_gate "golden_eval" golden_gate
-run_gate "provider_benchmark" provider_gate
-run_gate "security_scan" security_gate
-run_gate "concurrency" concurrency_gate
-run_gate "load" load_gate
-run_gate "kill_worker_recovery" kill_worker_gate
-run_gate "backup_restore" backup_restore_gate
 if [[ "${RELEASE_GATE_SKIP_LIVE:-0}" == "1" ]]; then
   record_result "live_telegram_e2e" "skipped" 0 "" "RELEASE_GATE_SKIP_LIVE=1"
   echo "[live_telegram_e2e] skipped (release remains ineligible for 9.5)"
 else
   run_gate "live_telegram_e2e" live_telegram_gate
 fi
+run_gate "provider_benchmark" provider_gate
+run_gate "security_scan" security_gate
+run_gate "concurrency" concurrency_gate
+run_gate "load" load_gate
+run_gate "kill_worker_recovery" kill_worker_gate
+run_gate "backup_restore" backup_restore_gate
 
 commit="$(git rev-parse HEAD 2>/dev/null || true)"
 scorecard_status=0

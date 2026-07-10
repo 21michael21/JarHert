@@ -56,7 +56,7 @@ class ProviderRegistry:
 def build_provider_registry(settings) -> ProviderRegistry:
     providers: list[ProviderSpec] = []
 
-    if getattr(settings, "openrouter_api_key", ""):
+    if getattr(settings, "openrouter_enabled", True) and getattr(settings, "openrouter_api_key", ""):
         openrouter_model = getattr(settings, "openrouter_model", "openrouter/free")
         openrouter_cost_mode = _model_cost_mode(openrouter_model)
         providers.append(
@@ -95,7 +95,10 @@ def build_provider_registry(settings) -> ProviderRegistry:
             )
         )
 
-    for index, model in enumerate(getattr(settings, "hermes_cli_models", []) or [], start=1):
+    cli_models = getattr(settings, "hermes_cli_models", []) or []
+    if not getattr(settings, "hermes_cli_enabled", True):
+        cli_models = []
+    for index, model in enumerate(cli_models, start=1):
         safe_name = _safe_provider_name(model)
         cli_cost_mode = _model_cost_mode(model)
         providers.append(
