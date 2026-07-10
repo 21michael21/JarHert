@@ -12,14 +12,16 @@ The repository now contains Hermes skills for a personal operating center,
 personal memory, and sandboxed coding. They are ordinary Hermes skills, not a
 second bot or service.
 
-On a machine where Hermes is installed, point the dedicated Hermes profile at
-the checked-out skill directory:
+Install the native profile from this checkout:
 
 ```bash
-export JARHERT_HERMES_SKILLS_DIR=/opt/jarhert/hermes/skills
-# Merge hermes/jarhert-native-config.yaml.example into ~/.hermes/config.yaml.
-hermes skills list
+hermes profile install ./hermes --name jarhert --alias --yes
+jarhert skills list
 ```
+
+`SOUL.md`, profile config and skills are updated from the repository. Hermes
+keeps API keys, Telegram token, memories, sessions and runtime databases in the
+local profile and never takes them from git.
 
 Expected skills:
 

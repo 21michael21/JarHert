@@ -1,0 +1,28 @@
+name: jarhert
+version: 0.2.0
+description: "Личный русскоязычный Hermes: память, проекты, планирование и безопасная автоматизация"
+hermes_requires: ">=0.18.2"
+author: "21michael21"
+
+env_requires:
+  - name: TELEGRAM_BOT_TOKEN
+    description: "Токен Telegram-бота для единственного Hermes gateway"
+    required: true
+  - name: TELEGRAM_ALLOWED_USERS
+    description: "Разрешённые Telegram user ID через запятую"
+    required: true
+  - name: OPENROUTER_API_KEY
+    description: "OpenRouter, если используется free/cheap provider"
+    required: false
+    default: ""
+  - name: OPENAI_API_KEY
+    description: "OpenAI, если используется стабильный cheap provider"
+    required: false
+    default: ""
+
+distribution_owned:
+  - SOUL.md
+  - AGENTS.md
+  - config.yaml
+  - skills/
+
