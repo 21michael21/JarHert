@@ -8,7 +8,13 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from assistant.context_store import ConversationTurn
 from assistant.training_data import redact_training_text
-from assistant.training_feedback import TrainingExample, TrainingFeedbackKind, TrainingFeedbackStatus
+from assistant.training_feedback import (
+    TrainingExample,
+    TrainingExampleType,
+    TrainingFeedbackKind,
+    TrainingFeedbackStatus,
+    classify_training_example_type,
+)
 from backend.models import TrainingExampleRecord
 
 
@@ -23,8 +29,10 @@ class SqlTrainingFeedbackStore:
             user_id=user_id,
             turn=turn,
             feedback_kind=TrainingFeedbackKind.NORMAL,
+            example_type=classify_training_example_type(turn.user_text, turn.assistant_text),
             status=TrainingFeedbackStatus.APPROVED,
             assistant_text=turn.assistant_text,
+            rejected_assistant_text=None,
             approved_at=datetime.now(timezone.utc),
         )
 
@@ -49,8 +57,10 @@ class SqlTrainingFeedbackStore:
             user_id=user_id,
             turn=turn,
             feedback_kind=TrainingFeedbackKind.EDIT,
+            example_type=classify_training_example_type(turn.user_text, turn.assistant_text),
             status=TrainingFeedbackStatus.PENDING_EDIT,
             assistant_text=None,
+            rejected_assistant_text=turn.assistant_text,
             approved_at=None,
         )
 
@@ -96,12 +106,15 @@ class SqlTrainingFeedbackStore:
         user_id: int,
         turn: ConversationTurn,
         feedback_kind: TrainingFeedbackKind,
+        example_type: TrainingExampleType,
         status: TrainingFeedbackStatus,
         assistant_text: str | None,
+        rejected_assistant_text: str | None,
         approved_at: datetime | None,
     ) -> TrainingExample:
         clean_user_text, _ = redact_training_text(turn.user_text)
         clean_assistant_text, _ = redact_training_text(assistant_text or "")
+        clean_rejected_text, _ = redact_training_text(rejected_assistant_text or "")
         if not clean_user_text:
             raise ValueError("Training example needs non-empty user text")
         with self.session_factory() as db:
@@ -118,7 +131,9 @@ class SqlTrainingFeedbackStore:
                 conversation_turn_id=turn.id,
                 user_text=clean_user_text,
                 assistant_text=clean_assistant_text or None,
+                rejected_assistant_text=clean_rejected_text or None,
                 feedback_kind=feedback_kind.value,
+                example_type=example_type.value,
                 status=status.value,
                 approved_at=approved_at,
             )
@@ -147,7 +162,9 @@ def training_example_from_record(record: TrainingExampleRecord) -> TrainingExamp
         conversation_turn_id=record.conversation_turn_id,
         user_text=record.user_text,
         assistant_text=record.assistant_text,
+        rejected_assistant_text=record.rejected_assistant_text,
         feedback_kind=TrainingFeedbackKind(record.feedback_kind),
+        example_type=TrainingExampleType(record.example_type),
         status=TrainingFeedbackStatus(record.status),
         created_at=record.created_at,
         approved_at=record.approved_at,

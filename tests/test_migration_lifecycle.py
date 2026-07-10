@@ -71,7 +71,7 @@ def test_one_revision_rollback_and_reupgrade_are_reproducible(tmp_path) -> None:
     run_migrations(database_url)
 
     command.downgrade(config, "-1")
-    assert current_revision(database_url) == "0013_monitor_run_message"
+    assert current_revision(database_url) == "0014_training_feedback"
     downgraded_columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("agent_actions")}
     assert {"depends_on_action_id", "compensation_for_action_id", "compensation_status"} <= downgraded_columns
     downgraded_health_columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("provider_health")}
@@ -82,7 +82,11 @@ def test_one_revision_rollback_and_reupgrade_are_reproducible(tmp_path) -> None:
     assert {"contacts", "contact_aliases"} <= downgraded_tables
     downgraded_monitor_run_columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("monitor_runs")}
     assert "message" in downgraded_monitor_run_columns
-    assert "training_examples" not in downgraded_tables
+    assert "training_examples" in downgraded_tables
+    downgraded_training_columns = {
+        column["name"] for column in inspect(create_engine(database_url)).get_columns("training_examples")
+    }
+    assert {"example_type", "rejected_assistant_text"}.isdisjoint(downgraded_training_columns)
     command.upgrade(config, "head")
 
     assert current_revision(database_url) == head_revision()
@@ -97,6 +101,10 @@ def test_one_revision_rollback_and_reupgrade_are_reproducible(tmp_path) -> None:
     upgraded_monitor_run_columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("monitor_runs")}
     assert "message" in upgraded_monitor_run_columns
     assert "training_examples" in upgraded_tables
+    upgraded_training_columns = {
+        column["name"] for column in inspect(create_engine(database_url)).get_columns("training_examples")
+    }
+    assert {"example_type", "rejected_assistant_text"} <= upgraded_training_columns
 
 
 def test_stale_versioned_database_is_rejected_at_service_start(tmp_path) -> None:

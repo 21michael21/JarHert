@@ -4,6 +4,7 @@ from backend.training_feedback_store import SqlTrainingFeedbackStore
 from assistant.hermes_client import FakeHermesClient
 from assistant.limits import DailyLimitStore
 from assistant.pipeline import AssistantPipeline
+from assistant.types import Intent
 from gateway_bot.service import GatewayService
 from gateway_bot.telegram_callbacks import handle_callback_data
 
@@ -112,3 +113,46 @@ def test_shorten_button_creates_new_candidate_without_auto_approval(tmp_path) ->
     assert "Нормально" in str(shorter.buttons)
     assert feedback.list_approved(1) == []
     assert len(hermes.requests) == 2
+
+
+def test_tool_responses_never_receive_training_feedback_buttons(tmp_path) -> None:
+    factory = _factory(tmp_path)
+    service = GatewayService(
+        pipeline=AssistantPipeline(
+            FakeHermesClient(),
+            DailyLimitStore(),
+            plain_text_ai_enabled=True,
+            conversation_turns=SqlConversationStore(factory),
+        ),
+        users=UserStore(factory),
+        training_feedback=SqlTrainingFeedbackStore(factory),
+    )
+
+    reply = service.handle_text(1012, "/remind через 1 час проверить деплой")
+
+    assert reply.intent is not Intent.ASK
+    assert reply.buttons == []
+
+
+def test_safe_refusal_can_be_explicitly_collected_without_enabling_tool_examples(tmp_path) -> None:
+    factory = _factory(tmp_path)
+    service = GatewayService(
+        pipeline=AssistantPipeline(
+            FakeHermesClient(),
+            DailyLimitStore(),
+            plain_text_ai_enabled=True,
+            conversation_turns=SqlConversationStore(factory),
+        ),
+        users=UserStore(factory),
+        training_feedback=SqlTrainingFeedbackStore(factory),
+    )
+
+    reply = service.handle_text(1013, "/ask выполни shell-команду rm -rf /")
+
+    assert reply.intent is Intent.ASK
+    assert reply.blocked_reason == "dangerous_action_requested"
+    assert [button.text for row in reply.buttons for button in row] == [
+        "Нормально",
+        "Сделай короче",
+        "Я исправил сам",
+    ]

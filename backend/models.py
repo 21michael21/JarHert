@@ -284,7 +284,14 @@ class TrainingExampleRecord(Base):
     )
     user_text: Mapped[str] = mapped_column(Text, nullable=False)
     assistant_text: Mapped[str | None] = mapped_column(Text)
+    rejected_assistant_text: Mapped[str | None] = mapped_column(Text)
     feedback_kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    example_type: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        default="short_answer",
+        server_default="short_answer",
+    )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="approved", server_default="approved")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

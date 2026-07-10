@@ -9,6 +9,7 @@ from assistant.job_orchestration import compute_job_status
 from assistant.pipeline import AssistantPipeline
 from assistant.tool_result_ids import compact_result_meta
 from assistant.tracing import new_trace_id
+from assistant.training_feedback import TrainingExampleType, classify_training_example_type
 from assistant.types import AssistantReply, Intent, ReplyButton, UserContext
 from backend.stores import EventStore, UserStore
 from backend.trace_store import SqlTraceStore, TraceSnapshot
@@ -453,10 +454,11 @@ class GatewayService:
         )
 
     def _attach_training_feedback_buttons(self, reply: AssistantReply) -> AssistantReply:
+        response_type = classify_training_example_type("", reply.text)
         if (
             self.training_feedback is None
             or reply.intent is not Intent.ASK
-            or reply.blocked_reason is not None
+            or (reply.blocked_reason is not None and response_type is not TrainingExampleType.SAFE_REFUSAL)
             or reply.suppress_delivery
             or reply.conversation_turn_id is None
             or reply.buttons
