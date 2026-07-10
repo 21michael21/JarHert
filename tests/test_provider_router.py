@@ -279,6 +279,34 @@ def test_provider_router_enforces_estimated_daily_budget_before_transport() -> N
     assert client.calls == 1
 
 
+def test_cheap_mode_prefers_cheap_provider_and_keeps_free_as_fallback() -> None:
+    registry = ProviderRegistry(
+        [
+            spec("free", 10),
+            spec("cheap", 20, cost_mode=ProviderCostMode.CHEAP, estimated_cost_micro_usd=100),
+        ]
+    )
+    free = FakeClient([HermesResponse(text="free answer", provider="free")])
+    cheap = FakeClient([HermesResponse(text="cheap answer", provider="cheap")])
+    router = ProviderRouterClient(
+        registry=registry,
+        health_store=InMemoryProviderHealthStore(),
+        client_factory=lambda provider: {"free": free, "cheap": cheap}[provider.name],
+        policy=ProviderSelectionPolicy(
+            cost_mode="cheap",
+            deadline_seconds=5,
+            max_attempts=2,
+            daily_budget_micro_usd=1_000,
+        ),
+    )
+
+    response = router.ask(request())
+
+    assert response.provider == "cheap"
+    assert cheap.calls == 1
+    assert free.calls == 0
+
+
 def test_balanced_policy_skips_repeatedly_low_quality_free_provider_for_cheap_provider() -> None:
     registry = ProviderRegistry(
         [

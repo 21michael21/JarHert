@@ -6,6 +6,7 @@ import os
 import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
+from typing import Callable
 
 
 async def run_live_telegram(*, args, run_id: str) -> list[dict]:
@@ -40,30 +41,38 @@ async def run_live_telegram(*, args, run_id: str) -> list[dict]:
 async def _exchange(client, bot: str, name: str, text: str, timeout: float, *, approve: bool = False, followup: bool = False) -> dict:
     started = time.perf_counter()
     sent = await client.send_message(bot, text)
-    reply = await _wait_reply(client, bot, sent.id, timeout)
     if approve:
+        reply = await _wait_reply(client, bot, sent.id, timeout, predicate=_has_approval_button)
         buttons = [button for row in (reply.buttons or []) for button in row]
         button = next((item for item in buttons if "Подтверд" in item.text), None)
         if button is None:
             raise AssertionError("approval inline button missing")
         await button.click()
-        reply = await _wait_reply(client, bot, reply.id, timeout)
+        reply = await _wait_reply(client, bot, reply.id, timeout, predicate=_is_meaningful_reply)
+    else:
+        reply = await _wait_reply(client, bot, sent.id, timeout, predicate=_is_meaningful_reply)
     if followup:
-        reply = await _wait_reply(client, bot, reply.id, timeout)
+        reply = await _wait_reply(client, bot, reply.id, timeout, predicate=_is_meaningful_reply)
     return _result(name, started, reply)
 
 
 async def _voice_action_exchange(client, bot: str, voice_file: str, run_id: str, timeout: float) -> dict:
     started = time.perf_counter()
     sent = await client.send_file(bot, voice_file, voice_note=True, caption=f"e2e {run_id}")
-    transcript_reply = await _wait_reply(client, bot, sent.id, timeout)
+    transcript_reply = await _wait_reply(
+        client,
+        bot,
+        sent.id,
+        timeout,
+        predicate=lambda message: "Расшифровал:" in (message.raw_text or "") and _has_approval_button(message),
+    )
     buttons = [button for row in (transcript_reply.buttons or []) for button in row]
     approval = next((item for item in buttons if "Подтверд" in item.text), None)
     if "Расшифровал:" not in (transcript_reply.raw_text or "") or approval is None:
         return _result("live_telegram_voice_stt_action", started, transcript_reply, required_text="Расшифровал:", forced_block="voice_action_queue_missing")
     await approval.click()
-    callback_reply = await _wait_reply(client, bot, transcript_reply.id, timeout)
-    final_reply = await _wait_reply(client, bot, callback_reply.id, timeout)
+    callback_reply = await _wait_reply(client, bot, transcript_reply.id, timeout, predicate=_is_meaningful_reply)
+    final_reply = await _wait_reply(client, bot, callback_reply.id, timeout, predicate=_is_meaningful_reply)
     result = _result("live_telegram_voice_stt_action", started, final_reply)
     result["metadata"]["transcript_message_id"] = transcript_reply.id
     result["metadata"]["approval_message_id"] = callback_reply.id
@@ -82,17 +91,44 @@ def _result(name: str, started: float, reply, *, required_text: str = "", forced
     }
 
 
-async def _wait_reply(client, entity, after_id: int, timeout: float):
+async def _wait_reply(
+    client,
+    entity,
+    after_id: int,
+    timeout: float,
+    *,
+    predicate: Callable[[object], bool] | None = None,
+):
     deadline = time.monotonic() + timeout
+    checkpoint = after_id
     while time.monotonic() < deadline:
         candidates = []
         async for message in client.iter_messages(entity, limit=10):
-            if message.id > after_id and not message.out:
+            if message.id > checkpoint and not message.out:
                 candidates.append(message)
         if candidates:
-            return min(candidates, key=lambda message: message.id)
+            for message in sorted(candidates, key=lambda item: item.id):
+                checkpoint = max(checkpoint, message.id)
+                if predicate is None or predicate(message):
+                    return message
         await asyncio.sleep(1)
     raise TimeoutError(f"Telegram reply timeout after message {after_id}")
+
+
+def _has_approval_button(message) -> bool:
+    return any("Подтверд" in button.text for row in (message.buttons or []) for button in row)
+
+
+def _is_transient_ack(message) -> bool:
+    text = " ".join((message.raw_text or "").split()).lower()
+    return text.startswith("принял") and any(
+        marker in text
+        for marker in ("обрабатываю", "расшифровываю", "выполняю подтверждённое", "итог пришлю")
+    )
+
+
+def _is_meaningful_reply(message) -> bool:
+    return not _is_transient_ack(message)
 
 
 def _bot_username(token: str) -> str:

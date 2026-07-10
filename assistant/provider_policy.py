@@ -116,7 +116,7 @@ class ProviderSelectionPolicy:
         current = now or datetime.now(timezone.utc)
         requires_json = request.context.get("response_format") == "json"
         capability = request.context.get("capability", "chat").strip() or "chat"
-        ranked: list[tuple[tuple[int, int, int, int], ProviderSpec]] = []
+        ranked: list[tuple[tuple[int, ...], ProviderSpec]] = []
         skipped: list[str] = []
         for provider in registry.enabled():
             if not _is_allowed_by_cost_mode(provider.cost_mode, self.cost_mode):
@@ -182,10 +182,18 @@ def _is_allowed_by_cost_mode(provider_cost: ProviderCostMode, cost_mode: AiCostM
     return True
 
 
-def _rank(provider: ProviderSpec, health, cost_mode: AiCostMode) -> tuple[int, int, int, int]:
+def _rank(provider: ProviderSpec, health, cost_mode: AiCostMode) -> tuple[int, ...]:
     quality_score = health.quality_score if health.quality_sample_count else 100
     latency_ms = health.latency_ms if health.latency_ms is not None else int(provider.timeout_seconds * 1_000)
     price = provider.estimated_cost_micro_usd
     if cost_mode == AiCostMode.BALANCED:
         return (-quality_score, latency_ms, price, provider.priority)
+    if cost_mode == AiCostMode.CHEAP:
+        reliability_tier = {
+            ProviderCostMode.LOCAL: 0,
+            ProviderCostMode.CHEAP: 1,
+            ProviderCostMode.FREE: 2,
+            ProviderCostMode.PAID: 3,
+        }[provider.cost_mode]
+        return (reliability_tier, -quality_score, latency_ms, price, provider.priority)
     return (price, -quality_score, latency_ms, provider.priority)

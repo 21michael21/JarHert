@@ -627,7 +627,8 @@ Fallback срабатывает в двух случаях:
 # Только FREE/LOCAL providers. CHEAP и PAID даже не получают transport call.
 AI_COST_MODE=free_only
 
-# FREE/LOCAL/CHEAP. Для расходов нужен явный положительный бюджет.
+# FREE/LOCAL/CHEAP. Надёжный CHEAP/LOCAL идёт первым, FREE остаётся fallback.
+# Для расходов нужен явный положительный бюджет.
 # AI_COST_MODE=cheap
 
 # Может использовать PAID только если он отдельно добавлен через AI_ALLOW_PAID_FALLBACK=true.

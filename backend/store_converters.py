@@ -175,8 +175,8 @@ def provider_health_from_record(record: ProviderHealthRecord) -> ProviderHealth:
     return ProviderHealth(
         name=record.name,
         model=record.model,
-        last_success_at=record.last_success_at,
-        last_failure_at=record.last_failure_at,
+        last_success_at=_aware(record.last_success_at),
+        last_failure_at=_aware(record.last_failure_at),
         latency_ms=record.latency_ms,
         auth_error_count=record.auth_error_count,
         rate_limit_count=record.rate_limit_count,
@@ -186,8 +186,8 @@ def provider_health_from_record(record: ProviderHealthRecord) -> ProviderHealth:
         other_error_count=record.other_error_count,
         quality_score=record.quality_score,
         quality_sample_count=record.quality_sample_count,
-        cooldown_until=record.cooldown_until,
-        updated_at=record.updated_at,
+        cooldown_until=_aware(record.cooldown_until),
+        updated_at=_aware(record.updated_at),
     )
 
 

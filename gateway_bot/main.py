@@ -54,8 +54,8 @@ def get_session_factory():
     return _session_factory
 
 
-def build_hermes_client() -> HermesClient:
-    session_factory = get_session_factory()
+def build_hermes_client(*, session_factory=None) -> HermesClient:
+    session_factory = session_factory or get_session_factory()
     provider_health = SqlProviderHealthStore(session_factory)
     events = EventStore(session_factory)
     require_policy_controlled_transport(cost_mode=settings.ai_cost_mode, hermes_mode=settings.hermes_mode)

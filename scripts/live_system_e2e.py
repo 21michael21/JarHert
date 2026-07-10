@@ -168,7 +168,7 @@ def _build_runtime(db_path: Path, args, report: RunReport) -> Runtime:
 
     factory = make_session_factory(f"sqlite:///{db_path}")
     init_db(factory)
-    hermes = LocalHermes() if args.mode == "local" else _real_hermes(report)
+    hermes = LocalHermes() if args.mode == "local" else _real_hermes(report, factory)
     users, events = UserStore(factory), EventStore(factory)
     actions, outbox = SqlActionQueueStore(factory), SqlDeliveryOutboxStore(factory)
     reminders, monitors = SqlReminderStore(factory), SqlMonitorJobStore(factory)
@@ -414,14 +414,14 @@ def _reply_result(reply, requires_real_provider: bool) -> dict[str, Any]:
     }
 
 
-def _real_hermes(report: RunReport):
+def _real_hermes(report: RunReport, session_factory):
     from backend.config import Settings
     from gateway_bot.main import build_hermes_client
     settings = Settings()
     if settings.hermes_mode == "fake":
         report.steps.append(StepResult("real_provider_preflight", "failed", "HERMES_MODE=fake", provider="fake", metadata={"requires_real_provider": True}))
         return LocalHermes()
-    return build_hermes_client()
+    return build_hermes_client(session_factory=session_factory)
 
 
 def _callback(reply, kind: str) -> str:

@@ -46,6 +46,23 @@ def test_sql_provider_health_lists_all_records(tmp_path) -> None:
     assert [item.name for item in store.list_all()] == ["openrouter_free", "openai_cheap"]
 
 
+def test_sql_provider_health_restores_utc_for_cooldown(tmp_path) -> None:
+    factory = session_factory(tmp_path)
+    store = SqlProviderHealthStore(factory)
+    store.record_failure(
+        "openrouter_free",
+        "openrouter/free",
+        ProviderFailureKind.RATE_LIMIT,
+        cooldown_until=datetime.now(timezone.utc) + timedelta(minutes=5),
+    )
+
+    health = SqlProviderHealthStore(factory).get("openrouter_free")
+
+    assert health.cooldown_until is not None
+    assert health.cooldown_until.tzinfo is not None
+    assert health.in_cooldown() is True
+
+
 def test_sql_provider_health_keeps_rolling_quality_score(tmp_path) -> None:
     factory = session_factory(tmp_path)
     store = SqlProviderHealthStore(factory)

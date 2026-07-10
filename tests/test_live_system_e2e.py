@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
 
-from scripts.live_system_e2e import RunReport, StepResult, evaluate_exit_code, main
-from scripts.live_system_telegram import _wait_reply
+from scripts.live_system_e2e import RunReport, StepResult, _real_hermes, evaluate_exit_code, main
+from scripts.live_system_telegram import _has_approval_button, _is_transient_ack, _wait_reply
 
 
 def test_require_live_rejects_skip_blocked_and_fake_provider() -> None:
@@ -95,3 +96,60 @@ def test_live_reply_waiter_returns_oldest_message_after_checkpoint() -> None:
     reply = asyncio.run(_wait_reply(Client(), "bot", after_id=10, timeout=0.1))
 
     assert reply.id == 12
+
+
+def test_live_reply_waiter_skips_fast_ack_until_approval_message() -> None:
+    @dataclass
+    class Button:
+        text: str
+
+    @dataclass
+    class Message:
+        id: int
+        raw_text: str
+        buttons: list[list[Button]] | None = None
+        out: bool = False
+
+    class Client:
+        def iter_messages(self, _entity, *, limit):
+            assert limit == 10
+
+            async def messages():
+                yield Message(14, "Нужно подтверждение", [[Button("Подтвердить")]])
+                yield Message(13, "Принял, обрабатываю. Итог пришлю отдельным сообщением.")
+
+            return messages()
+
+    reply = asyncio.run(
+        _wait_reply(
+            Client(),
+            "bot",
+            after_id=10,
+            timeout=0.1,
+            predicate=_has_approval_button,
+        )
+    )
+
+    assert reply.id == 14
+    assert _is_transient_ack(Message(13, "Принял, обрабатываю. Итог пришлю отдельным сообщением."))
+
+
+def test_real_hermes_uses_e2e_session_factory(monkeypatch) -> None:
+    import backend.config
+    import gateway_bot.main
+
+    isolated_factory = object()
+    expected_client = object()
+    called = {}
+    monkeypatch.setattr(backend.config, "Settings", lambda: SimpleNamespace(hermes_mode="openai_router"))
+
+    def build_client(*, session_factory):
+        called["session_factory"] = session_factory
+        return expected_client
+
+    monkeypatch.setattr(gateway_bot.main, "build_hermes_client", build_client)
+
+    client = _real_hermes(RunReport("live", "run", "now"), isolated_factory)
+
+    assert client is expected_client
+    assert called["session_factory"] is isolated_factory
