@@ -26,6 +26,7 @@ class GatewayService:
     traces: SqlTraceStore | None = None
     inbound_updates: object | None = None
     training_feedback: SqlTrainingFeedbackStore | None = None
+    training_feedback_buttons_enabled: bool = False
 
     def is_allowed(self, tg_user_id: int) -> bool:
         if not self.allowed_tg_user_ids:
@@ -457,6 +458,7 @@ class GatewayService:
         response_type = classify_training_example_type("", reply.text)
         if (
             self.training_feedback is None
+            or not self.training_feedback_buttons_enabled
             or reply.intent is not Intent.ASK
             or (reply.blocked_reason is not None and response_type is not TrainingExampleType.SAFE_REFUSAL)
             or reply.suppress_delivery

@@ -15,7 +15,7 @@ def _factory(tmp_path):
     return factory
 
 
-def test_feedback_buttons_store_only_explicitly_approved_reply(tmp_path) -> None:
+def test_feedback_buttons_are_disabled_by_default(tmp_path) -> None:
     factory = _factory(tmp_path)
     feedback = SqlTrainingFeedbackStore(factory)
     service = GatewayService(
@@ -28,6 +28,28 @@ def test_feedback_buttons_store_only_explicitly_approved_reply(tmp_path) -> None
         users=UserStore(factory),
         events=EventStore(factory),
         training_feedback=feedback,
+    )
+
+    reply = service.handle_text(1005, "объясни MVP")
+
+    assert reply.conversation_turn_id is not None
+    assert reply.buttons == []
+
+
+def test_feedback_buttons_store_only_explicitly_approved_reply_when_enabled(tmp_path) -> None:
+    factory = _factory(tmp_path)
+    feedback = SqlTrainingFeedbackStore(factory)
+    service = GatewayService(
+        pipeline=AssistantPipeline(
+            FakeHermesClient(),
+            DailyLimitStore(),
+            plain_text_ai_enabled=True,
+            conversation_turns=SqlConversationStore(factory),
+        ),
+        users=UserStore(factory),
+        events=EventStore(factory),
+        training_feedback=feedback,
+        training_feedback_buttons_enabled=True,
     )
 
     reply = service.handle_text(1005, "объясни MVP")
@@ -56,6 +78,7 @@ def test_other_user_cannot_approve_known_conversation_turn(tmp_path) -> None:
         ),
         users=UserStore(factory),
         training_feedback=feedback,
+        training_feedback_buttons_enabled=True,
     )
     reply = service.handle_text(1010, "объясни MVP")
 
@@ -79,6 +102,7 @@ def test_corrected_reply_is_captured_instead_of_sent_to_ai(tmp_path) -> None:
         ),
         users=UserStore(factory),
         training_feedback=feedback,
+        training_feedback_buttons_enabled=True,
     )
     reply = service.handle_text(1006, "объясни MVP")
 
@@ -104,6 +128,7 @@ def test_shorten_button_creates_new_candidate_without_auto_approval(tmp_path) ->
         ),
         users=UserStore(factory),
         training_feedback=feedback,
+        training_feedback_buttons_enabled=True,
     )
     original = service.handle_text(1007, "объясни MVP")
 
@@ -126,6 +151,7 @@ def test_tool_responses_never_receive_training_feedback_buttons(tmp_path) -> Non
         ),
         users=UserStore(factory),
         training_feedback=SqlTrainingFeedbackStore(factory),
+        training_feedback_buttons_enabled=True,
     )
 
     reply = service.handle_text(1012, "/remind через 1 час проверить деплой")
@@ -145,6 +171,7 @@ def test_safe_refusal_can_be_explicitly_collected_without_enabling_tool_examples
         ),
         users=UserStore(factory),
         training_feedback=SqlTrainingFeedbackStore(factory),
+        training_feedback_buttons_enabled=True,
     )
 
     reply = service.handle_text(1013, "/ask выполни shell-команду rm -rf /")

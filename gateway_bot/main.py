@@ -189,6 +189,7 @@ def build_gateway_service() -> GatewayService:
         traces=SqlTraceStore(get_session_factory()),
         inbound_updates=SqlInboundUpdateStore(get_session_factory()),
         training_feedback=SqlTrainingFeedbackStore(get_session_factory()),
+        training_feedback_buttons_enabled=settings.training_feedback_buttons_enabled,
     )
 
 

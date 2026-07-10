@@ -68,7 +68,7 @@ def create_dispatcher():
         root_key: str,
         trace_id: str,
         work,
-        accepted_text: str,
+        accepted_text: str | None,
     ) -> None:
         def on_result(reply: AssistantReply, delayed: bool) -> None:
             if reply.suppress_delivery:
@@ -84,6 +84,8 @@ def create_dispatcher():
             )
 
         def on_ack() -> None:
+            if not accepted_text:
+                return
             _enqueue_reply(
                 outbox,
                 user_id,
@@ -143,7 +145,7 @@ def create_dispatcher():
                 idempotency_key=root_key,
                 trace_id=trace_id,
             ),
-            accepted_text="Принял, обрабатываю. Итог пришлю отдельным сообщением.",
+            accepted_text=None,
             trace_id=trace_id,
         )
 
@@ -166,7 +168,7 @@ def create_dispatcher():
                 idempotency_key=root_key,
                 trace_id=trace_id,
             ),
-            accepted_text="Принял файл, обрабатываю подпись. Итог пришлю отдельным сообщением.",
+            accepted_text=None,
             trace_id=trace_id,
         )
 
@@ -217,7 +219,7 @@ def create_dispatcher():
                 root_key=root_key,
                 trace_id=trace_id,
             ),
-            accepted_text="Принял голосовое, расшифровываю. Итог пришлю отдельным сообщением.",
+            accepted_text=None,
             trace_id=trace_id,
         )
 
@@ -242,7 +244,7 @@ def create_dispatcher():
                     callback.data or "",
                     update_trace_id=trace_id,
                 ),
-                accepted_text="Принял, выполняю подтверждённое действие.",
+                accepted_text=None,
             )
 
     @dp.message()

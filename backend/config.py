@@ -105,6 +105,7 @@ class Settings:
     telegram_blocking_max_concurrency: int = int(os.getenv("TELEGRAM_BLOCKING_MAX_CONCURRENCY", "4"))
     telegram_blocking_timeout_seconds: float = float(os.getenv("TELEGRAM_BLOCKING_TIMEOUT_SECONDS", "60"))
     telegram_fast_ack_seconds: float = float(os.getenv("TELEGRAM_FAST_ACK_SECONDS", "0.6"))
+    training_feedback_buttons_enabled: bool = _bool_env("TRAINING_FEEDBACK_BUTTONS_ENABLED", False)
     google_docs_webhook_url: str = os.getenv("GOOGLE_DOCS_WEBHOOK_URL", "")
     google_docs_webhook_token: str = os.getenv("GOOGLE_DOCS_WEBHOOK_TOKEN", "")
     google_docs_webhook_timeout_seconds: float = float(os.getenv("GOOGLE_DOCS_WEBHOOK_TIMEOUT_SECONDS", "5"))
