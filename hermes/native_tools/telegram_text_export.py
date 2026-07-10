@@ -167,6 +167,24 @@ def run_telegram_export(*, peer: str, output_format: str = "txt", limit: int = 5
     return asyncio.run(run())
 
 
+def telegram_session_status() -> dict[str, bool]:
+    api_id, api_hash, session_path, _output_dir = telegram_export_settings()
+
+    async def check() -> bool:
+        try:
+            from telethon import TelegramClient
+        except ModuleNotFoundError as error:
+            raise TelegramExportError("Telethon не установлен.") from error
+        client = TelegramClient(str(session_path), api_id, api_hash)
+        await client.connect()
+        try:
+            return bool(await client.is_user_authorized())
+        finally:
+            await client.disconnect()
+
+    return {"configured": True, "authorized": asyncio.run(check())}
+
+
 def telegram_export_settings() -> tuple[int, str, Path, Path]:
     raw_id = os.getenv("TELEGRAM_API_ID", "").strip()
     api_hash = os.getenv("TELEGRAM_API_HASH", "").strip()
@@ -177,8 +195,10 @@ def telegram_export_settings() -> tuple[int, str, Path, Path]:
     except ValueError as error:
         raise TelegramExportError("TELEGRAM_API_ID должен быть целым числом.") from error
     home = Path(os.getenv("HERMES_HOME", "~/.hermes")).expanduser()
-    session = Path(os.getenv("TELEGRAM_USER_SESSION", str(home / "data" / "telegram-user.session")))
-    output = Path(os.getenv("TELEGRAM_EXPORT_DIR", str(home / "exports" / "telegram")))
+    session_value = os.getenv("TELEGRAM_USER_SESSION", "").strip() or str(home / "data" / "telegram-user.session")
+    output_value = os.getenv("TELEGRAM_EXPORT_DIR", "").strip() or str(home / "exports" / "telegram")
+    session = Path(session_value)
+    output = Path(output_value)
     return api_id, api_hash, session.expanduser(), output.expanduser()
 
 

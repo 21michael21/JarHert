@@ -30,6 +30,18 @@ env_requires:
     description: "Python executable relative to Task Command Center"
     required: false
     default: ".venv/bin/python"
+  - name: TELEGRAM_API_ID
+    description: "Telegram MTProto application ID for owner-authorized exports"
+    required: false
+    default: ""
+  - name: TELEGRAM_API_HASH
+    description: "Telegram MTProto application hash for owner-authorized exports"
+    required: false
+    default: ""
+  - name: TELEGRAM_USER_SESSION
+    description: "Path to the owner-authorized Telethon session"
+    required: false
+    default: ""
 
 distribution_owned:
   - SOUL.md

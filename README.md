@@ -34,6 +34,8 @@ Expected native skills:
   procedural skill;
 - `tasks-calendar` — Trello and Google Calendar reads plus one-confirmation
   mutation plans;
+- `telegram-chat-export` — confirmed text-only TXT/JSONL export from a dialog
+  accessible to the owner's MTProto account;
 - `sandboxed-coding` — repository work only in an isolated workspace.
 
 Skill distillation replaces Hermes' generic tool-iteration nudge for this

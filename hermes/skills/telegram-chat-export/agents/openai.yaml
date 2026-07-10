@@ -1,0 +1,4 @@
+interface:
+  display_name: "Telegram Chat Export"
+  short_description: "Export an authorized Telegram dialog to TXT or JSONL"
+  default_prompt: "Use $telegram-chat-export to confirm and export text from a Telegram peer as a document."

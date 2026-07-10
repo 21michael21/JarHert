@@ -19,6 +19,11 @@ if __package__ in {None, ""}:
     from native_tools.sandbox_worker import SandboxTask, SandboxedHermesWorker
     from native_tools.action_plans import ActionPlanError, ActionPlanStore, execute_plan
     from native_tools.task_calendar import TaskCalendarAdapter, TaskCalendarError
+    from native_tools.telegram_text_export import (
+        TelegramExportError,
+        run_telegram_export,
+        telegram_session_status,
+    )
 else:
     from .contacts import ContactStore, ContactStoreError
     from .delivery import HermesTelegramSender, dispatch_due_messages
@@ -28,6 +33,11 @@ else:
     from .sandbox_worker import SandboxTask, SandboxedHermesWorker
     from .action_plans import ActionPlanError, ActionPlanStore, execute_plan
     from .task_calendar import TaskCalendarAdapter, TaskCalendarError
+    from .telegram_text_export import (
+        TelegramExportError,
+        run_telegram_export,
+        telegram_session_status,
+    )
 
 
 def database_path() -> Path:
@@ -155,6 +165,15 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("plan_id", type=int)
 
     commands.add_parser("integration-health")
+
+    chat = commands.add_parser("chat")
+    chat_commands = chat.add_subparsers(dest="chat_command", required=True)
+    chat_commands.add_parser("session-status")
+    chat_export = chat_commands.add_parser("export")
+    chat_export.add_argument("--peer", required=True)
+    chat_export.add_argument("--format", choices=["txt", "jsonl"], default="txt")
+    chat_export.add_argument("--limit", type=int, default=5000)
+    chat_export.add_argument("--confirmed", action="store_true")
     return parser
 
 
@@ -166,6 +185,7 @@ def main(argv: list[str] | None = None) -> int:
         ActionPlanError,
         ContactStoreError,
         TaskCalendarError,
+        TelegramExportError,
         RuntimeError,
         ValueError,
         json.JSONDecodeError,
@@ -299,6 +319,12 @@ def run_command(args: argparse.Namespace) -> Any:
             return plans.cancel(args.plan_id)
         if args.plan_command == "execute":
             return execute_plan(plans, args.plan_id, TaskCalendarAdapter.from_env())
+    if args.command == "chat":
+        if args.chat_command == "session-status":
+            return telegram_session_status()
+        if args.chat_command == "export":
+            _confirmed(args)
+            return run_telegram_export(peer=args.peer, output_format=args.format, limit=args.limit)
     raise ValueError("Неизвестная команда.")
 
 
@@ -314,6 +340,8 @@ def _json_value(value: Any) -> Any:
         return [_json_value(item) for item in value]
     if isinstance(value, list):
         return [_json_value(item) for item in value]
+    if isinstance(value, Path):
+        return str(value)
     if hasattr(value, "__dataclass_fields__"):
         return {key: _json_value(item) for key, item in asdict(value).items()}
     return value
