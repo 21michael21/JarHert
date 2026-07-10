@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skill Distillation"
+  short_description: "Three confirmed repeats become one reviewable skill"
+  default_prompt: "Use $skill-distillation to record a confirmed successful workflow and stage a reusable skill after the third repeat."

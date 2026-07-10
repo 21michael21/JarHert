@@ -15,11 +15,13 @@ if __package__ in {None, ""}:
     from native_tools.delivery import HermesTelegramSender, dispatch_due_messages
     from native_tools.events import EventStore
     from native_tools.monitors import MonitorRegistry, MonitorRunner
+    from native_tools.skill_distillation import SkillDistiller
 else:
     from .contacts import ContactStore, ContactStoreError
     from .delivery import HermesTelegramSender, dispatch_due_messages
     from .events import EventStore
     from .monitors import MonitorRegistry, MonitorRunner
+    from .skill_distillation import SkillDistiller
 
 
 def database_path() -> Path:
@@ -68,6 +70,22 @@ def build_parser() -> argparse.ArgumentParser:
     monitor_remove = monitor_commands.add_parser("remove")
     monitor_remove.add_argument("monitor_id", type=int)
     monitor_commands.add_parser("check")
+
+    skill = commands.add_parser("skill")
+    skill_commands = skill.add_subparsers(dest="skill_command", required=True)
+    skill_observe = skill_commands.add_parser("observe")
+    skill_observe.add_argument("--workflow-key", required=True)
+    skill_observe.add_argument("--title", required=True)
+    skill_observe.add_argument("--steps-json", required=True)
+    skill_observe.add_argument("--idempotency-key", required=True)
+    skill_observe.add_argument("--success", action="store_true")
+    skill_observe.add_argument("--confirmed", action="store_true")
+    skill_list = skill_commands.add_parser("list")
+    skill_list.add_argument("--ready-only", action="store_true")
+    skill_show = skill_commands.add_parser("show")
+    skill_show.add_argument("workflow_key")
+    skill_staged = skill_commands.add_parser("mark-staged")
+    skill_staged.add_argument("workflow_key")
     return parser
 
 
@@ -122,6 +140,26 @@ def run_command(args: argparse.Namespace) -> Any:
             return registry.disable(args.monitor_id)
         if args.monitor_command == "check":
             return MonitorRunner(registry, EventStore(args.db)).run_once()
+    if args.command == "skill":
+        distiller = SkillDistiller(args.db)
+        if args.skill_command == "observe":
+            steps = json.loads(args.steps_json)
+            if not isinstance(steps, list):
+                raise ValueError("steps-json должен быть JSON-массивом.")
+            return distiller.observe(
+                workflow_key=args.workflow_key,
+                title=args.title,
+                steps=steps,
+                idempotency_key=args.idempotency_key,
+                success=args.success,
+                confirmed=args.confirmed,
+            )
+        if args.skill_command == "list":
+            return distiller.list_candidates(ready_only=args.ready_only)
+        if args.skill_command == "show":
+            return distiller.get_candidate(args.workflow_key)
+        if args.skill_command == "mark-staged":
+            return distiller.mark_staged(args.workflow_key)
     raise ValueError("Неизвестная команда.")
 
 

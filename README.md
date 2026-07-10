@@ -30,7 +30,16 @@ Expected native skills:
 - `contact-messaging` — one preview and one confirmation for a complete
   scheduled Telegram message plan;
 - `event-monitors` — deterministic hash/diff checks before any model call;
+- `skill-distillation` — three confirmed successful repeats become one staged
+  procedural skill;
 - `sandboxed-coding` — repository work only in an isolated workspace.
+
+Skill distillation replaces Hermes' generic tool-iteration nudge for this
+profile. An approval before a task does not count. The result must be successful
+and separately confirmed as useful three times with distinct update IDs. The
+resulting `SKILL.md` is staged through `skill_manage`, because
+`skills.write_approval` is enabled. Review it with `/skills pending` and
+`/skills diff <id>` before applying it.
 
 ### Native contacts and scheduled messages
 

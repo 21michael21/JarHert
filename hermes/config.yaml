@@ -5,6 +5,12 @@ model:
 skills:
   write_approval: true
   guard_agent_created: true
+  creation_nudge_interval: 0
+
+curator:
+  enabled: true
+  consolidate: false
+  prune_builtins: false
 
 memory:
   memory_enabled: true
