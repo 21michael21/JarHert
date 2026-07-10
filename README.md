@@ -869,6 +869,25 @@ AI_STYLE_PROMPT_PATH=
 
 Подробно про данные, transports, ограничения fine-tune и A/B-проверку: [docs/communication-style.md](docs/communication-style.md).
 
+### Закрытый model holdout
+
+Для реального сравнения base, runtime style profile и fine-tuned кандидата используй отдельный
+локальный holdout из 100 запросов. Он gitignored и не должен попадать ни в один training-файл:
+
+```bash
+.venv/bin/python scripts/generate_model_holdout.py
+.venv/bin/python scripts/eval_model_holdout.py --gate
+```
+
+Base всегда `gpt-5-nano`. Style profile использует ту же модель и настоящий runtime budget/
+normalizer. Fine-tuned кандидат запускается только если задан `FINE_TUNED_MODEL`; без него в
+отчёте будет `skipped_not_configured`.
+
+Победа требует одновременно: качество не ниже `90/100`, короткие ответы не ниже `90%`,
+лишние вопросы не выше `10%`, ноль зафиксированных factual violations, ноль регрессий
+router/safety и p50 latency не хуже базы более чем на `20%`. Отчёты остаются локально в
+`reports/model_holdout/`.
+
 ### Согласованные примеры для обучения
 
 Под обычным AI-ответом бот показывает три кнопки: `Нормально`, `Сделай короче` и `Я исправил сам`.
