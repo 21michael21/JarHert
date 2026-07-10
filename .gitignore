@@ -13,6 +13,7 @@ reports/
 dev/voice_fixtures/*.oga
 dev/voice_fixtures/*.m4a
 dev/voice_fixtures/*.aiff
+dev/model_holdout/*.json
 *.log
 *.pid
 *.sqlite3
