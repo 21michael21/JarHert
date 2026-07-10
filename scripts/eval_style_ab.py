@@ -12,6 +12,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from assistant.style_ab import StyleCase, choose_winner, is_promotion_eligible, load_style_cases, score_style_response
+from assistant.communication_style import constrain_response_length, load_communication_style
+from assistant.response_policy import ResponsePolicy, classify_response_policy
 from assistant.types import HermesRequest, UserContext
 from assistant.provider_registry import build_provider_registry
 from assistant.provider_transport import build_provider_client
@@ -36,7 +38,14 @@ class VariantResult:
     error: str = ""
 
 
-def run_variant(client, case: StyleCase, system_prompt: str) -> VariantResult:
+def run_variant(
+    client,
+    case: StyleCase,
+    system_prompt: str,
+    *,
+    response_policy: ResponsePolicy | None = None,
+    max_output_chars: int | None = None,
+) -> VariantResult:
     started = time.perf_counter()
     try:
         response = client.ask(
@@ -48,6 +57,10 @@ def run_variant(client, case: StyleCase, system_prompt: str) -> VariantResult:
             )
         )
         answer = response.text.strip()
+        if max_output_chars is not None:
+            answer = constrain_response_length(answer, max_chars=max_output_chars)
+        if response_policy is not None:
+            answer = response_policy.normalize(answer)
         assessment = score_style_response(case, answer)
         return VariantResult(
             score=assessment.score,
@@ -76,9 +89,7 @@ def main() -> int:
     parser.add_argument("--max-cases", type=int, default=0, help="Use a small subset only for a quick local check")
     args = parser.parse_args()
 
-    candidate_prompt = args.candidate.read_text(encoding="utf-8").strip()
-    if not candidate_prompt:
-        raise SystemExit(f"Candidate style profile is empty: {args.candidate}")
+    candidate_guide = load_communication_style(enabled=True, path=str(args.candidate))
     cases = load_style_cases(args.cases)
     if args.max_cases:
         cases = cases[: args.max_cases]
@@ -96,7 +107,15 @@ def main() -> int:
     candidate_ok_count = 0
     for case in cases:
         base = run_variant(client, case, BASELINE_PROMPT)
-        candidate = run_variant(client, case, candidate_prompt)
+        response_policy = classify_response_policy(case.prompt)
+        candidate_budget = candidate_guide.budget(case.prompt, "concise", max_chars=2_500)
+        candidate = run_variant(
+            client,
+            case,
+            candidate_guide.render("concise", policy_instruction=response_policy.instructions),
+            response_policy=response_policy,
+            max_output_chars=candidate_budget.max_chars,
+        )
         base_scores.append(base.score)
         candidate_scores.append(candidate.score)
         base_ok_count += int(base.ok)

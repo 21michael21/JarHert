@@ -4,6 +4,7 @@ from assistant.communication_style import CommunicationStyleGuide, constrain_res
 from assistant.provider_clients import HermesClient
 from assistant.perf import PerfRecorder
 from assistant.quality_gates import check_output, check_output_safety
+from assistant.response_policy import classify_response_policy
 from assistant.response_composer import ResponseComposer
 from assistant.types import AssistantReply, GateStatus, HermesRequest, Intent, UserContext
 
@@ -22,7 +23,8 @@ def answer_with_ai(
     trace_id: str = "",
     events=None,
 ) -> AssistantReply:
-    system_prompt = communication_style.render(style)
+    response_policy = classify_response_policy(prompt)
+    system_prompt = communication_style.render(style, policy_instruction=response_policy.instructions)
     response_budget = communication_style.budget(prompt, style, max_chars=max_output_chars)
     try:
         with perf.track("llm"):
@@ -58,6 +60,7 @@ def answer_with_ai(
         output_gate.safe_text,
         max_chars=response_budget.max_chars,
     )
+    constrained_text = response_policy.normalize(constrained_text)
     output_gate = check_output(constrained_text, max_chars=response_budget.max_chars)
     if output_gate.status == GateStatus.NEEDS_FALLBACK:
         return responses.provider_fallback(

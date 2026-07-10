@@ -48,7 +48,10 @@ def main() -> int:
     assistant_messages = extract_assistant_messages(load_rows(args.source))
     profile = distill_style_profile(assistant_messages, max_response_chars=args.max_response_chars)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(profile.prompt + "\n", encoding="utf-8")
+    args.output.write_text(
+        f"<!-- jarhert-style max_response_chars={args.max_response_chars} -->\n{profile.prompt}\n",
+        encoding="utf-8",
+    )
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(asdict(profile), ensure_ascii=False, indent=2), encoding="utf-8")
     print(

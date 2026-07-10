@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 DEFAULT_STYLE_PATH = Path(__file__).with_name("prompts") / "jarhert_communication_style.md"
+PROFILE_MAX_CHARS_PATTERN = re.compile(r"^<!--\s*jarhert-style\s+max_response_chars=(\d+)\s*-->\s*")
 PREFERENCE_OVERLAYS = {
     "short": (
         "Краткость: явный формат и длина из запроса важнее стилевых правил. Если просят коротко или "
@@ -38,12 +39,16 @@ class CommunicationStyleGuide:
     prompt: str
     version: str
     enabled: bool = True
+    max_response_chars: int | None = None
 
-    def render(self, preference: str) -> str:
+    def render(self, preference: str, *, policy_instruction: str = "") -> str:
         if not self.enabled or not self.prompt.strip():
             return ""
         overlay = PREFERENCE_OVERLAYS.get((preference or "").strip().lower(), PREFERENCE_OVERLAYS["concise"])
-        return f"{self.prompt.strip()}\n\n{overlay}"
+        parts = [self.prompt.strip(), overlay]
+        if policy_instruction.strip():
+            parts.append(policy_instruction.strip())
+        return "\n\n".join(parts)
 
     def budget(self, user_prompt: str, preference: str, *, max_chars: int) -> ResponseBudget:
         if not self.enabled:
@@ -52,8 +57,9 @@ class CommunicationStyleGuide:
         if normalized_preference == "detailed":
             return ResponseBudget(max_chars=max_chars, max_output_tokens=600)
         if re.search(r"\b(?:коротко|кратко|одним предложением|в одном предложении)\b", user_prompt.lower()):
-            return ResponseBudget(max_chars=min(max_chars, 360), max_output_tokens=100)
-        return ResponseBudget(max_chars=min(max_chars, 700), max_output_tokens=180)
+            short_limit = 240 if self.max_response_chars is not None else 360
+            return ResponseBudget(max_chars=min(max_chars, self.max_response_chars or short_limit, short_limit), max_output_tokens=100)
+        return ResponseBudget(max_chars=min(max_chars, self.max_response_chars or 700), max_output_tokens=180)
 
 
 def load_communication_style(*, enabled: bool, path: str = "") -> CommunicationStyleGuide:
@@ -61,10 +67,18 @@ def load_communication_style(*, enabled: bool, path: str = "") -> CommunicationS
         return CommunicationStyleGuide("", version="disabled", enabled=False)
     prompt_path = Path(path).expanduser() if path.strip() else DEFAULT_STYLE_PATH
     prompt = prompt_path.read_text(encoding="utf-8").strip()
+    max_response_chars = None
+    match = PROFILE_MAX_CHARS_PATTERN.match(prompt)
+    if match:
+        max_response_chars = int(match.group(1))
+        if not 160 <= max_response_chars <= 2_500:
+            raise ValueError(f"Communication style max_response_chars is outside 160..2500: {max_response_chars}")
+        prompt = prompt[match.end() :].strip()
     if not prompt:
         raise ValueError(f"Communication style prompt is empty: {prompt_path}")
-    digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12]
-    return CommunicationStyleGuide(prompt, version=f"style-{digest}")
+    digest_source = f"max_response_chars={max_response_chars or ''}\n{prompt}"
+    digest = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()[:12]
+    return CommunicationStyleGuide(prompt, version=f"style-{digest}", max_response_chars=max_response_chars)
 
 
 def constrain_response_length(text: str, *, max_chars: int) -> str:

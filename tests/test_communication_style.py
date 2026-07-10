@@ -73,6 +73,45 @@ def test_custom_style_path_is_loaded_and_versioned(tmp_path) -> None:
     assert first.version.startswith("style-")
 
 
+def test_profile_declared_response_limit_is_enforced_for_ordinary_answers(tmp_path) -> None:
+    style_path = tmp_path / "style.md"
+    style_path.write_text(
+        "<!-- jarhert-style max_response_chars=420 -->\nГовори прямо и спокойно.",
+        encoding="utf-8",
+    )
+
+    guide = load_communication_style(enabled=True, path=str(style_path))
+    budget = guide.budget("Объясни, что делать", "concise", max_chars=2500)
+
+    assert guide.max_response_chars == 420
+    assert "jarhert-style" not in guide.prompt
+    assert budget.max_chars == 420
+
+
+def test_profile_short_request_uses_a_stricter_short_limit(tmp_path) -> None:
+    style_path = tmp_path / "style.md"
+    style_path.write_text(
+        "<!-- jarhert-style max_response_chars=320 -->\nГовори прямо и спокойно.",
+        encoding="utf-8",
+    )
+
+    guide = load_communication_style(enabled=True, path=str(style_path))
+
+    assert guide.budget("Ответь коротко: что делать?", "concise", max_chars=2500).max_chars == 240
+
+
+def test_profile_version_changes_when_declared_response_limit_changes(tmp_path) -> None:
+    first_path = tmp_path / "first.md"
+    second_path = tmp_path / "second.md"
+    first_path.write_text("<!-- jarhert-style max_response_chars=320 -->\nГовори прямо.", encoding="utf-8")
+    second_path.write_text("<!-- jarhert-style max_response_chars=420 -->\nГовори прямо.", encoding="utf-8")
+
+    first = load_communication_style(enabled=True, path=str(first_path))
+    second = load_communication_style(enabled=True, path=str(second_path))
+
+    assert first.version != second.version
+
+
 def test_explicit_short_request_gets_transport_level_budget() -> None:
     guide = CommunicationStyleGuide("Базовый стиль.", version="test-v1")
 
@@ -121,6 +160,25 @@ def test_pipeline_applies_response_budget_after_provider_reply() -> None:
     assert reply.text.startswith("Первый полезный ответ.")
     assert len(reply.text) <= 360
     assert hermes.requests[-1].max_output_tokens == 100
+
+
+def test_pipeline_applies_profile_limit_without_explicit_short_request() -> None:
+    from assistant.types import HermesResponse
+
+    hermes = FakeHermesClient([HermesResponse(text="Полезный ответ. " + "Деталь. " * 200)])
+    pipeline = AssistantPipeline(
+        hermes,
+        DailyLimitStore(),
+        communication_style=CommunicationStyleGuide(
+            "Отвечай прямо.",
+            version="test-v1",
+            max_response_chars=420,
+        ),
+    )
+
+    reply = pipeline.handle_text(user(), "/ask объясни, что делать")
+
+    assert len(reply.text) <= 420
 
 
 def test_response_budget_does_not_hide_unsafe_tail() -> None:
