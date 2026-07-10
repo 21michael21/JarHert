@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from dataclasses import asdict
 from pathlib import Path
@@ -117,7 +118,8 @@ class NativeToolsAPI:
         preview = f"Экспортировать текст Telegram peer {peer}: до {limit} сообщений, формат {output_format}."
         if not await confirmer(preview):
             return {"status": "cancelled"}
-        return self.telegram_text_export(
+        return await asyncio.to_thread(
+            self.telegram_text_export,
             peer=peer,
             output_format=output_format,
             limit=limit,
