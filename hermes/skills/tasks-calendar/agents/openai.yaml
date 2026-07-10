@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tasks and Calendar"
+  short_description: "One-plan Trello and Google Calendar control"
+  default_prompt: "Use $tasks-calendar to read tasks/events or stage one confirmed plan for all requested changes."

@@ -32,6 +32,8 @@ Expected native skills:
 - `event-monitors` — deterministic hash/diff checks before any model call;
 - `skill-distillation` — three confirmed successful repeats become one staged
   procedural skill;
+- `tasks-calendar` — Trello and Google Calendar reads plus one-confirmation
+  mutation plans;
 - `sandboxed-coding` — repository work only in an isolated workspace.
 
 Skill distillation replaces Hermes' generic tool-iteration nudge for this

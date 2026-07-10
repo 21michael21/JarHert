@@ -23,6 +23,13 @@ env_requires:
     description: "Comma-separated HTTPS hosts allowed as declared research sources"
     required: false
     default: "github.com,api.github.com"
+  - name: TASK_COMMAND_CENTER_DIR
+    description: "External Task Command Center directory on this host"
+    required: true
+  - name: TASK_COMMAND_CENTER_PYTHON
+    description: "Python executable relative to Task Command Center"
+    required: false
+    default: ".venv/bin/python"
 
 distribution_owned:
   - SOUL.md

@@ -17,6 +17,8 @@ if __package__ in {None, ""}:
     from native_tools.monitors import MonitorRegistry, MonitorRunner
     from native_tools.skill_distillation import SkillDistiller
     from native_tools.sandbox_worker import SandboxTask, SandboxedHermesWorker
+    from native_tools.action_plans import ActionPlanError, ActionPlanStore, execute_plan
+    from native_tools.task_calendar import TaskCalendarAdapter, TaskCalendarError
 else:
     from .contacts import ContactStore, ContactStoreError
     from .delivery import HermesTelegramSender, dispatch_due_messages
@@ -24,6 +26,8 @@ else:
     from .monitors import MonitorRegistry, MonitorRunner
     from .skill_distillation import SkillDistiller
     from .sandbox_worker import SandboxTask, SandboxedHermesWorker
+    from .action_plans import ActionPlanError, ActionPlanStore, execute_plan
+    from .task_calendar import TaskCalendarAdapter, TaskCalendarError
 
 
 def database_path() -> Path:
@@ -96,6 +100,61 @@ def build_parser() -> argparse.ArgumentParser:
     sandbox_run.add_argument("--prompt", required=True)
     sandbox_run.add_argument("--repository-url")
     sandbox_run.add_argument("--source-url", action="append", default=[])
+
+    task = commands.add_parser("task")
+    task_commands = task.add_subparsers(dest="task_command", required=True)
+    task_create = task_commands.add_parser("create")
+    task_create.add_argument("--title", required=True)
+    task_create.add_argument("--list-name", default="Inbox")
+    task_create.add_argument("--project")
+    task_create.add_argument("--priority")
+    task_create.add_argument("--due")
+    task_create.add_argument("--description")
+    task_create.add_argument("--confirmed", action="store_true")
+    task_list = task_commands.add_parser("list")
+    task_list.add_argument("--list-name")
+    task_move = task_commands.add_parser("move")
+    task_move.add_argument("--title", required=True)
+    task_move.add_argument("--target-list", required=True)
+    task_move.add_argument("--confirmed", action="store_true")
+    task_done = task_commands.add_parser("done")
+    task_done.add_argument("--title", required=True)
+    task_done.add_argument("--summary", default="Готово.")
+    task_done.add_argument("--confirmed", action="store_true")
+    task_delete = task_commands.add_parser("delete")
+    task_delete.add_argument("--title", required=True)
+    task_delete.add_argument("--confirmed", action="store_true")
+
+    calendar = commands.add_parser("calendar")
+    calendar_commands = calendar.add_subparsers(dest="calendar_command", required=True)
+    calendar_create = calendar_commands.add_parser("create")
+    calendar_create.add_argument("--title", required=True)
+    calendar_create.add_argument("--start", required=True)
+    calendar_create.add_argument("--end", required=True)
+    calendar_create.add_argument("--reminder-minutes", type=int)
+    calendar_create.add_argument("--description")
+    calendar_create.add_argument("--confirmed", action="store_true")
+    calendar_list = calendar_commands.add_parser("list")
+    calendar_list.add_argument("--when", default="today")
+    calendar_move = calendar_commands.add_parser("move")
+    calendar_move.add_argument("--title", required=True)
+    calendar_move.add_argument("--start", required=True)
+    calendar_move.add_argument("--end", required=True)
+    calendar_move.add_argument("--confirmed", action="store_true")
+    calendar_delete = calendar_commands.add_parser("delete")
+    calendar_delete.add_argument("--title", required=True)
+    calendar_delete.add_argument("--confirmed", action="store_true")
+
+    plan = commands.add_parser("plan")
+    plan_commands = plan.add_subparsers(dest="plan_command", required=True)
+    plan_create = plan_commands.add_parser("create")
+    plan_create.add_argument("--actions-json", required=True)
+    plan_create.add_argument("--idempotency-key", required=True)
+    for name in ("show", "approve", "execute", "cancel"):
+        command = plan_commands.add_parser(name)
+        command.add_argument("plan_id", type=int)
+
+    commands.add_parser("integration-health")
     return parser
 
 
@@ -103,7 +162,14 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         payload = run_command(args)
-    except (ContactStoreError, RuntimeError, ValueError, json.JSONDecodeError) as error:
+    except (
+        ActionPlanError,
+        ContactStoreError,
+        TaskCalendarError,
+        RuntimeError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as error:
         print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False))
         return 2
     print(json.dumps({"ok": True, "result": _json_value(payload)}, ensure_ascii=False, separators=(",", ":")))
@@ -182,7 +248,63 @@ def run_command(args: argparse.Namespace) -> Any:
                 source_urls=tuple(args.source_url),
             )
         )
+    if args.command in {"task", "calendar", "integration-health"}:
+        adapter = TaskCalendarAdapter.from_env()
+        if args.command == "integration-health":
+            return adapter.health_check()
+        if args.command == "task" and args.task_command == "list":
+            return adapter.list_tasks(list_name=args.list_name)
+        if args.command == "calendar" and args.calendar_command == "list":
+            return adapter.list_calendar_events(when=args.when)
+        _confirmed(args)
+        if args.command == "task" and args.task_command == "create":
+            return adapter.create_task(
+                title=args.title,
+                list_name=args.list_name,
+                project=args.project,
+                priority=args.priority,
+                due=args.due,
+                description=args.description,
+            )
+        if args.command == "task" and args.task_command == "move":
+            return adapter.move_task(title=args.title, target_list=args.target_list)
+        if args.command == "task" and args.task_command == "done":
+            return adapter.complete_task(title=args.title, summary=args.summary)
+        if args.command == "task" and args.task_command == "delete":
+            return adapter.delete_task(title=args.title)
+        if args.command == "calendar" and args.calendar_command == "create":
+            return adapter.create_calendar_event(
+                title=args.title,
+                start=args.start,
+                end=args.end,
+                reminder_minutes=args.reminder_minutes,
+                description=args.description,
+            )
+        if args.command == "calendar" and args.calendar_command == "move":
+            return adapter.move_calendar_event(title=args.title, start=args.start, end=args.end)
+        if args.command == "calendar" and args.calendar_command == "delete":
+            return adapter.delete_calendar_event(title=args.title)
+    if args.command == "plan":
+        plans = ActionPlanStore(args.db)
+        if args.plan_command == "create":
+            actions = json.loads(args.actions_json)
+            if not isinstance(actions, list):
+                raise ValueError("actions-json должен быть JSON-массивом.")
+            return plans.create(actions, idempotency_key=args.idempotency_key)
+        if args.plan_command == "show":
+            return plans.get(args.plan_id)
+        if args.plan_command == "approve":
+            return plans.approve(args.plan_id)
+        if args.plan_command == "cancel":
+            return plans.cancel(args.plan_id)
+        if args.plan_command == "execute":
+            return execute_plan(plans, args.plan_id, TaskCalendarAdapter.from_env())
     raise ValueError("Неизвестная команда.")
+
+
+def _confirmed(args: argparse.Namespace) -> None:
+    if not getattr(args, "confirmed", False):
+        raise ValueError("Mutation требует --confirmed или единый approved plan.")
 
 
 def _json_value(value: Any) -> Any:
