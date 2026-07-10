@@ -13,6 +13,15 @@ def main() -> int:
         return 0
     requirements = Path(__file__).resolve().parents[1] / "requirements-native.txt"
     uv = shutil.which("uv")
+    if not uv:
+        for candidate in (
+            Path.home() / ".hermes" / "bin" / "uv",
+            Path.home() / ".local" / "bin" / "uv",
+            Path.home() / ".cargo" / "bin" / "uv",
+        ):
+            if candidate.is_file():
+                uv = str(candidate)
+                break
     if uv:
         argv = [uv, "pip", "install", "--python", sys.executable, "-r", str(requirements)]
     else:
