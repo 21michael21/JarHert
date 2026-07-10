@@ -71,7 +71,7 @@ def test_one_revision_rollback_and_reupgrade_are_reproducible(tmp_path) -> None:
     run_migrations(database_url)
 
     command.downgrade(config, "-1")
-    assert current_revision(database_url) == "0012_contact_book"
+    assert current_revision(database_url) == "0013_monitor_run_message"
     downgraded_columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("agent_actions")}
     assert {"depends_on_action_id", "compensation_for_action_id", "compensation_status"} <= downgraded_columns
     downgraded_health_columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("provider_health")}
@@ -81,7 +81,8 @@ def test_one_revision_rollback_and_reupgrade_are_reproducible(tmp_path) -> None:
     assert {"notes", "note_history"} <= downgraded_tables
     assert {"contacts", "contact_aliases"} <= downgraded_tables
     downgraded_monitor_run_columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("monitor_runs")}
-    assert "message" not in downgraded_monitor_run_columns
+    assert "message" in downgraded_monitor_run_columns
+    assert "training_examples" not in downgraded_tables
     command.upgrade(config, "head")
 
     assert current_revision(database_url) == head_revision()
@@ -95,6 +96,7 @@ def test_one_revision_rollback_and_reupgrade_are_reproducible(tmp_path) -> None:
     assert {"contacts", "contact_aliases"} <= upgraded_tables
     upgraded_monitor_run_columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("monitor_runs")}
     assert "message" in upgraded_monitor_run_columns
+    assert "training_examples" in upgraded_tables
 
 
 def test_stale_versioned_database_is_rejected_at_service_start(tmp_path) -> None:

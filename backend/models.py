@@ -269,6 +269,31 @@ class ConversationTurnRecord(Base):
     )
 
 
+class TrainingExampleRecord(Base):
+    __tablename__ = "training_examples"
+    __table_args__ = (
+        UniqueConstraint("user_id", "conversation_turn_id", name="uq_training_examples_user_turn"),
+        Index("ix_training_examples_user_status_created", "user_id", "status", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    conversation_turn_id: Mapped[int] = mapped_column(
+        ForeignKey("conversation_turns.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_text: Mapped[str] = mapped_column(Text, nullable=False)
+    assistant_text: Mapped[str | None] = mapped_column(Text)
+    feedback_kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="approved", server_default="approved")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class UserPreferencesRecord(Base):
     __tablename__ = "user_preferences"
     __table_args__ = (UniqueConstraint("user_id", name="uq_user_preferences_user"),)

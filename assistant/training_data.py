@@ -18,7 +18,10 @@ _PATTERNS = {
         r"\b(?:api[_-]?key|token|password|secret)\s*[:=]\s*[^\s,;]+",
         re.IGNORECASE,
     ),
-    "local_path": re.compile(r"/(?:Users|home)/[^\s,;]+", re.IGNORECASE),
+    "local_path": re.compile(r"(?:~|/(?:Users|home|opt|private|var/folders))/[^\s,;]+", re.IGNORECASE),
+    "personal_name": re.compile(
+        r"(?i:\b(?:меня\s+зовут|мо[её]\s+имя|зовут\s+меня))\s+[A-ZА-ЯЁ][A-Za-zА-Яа-яЁё-]{1,40}",
+    ),
 }
 
 _PLACEHOLDERS = {
@@ -30,6 +33,7 @@ _PLACEHOLDERS = {
     "ip_address": "[IP_ADDRESS]",
     "credential": "[CREDENTIAL]",
     "local_path": "[LOCAL_PATH]",
+    "personal_name": "[PERSON_NAME]",
 }
 
 

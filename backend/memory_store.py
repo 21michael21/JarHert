@@ -219,6 +219,16 @@ class SqlConversationStore:
             ).all()
             return [conversation_turn_from_record(record) for record in records]
 
+    def get_for_user(self, user_id: int, turn_id: int) -> ConversationTurn | None:
+        with self.session_factory() as db:
+            record = db.scalar(
+                select(ConversationTurnRecord).where(
+                    ConversationTurnRecord.id == turn_id,
+                    ConversationTurnRecord.user_id == user_id,
+                )
+            )
+            return conversation_turn_from_record(record) if record is not None else None
+
     def latest_user_text(self, user_id: int) -> str | None:
         for turn in self.list_recent(user_id, limit=10):
             value = (turn.user_text or "").strip()

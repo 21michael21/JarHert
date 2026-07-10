@@ -43,6 +43,12 @@ class InMemoryConversationStore:
         items = [item for item in self._items if item.user_id == user_id]
         return sorted(items, key=lambda item: (item.created_at, item.id), reverse=True)[:limit]
 
+    def get_for_user(self, user_id: int, turn_id: int) -> ConversationTurn | None:
+        return next(
+            (item for item in self._items if item.user_id == user_id and item.id == turn_id),
+            None,
+        )
+
     def latest_user_text(self, user_id: int) -> str | None:
         for item in self.list_recent(user_id, limit=10):
             if _is_context_candidate(item.user_text):
