@@ -123,7 +123,7 @@ def parse_preference_update(text: str) -> PreferenceUpdate | None:
     }:
         return PreferenceUpdate(
             {"preferred_response_style": "expressive"},
-            "Сохранил настройку: буду отвечать живее. Мат — только когда он реально к месту.",
+            "Сохранил настройку: живой режим с матом включён.",
         )
     if lowered in {"без мата", "без мата отвечай нормально", "говори без мата", "отвечай нормально"}:
         return PreferenceUpdate(

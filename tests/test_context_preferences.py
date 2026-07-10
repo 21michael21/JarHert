@@ -145,7 +145,7 @@ def test_expressive_style_preference_can_be_enabled_and_disabled() -> None:
     expressive = pipeline.handle_text(user(), "пиши живее можно с матом")
     concise = pipeline.handle_text(user(), "без мата отвечай нормально")
 
-    assert "живее" in expressive.text
+    assert "матом" in expressive.text
     assert "без мата" in concise.text
     assert store.get(1).preferred_response_style == "concise"
 

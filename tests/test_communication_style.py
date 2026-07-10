@@ -59,8 +59,9 @@ def test_expressive_preference_allows_lively_language_with_boundaries() -> None:
     rendered = guide.render("expressive")
 
     assert "живой разговорный тон" in rendered
-    assert "уместный русский мат" in rendered
-    assert "без оскорблений" in rendered.lower()
+    assert "русский мат как обычную часть голоса" in rendered
+    assert "не стерилизуй ответ" in rendered.lower()
+    assert "не уходи в оскорбления" in rendered.lower()
 
 
 def test_disabled_style_guide_returns_empty_system_prompt() -> None:
