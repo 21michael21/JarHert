@@ -75,6 +75,14 @@ def test_zero_daily_limit_means_unlimited() -> None:
     assert limits.remaining_for_user(1) > 1_000_000
 
 
+def test_status_says_unlimited_when_ai_limit_disabled() -> None:
+    pipeline = AssistantPipeline(FakeHermesClient(), DailyLimitStore(per_user_limit=0, global_limit=0))
+
+    reply = pipeline.handle_text(user(), "/status")
+
+    assert reply.text == "AI включён. Лимит запросов отключён."
+
+
 def test_pipeline_rejects_bad_hermes_output() -> None:
     hermes = FakeHermesClient([HermesResponse(text='{"error": "429 rate limit"}')])
     pipeline = AssistantPipeline(hermes, DailyLimitStore())

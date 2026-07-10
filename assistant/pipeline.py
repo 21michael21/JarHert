@@ -229,6 +229,8 @@ class AssistantPipeline:
         if parsed.intent == Intent.HELP:
             return AssistantReply(text=help_text(), intent=parsed.intent)
         if parsed.intent == Intent.STATUS:
+            if getattr(self.limits, "is_unlimited", lambda: False)():
+                return AssistantReply(text="AI включён. Лимит запросов отключён.", intent=parsed.intent)
             remaining = self.limits.remaining_for_user(user.user_id)
             return AssistantReply(text=f"AI включён. Осталось запросов сегодня: {remaining}.", intent=parsed.intent)
         if parsed.intent == Intent.ADMIN_STATUS:

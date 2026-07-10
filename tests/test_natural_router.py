@@ -129,6 +129,13 @@ def test_routes_calendar_list_today() -> None:
     assert result.actions[0].payload == {"when": "today"}
 
 
+def test_routes_calendar_list_today_with_preposition() -> None:
+    result = route_natural_text("что у меня в календаре сегодня")
+
+    assert [action.type for action in result.actions] == [ActionType.CALENDAR_LIST]
+    assert result.actions[0].payload == {"when": "today"}
+
+
 def test_routes_calendar_delete() -> None:
     result = route_natural_text("удали встречу с Ильей")
 

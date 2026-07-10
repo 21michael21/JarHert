@@ -75,11 +75,11 @@ def _route_single(
         lambda value: _memory_action(value, context_text=context_text),
         lambda value: _telegram_send_action(value, context_text=context_text),
         lambda value: _reminder_action(value, context_text=context_text),
+        _calendar_list_action,
         _task_list_action,
         _task_done_action,
         _task_delete_action,
         _task_move_action,
-        _calendar_list_action,
         _calendar_delete_action,
         lambda value: _ambiguous_move_action(value, preferences=preferences),
         lambda value: _calendar_move_action(value, preferences=preferences),
@@ -245,9 +245,10 @@ def _task_move_action(text: str) -> list[PlannedAction]:
 
 def _calendar_list_action(text: str) -> list[PlannedAction]:
     lowered = text.lower()
-    if re.match(r"^(?:покажи|что\s+у\s+меня|какой)\s+(?:календарь|расписание|события).*\bзавтра\b", lowered):
+    calendar_subject = r"(?:в\s+)?(?:календар[ьея]|расписани[еи]|события)"
+    if re.match(rf"^(?:покажи|что\s+у\s+меня|какой)\s+{calendar_subject}.*\bзавтра\b", lowered):
         return [PlannedAction(ActionType.CALENDAR_LIST, payload={"when": "tomorrow"}, confidence=0.9)]
-    if re.match(r"^(?:покажи|что\s+у\s+меня|какой)\s+(?:календарь|расписание|события)(?:.*\bсегодня\b)?", lowered):
+    if re.match(rf"^(?:покажи|что\s+у\s+меня|какой)\s+{calendar_subject}(?:.*\bсегодня\b)?", lowered):
         return [PlannedAction(ActionType.CALENDAR_LIST, payload={"when": "today"}, confidence=0.9)]
     return []
 

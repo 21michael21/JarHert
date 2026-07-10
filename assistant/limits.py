@@ -11,8 +11,11 @@ class DailyLimitStore:
     _user_counts: dict[tuple[int, date], int] = field(default_factory=dict)
     _global_counts: dict[date, int] = field(default_factory=dict)
 
+    def is_unlimited(self) -> bool:
+        return self.per_user_limit <= 0 and self.global_limit <= 0
+
     def can_consume(self, user_id: int, *, today: date | None = None) -> bool:
-        if self.per_user_limit <= 0 and self.global_limit <= 0:
+        if self.is_unlimited():
             return True
         day = today or date.today()
         user_count = self._user_counts.get((user_id, day), 0)
