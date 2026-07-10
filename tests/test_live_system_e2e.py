@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from scripts.live_system_e2e import RunReport, StepResult, _real_hermes, evaluate_exit_code, main
-from scripts.live_system_telegram import _has_approval_button, _is_transient_ack, _wait_reply
+from scripts.live_system_telegram import _click_button_and_wait_reply, _has_approval_button, _is_confirmation_reply, _is_transient_ack, _wait_reply
 
 
 def test_require_live_rejects_skip_blocked_and_fake_provider() -> None:
@@ -132,6 +132,53 @@ def test_live_reply_waiter_skips_fast_ack_until_approval_message() -> None:
 
     assert reply.id == 14
     assert _is_transient_ack(Message(13, "Принял, обрабатываю. Итог пришлю отдельным сообщением."))
+
+
+def test_live_callback_click_retries_until_confirmation(monkeypatch) -> None:
+    @dataclass
+    class Message:
+        id: int
+        raw_text: str
+        out: bool = False
+
+    class Button:
+        def __init__(self) -> None:
+            self.clicks = 0
+
+        async def click(self) -> None:
+            self.clicks += 1
+
+    button = Button()
+
+    class Client:
+        def iter_messages(self, _entity, *, limit):
+            assert limit == 10
+
+            async def messages():
+                if button.clicks >= 2:
+                    yield Message(16, "Подтвердил Job #20: 1 действий. Выполняю по порядку.")
+
+            return messages()
+
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr("scripts.live_system_telegram.asyncio.sleep", no_sleep)
+
+    reply = asyncio.run(
+        _click_button_and_wait_reply(
+            Client(),
+            "bot",
+            button,
+            after_id=15,
+            timeout=0.05,
+            predicate=_is_confirmation_reply,
+            attempt_timeout=0.01,
+        )
+    )
+
+    assert button.clicks == 2
+    assert reply.id == 16
 
 
 def test_real_hermes_uses_e2e_session_factory(monkeypatch) -> None:

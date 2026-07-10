@@ -47,8 +47,7 @@ async def _exchange(client, bot: str, name: str, text: str, timeout: float, *, a
         button = next((item for item in buttons if "Подтверд" in item.text), None)
         if button is None:
             raise AssertionError("approval inline button missing")
-        await button.click()
-        reply = await _wait_reply(client, bot, reply.id, timeout, predicate=_is_meaningful_reply)
+        reply = await _click_button_and_wait_reply(client, bot, button, reply.id, timeout, predicate=_is_confirmation_reply)
     else:
         reply = await _wait_reply(client, bot, sent.id, timeout, predicate=_is_meaningful_reply)
     if followup:
@@ -70,8 +69,7 @@ async def _voice_action_exchange(client, bot: str, voice_file: str, run_id: str,
     approval = next((item for item in buttons if "Подтверд" in item.text), None)
     if "Расшифровал:" not in (transcript_reply.raw_text or "") or approval is None:
         return _result("live_telegram_voice_stt_action", started, transcript_reply, required_text="Расшифровал:", forced_block="voice_action_queue_missing")
-    await approval.click()
-    callback_reply = await _wait_reply(client, bot, transcript_reply.id, timeout, predicate=_is_meaningful_reply)
+    callback_reply = await _click_button_and_wait_reply(client, bot, approval, transcript_reply.id, timeout, predicate=_is_confirmation_reply)
     final_reply = await _wait_reply(client, bot, callback_reply.id, timeout, predicate=_is_meaningful_reply)
     result = _result("live_telegram_voice_stt_action", started, final_reply)
     result["metadata"]["transcript_message_id"] = transcript_reply.id
@@ -115,6 +113,33 @@ async def _wait_reply(
     raise TimeoutError(f"Telegram reply timeout after message {after_id}")
 
 
+async def _click_button_and_wait_reply(
+    client,
+    entity,
+    button,
+    after_id: int,
+    timeout: float,
+    *,
+    predicate: Callable[[object], bool],
+    attempts: int = 2,
+    attempt_timeout: float = 12,
+):
+    deadline = time.monotonic() + timeout
+    last_error: TimeoutError | None = None
+    for _ in range(max(1, attempts)):
+        if time.monotonic() >= deadline:
+            break
+        await button.click()
+        remaining = max(0.1, deadline - time.monotonic())
+        try:
+            return await _wait_reply(client, entity, after_id, min(attempt_timeout, remaining), predicate=predicate)
+        except TimeoutError as error:
+            last_error = error
+    if last_error is not None:
+        raise last_error
+    raise TimeoutError(f"Telegram reply timeout after message {after_id}")
+
+
 def _has_approval_button(message) -> bool:
     return any("Подтверд" in button.text for row in (message.buttons or []) for button in row)
 
@@ -129,6 +154,11 @@ def _is_transient_ack(message) -> bool:
 
 def _is_meaningful_reply(message) -> bool:
     return not _is_transient_ack(message)
+
+
+def _is_confirmation_reply(message) -> bool:
+    text = " ".join((message.raw_text or "").split()).lower()
+    return text.startswith("подтвердил job #") or text.startswith("подтвердил action #")
 
 
 def _bot_username(token: str) -> str:
