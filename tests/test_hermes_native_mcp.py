@@ -34,6 +34,17 @@ def test_native_mcp_exposes_only_explicit_tools() -> None:
     assert "shell" not in names
     assert "file_read" not in names
 
+    action_items = TOOLS["action_plan_create"]["inputSchema"]["properties"]["actions"]["items"]["oneOf"]
+    assert {item["properties"]["type"]["const"] for item in action_items} == {
+        "task.create",
+        "task.move",
+        "task.done",
+        "task.delete",
+        "calendar.create",
+        "calendar.move",
+        "calendar.delete",
+    }
+
 
 def test_native_api_plan_round_trip_and_health_redaction(tmp_path: Path) -> None:
     api = NativeToolsAPI(database_path=tmp_path / "personal.sqlite3", adapter_factory=FakeAdapter)

@@ -25,6 +25,37 @@ def _plan_id_schema() -> dict[str, Any]:
     }
 
 
+def _action_schema(action_type: str, required: list[str], optional: list[str] | None = None) -> dict[str, Any]:
+    fields = {name: {"type": "string", "minLength": 1} for name in [*required, *(optional or [])]}
+    if action_type == "calendar.create":
+        fields["reminder_minutes"] = {"type": ["integer", "null"], "minimum": 0}
+    return {
+        "type": "object",
+        "properties": {
+            "type": {"const": action_type},
+            "payload": {
+                "type": "object",
+                "properties": fields,
+                "required": required,
+                "additionalProperties": False,
+            },
+        },
+        "required": ["type", "payload"],
+        "additionalProperties": False,
+    }
+
+
+ACTION_TOOL_SCHEMAS = [
+    _action_schema("task.create", ["title"], ["list_name", "project", "priority", "due", "description"]),
+    _action_schema("task.move", ["title", "target_list"]),
+    _action_schema("task.done", ["title"], ["summary"]),
+    _action_schema("task.delete", ["title"]),
+    _action_schema("calendar.create", ["title", "start", "end"], ["description"]),
+    _action_schema("calendar.move", ["title", "start", "end"]),
+    _action_schema("calendar.delete", ["title"]),
+]
+
+
 TOOLS: dict[str, dict[str, Any]] = {
     "integration_health": {
         "description": "Check whether Trello and Google Calendar adapters are ready.",
@@ -47,11 +78,11 @@ TOOLS: dict[str, dict[str, Any]] = {
         },
     },
     "action_plan_create": {
-        "description": "Create an idempotent Trello/Calendar mutation plan before one user confirmation.",
+        "description": "FIRST create an idempotent mutation plan using only the exact action types in this schema; THEN ask for one user confirmation.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "actions": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}},
+                "actions": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"oneOf": ACTION_TOOL_SCHEMAS}},
                 "idempotency_key": {"type": "string", "minLength": 1},
             },
             "required": ["actions", "idempotency_key"],

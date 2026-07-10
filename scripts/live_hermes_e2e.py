@@ -57,7 +57,20 @@ def buttons(message) -> list[str]:
 
 def has_bad_reply(message) -> bool:
     text = str(message.message or "").lower()
-    return any(marker in text for marker in ("лимит", "уточни действие", "not configured", "не настроен"))
+    return any(
+        marker in text
+        for marker in (
+            "лимит",
+            "уточни действие",
+            "not configured",
+            "не настроен",
+            "не удалось",
+            "не смог",
+            "отсутствует в plan allowlist",
+            " failed",
+            "error:",
+        )
+    )
 
 
 async def send_plain(client, entity, text: str, timeout: int) -> tuple[Any, int]:
