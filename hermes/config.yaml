@@ -26,7 +26,7 @@ mcp_servers:
   jarhert_native:
     command: "${HERMES_HOME}/.venv/bin/python"
     args:
-      - "${HERMES_HOME}/native_tools/mcp_server.py"
+      - "${HERMES_HOME}/native_tools/mcp_runtime.py"
     env:
       HERMES_HOME: "${HERMES_HOME}"
       PERSONAL_OS_DB: "${HERMES_HOME}/data/personal-os.sqlite3"
@@ -44,10 +44,8 @@ mcp_servers:
         - integration_health
         - task_list
         - calendar_list
-        - action_plan_create
-        - action_plan_execute
-        - action_plan_cancel
-        - telegram_text_export
+        - action_plan_confirm_execute
+        - telegram_text_export_confirmed
       resources: false
       prompts: false
 

@@ -203,7 +203,7 @@ async def run(args, steps: list[Step]) -> None:
             f"Экспортируй текст из Telegram peer {bot_id} в TXT, максимум 20 сообщений. Проверка {run_id}",
             args.timeout,
             approval_text="Экспортировать",
-            marker=run_id,
+            marker=str(bot_id),
         )
         filename = str(getattr(reply.file, "name", "") or "") if reply.file else ""
         if not filename.lower().endswith(".txt"):

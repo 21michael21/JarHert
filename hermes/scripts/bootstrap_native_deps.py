@@ -12,7 +12,7 @@ def main() -> int:
     profile_home = Path(os.getenv("HERMES_HOME", Path(__file__).resolve().parents[1])).expanduser()
     environment = profile_home / ".venv"
     python = environment / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
-    if python.is_file() and _has_telethon(python):
+    if python.is_file() and _has_native_dependencies(python):
         print("Native profile dependencies are installed.")
         return 0
     requirements = Path(__file__).resolve().parents[1] / "requirements-native.txt"
@@ -48,9 +48,9 @@ def main() -> int:
     return 0
 
 
-def _has_telethon(python: Path) -> bool:
+def _has_native_dependencies(python: Path) -> bool:
     result = subprocess.run(
-        [str(python), "-c", "import telethon"],
+        [str(python), "-c", "import mcp, telethon"],
         check=False,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

@@ -1,9 +1,9 @@
+import asyncio
 from pathlib import Path
 
 import pytest
 
 from hermes.native_tools.mcp_api import NativeToolsAPI
-from hermes.native_tools.mcp_server import TOOLS, handle_message
 from hermes.native_tools.task_calendar import TaskCalendarHealth
 from hermes.native_tools.telegram_text_export import ExportResult
 
@@ -25,43 +25,45 @@ class FakeAdapter:
         return f"created {payload['title']}\ntrello_card_id=abc123"
 
 
-def test_native_mcp_exposes_only_explicit_tools() -> None:
-    response = handle_message({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
-
-    assert response is not None
-    names = {tool["name"] for tool in response["result"]["tools"]}
-    assert names == set(TOOLS)
-    assert "shell" not in names
-    assert "file_read" not in names
-    assert "action_plan_approve" not in names
-
-    action_items = TOOLS["action_plan_create"]["inputSchema"]["properties"]["actions"]["items"]["oneOf"]
-    assert {item["properties"]["type"]["const"] for item in action_items} == {
-        "task.create",
-        "task.move",
-        "task.done",
-        "task.delete",
-        "calendar.create",
-        "calendar.move",
-        "calendar.delete",
-    }
-
-
 def test_native_api_plan_round_trip_and_health_redaction(tmp_path: Path) -> None:
     api = NativeToolsAPI(database_path=tmp_path / "personal.sqlite3", adapter_factory=FakeAdapter)
+    previews: list[str] = []
+
+    async def confirm(preview: str) -> bool:
+        previews.append(preview)
+        return True
 
     health = api.integration_health()
-    draft = api.action_plan_create(
-        actions=[{"type": "task.create", "payload": {"title": "MCP canary"}}],
-        idempotency_key="telegram-update-1",
+    completed = asyncio.run(
+        api.action_plan_confirm_execute(
+            actions=[{"type": "task.create", "payload": {"title": "MCP canary"}}],
+            idempotency_key="telegram-update-1",
+            confirmer=confirm,
+        )
     )
-    with pytest.raises(ValueError, match="подтверждение"):
-        api.action_plan_execute(plan_id=draft["id"])
-    completed = api.action_plan_execute(plan_id=draft["id"], confirmed=True)
 
     assert health == {"ok": True, "trello_ok": True, "calendar_ok": True}
     assert completed["status"] == "succeeded"
     assert completed["actions"][0]["result_meta"] == {"trello_card_id": "abc123"}
+    assert previews == ["1. task.create: MCP canary"]
+
+
+def test_native_api_cancelled_plan_has_no_side_effect(tmp_path: Path) -> None:
+    api = NativeToolsAPI(database_path=tmp_path / "personal.sqlite3", adapter_factory=FakeAdapter)
+
+    async def decline(_preview: str) -> bool:
+        return False
+
+    result = asyncio.run(
+        api.action_plan_confirm_execute(
+            actions=[{"type": "task.create", "payload": {"title": "Do not create"}}],
+            idempotency_key="telegram-update-2",
+            confirmer=decline,
+        )
+    )
+
+    assert result["status"] == "cancelled"
+    assert result["actions"][0]["status"] == "pending"
 
 
 def test_native_api_export_requires_confirmation(tmp_path: Path) -> None:
@@ -82,7 +84,17 @@ def test_native_api_export_requires_confirmation(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="подтверждение"):
         api.telegram_text_export(peer="@example", confirmed=False)
-    result = api.telegram_text_export(peer="@example", confirmed=True, limit=10)
+
+    async def confirm(preview: str) -> bool:
+        return "@example" in preview
+
+    result = asyncio.run(
+        api.telegram_text_export_confirmed(
+            peer="@example",
+            limit=10,
+            confirmer=confirm,
+        )
+    )
 
     assert result["message_count"] == 3
     assert calls == [{"peer": "@example", "output_format": "txt", "limit": 10}]
@@ -93,5 +105,9 @@ def test_profile_uses_native_mcp_instead_of_terminal_allowlist() -> None:
 
     assert "mcp_servers:\n  jarhert_native:" in config
     assert "${HERMES_HOME}/.venv/bin/python" in config
+    assert "native_tools/mcp_runtime.py" in config
+    assert "action_plan_confirm_execute" in config
+    assert "telegram_text_export_confirmed" in config
+    assert "action_plan_execute" not in config
     assert "command_allowlist:" not in config
     assert "TELEGRAM_BOT_TOKEN:" not in config.split("mcp_servers:", 1)[1]

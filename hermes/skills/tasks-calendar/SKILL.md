@@ -19,16 +19,10 @@ Convert the complete user request into one JSON array. Supported types are
 `task.create`, `task.move`, `task.done`, `task.delete`, `calendar.create`,
 `calendar.move`, and `calendar.delete`.
 
-Call `mcp_jarhert_native_action_plan_create` once with the full `actions` array
-and an idempotency key derived from the Telegram message ID.
+Call `mcp_jarhert_native_action_plan_confirm_execute` once with the full
+`actions` array and an idempotency key derived from the Telegram message ID.
 
-Show one compact preview for every action. Call the native `clarify` tool once
-with exactly two choices: `Выполнить` and `Отмена`. Telegram renders them as
-inline buttons.
-
-On `Выполнить`, call `mcp_jarhert_native_action_plan_execute` once with the
-existing `plan_id` and `confirmed=true`, without another question.
-
-On `Отмена`, call `mcp_jarhert_native_action_plan_cancel`. Reusing the same
-Telegram update ID returns the existing plan. Summarize succeeded and failed
-actions in one final message.
+The native tool owns the compact preview, the single Telegram confirmation,
+idempotent execution and cancellation. Do not call `clarify`, approve, execute
+or cancel separately. Summarize succeeded and failed actions in one final
+message.

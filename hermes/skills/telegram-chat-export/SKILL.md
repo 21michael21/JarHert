@@ -11,12 +11,10 @@ only a peer present in that account's dialogs. It never downloads media.
 ## Confirm once
 
 Accept only a numeric peer ID or `@username`. Default to TXT and 5000 messages
-unless the user asks otherwise. Call native `clarify` once with two choices:
-`Экспортировать` and `Отмена`. Telegram renders these as inline buttons.
-
-After `Экспортировать`, call `mcp_jarhert_native_telegram_text_export` exactly
-once with `confirmed=true`, `output_format=txt`, the peer and the requested
-limit. Do not use terminal for the export.
+unless the user asks otherwise. Call
+`mcp_jarhert_native_telegram_text_export_confirmed` exactly once with the peer,
+format and limit. The tool owns the single Telegram confirmation and export.
+Do not call `clarify` separately and do not use terminal for the export.
 
 Do not read the resulting file into model context. Return a short count and the
 attachment marker:

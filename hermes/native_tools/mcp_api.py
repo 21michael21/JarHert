@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from .action_plans import ActionPlan, ActionPlanStore, execute_plan
 from .task_calendar import TaskCalendarAdapter
@@ -12,6 +12,7 @@ from .telegram_text_export import ExportResult, run_telegram_export
 
 AdapterFactory = Callable[[], Any]
 Exporter = Callable[..., ExportResult]
+Confirmer = Callable[[str], Awaitable[bool]]
 
 
 def personal_os_database_path() -> Path:
@@ -68,6 +69,23 @@ class NativeToolsAPI:
     def action_plan_cancel(self, *, plan_id: int) -> dict[str, Any]:
         return _plan_payload(self._plans().cancel(plan_id))
 
+    async def action_plan_confirm_execute(
+        self,
+        *,
+        actions: list[dict[str, Any]],
+        idempotency_key: str,
+        confirmer: Confirmer,
+    ) -> dict[str, Any]:
+        store = self._plans()
+        plan = store.create(actions, idempotency_key=idempotency_key)
+        if plan.status in {"succeeded", "partial", "failed"}:
+            return _plan_payload(plan)
+        if plan.status == "draft":
+            if not await confirmer(_plan_preview(plan)):
+                return _plan_payload(store.cancel(plan.id))
+            store.approve(plan.id)
+        return _plan_payload(execute_plan(store, plan.id, self.adapter_factory()))
+
     def telegram_text_export(
         self,
         *,
@@ -88,6 +106,24 @@ class NativeToolsAPI:
             "truncated": result.truncated,
         }
 
+    async def telegram_text_export_confirmed(
+        self,
+        *,
+        peer: str,
+        output_format: str = "txt",
+        limit: int = 5000,
+        confirmer: Confirmer,
+    ) -> dict[str, Any]:
+        preview = f"Экспортировать текст Telegram peer {peer}: до {limit} сообщений, формат {output_format}."
+        if not await confirmer(preview):
+            return {"status": "cancelled"}
+        return self.telegram_text_export(
+            peer=peer,
+            output_format=output_format,
+            limit=limit,
+            confirmed=True,
+        )
+
     def _plans(self) -> ActionPlanStore:
         return ActionPlanStore(self.database_path)
 
@@ -99,3 +135,11 @@ def _plan_payload(plan: ActionPlan) -> dict[str, Any]:
         "idempotency_key": plan.idempotency_key,
         "actions": [asdict(action) for action in plan.actions],
     }
+
+
+def _plan_preview(plan: ActionPlan) -> str:
+    rows = []
+    for action in plan.actions:
+        title = str(action.payload.get("title") or "без названия")
+        rows.append(f"{action.position + 1}. {action.action_type}: {title}")
+    return "\n".join(rows)
