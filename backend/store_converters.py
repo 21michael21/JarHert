@@ -99,8 +99,9 @@ def reminder_from_record(
         id=record.id,
         user_id=record.user_id,
         text=record.text,
-        remind_at=record.remind_at,
+        remind_at=_aware(record.remind_at) or record.remind_at,
         status=status or ReminderStatus(record.status),
+        recurrence=record.recurrence,
     )
 
 

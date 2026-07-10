@@ -148,6 +148,27 @@ def test_reminder_worker_claims_due_once(tmp_path) -> None:
     assert sent == ["проверить worker"]
 
 
+def test_daily_reminder_reschedules_after_send(tmp_path) -> None:
+    factory = session_factory(tmp_path)
+    user = UserStore(factory).get_or_create(7014)
+    store = SqlReminderStore(factory)
+    due_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    reminder = store.add(user.id, "читать", due_at, recurrence="daily")
+    sent = []
+
+    async def send(item) -> None:
+        sent.append((item.text, item.recurrence))
+
+    asyncio.run(run_reminder_worker(store, send, stop_after_one_tick=True))
+
+    pending = store.list_pending_for_user(user.id)
+    assert sent == [("читать", "daily")]
+    assert len(pending) == 1
+    assert pending[0].id == reminder.id
+    assert pending[0].remind_at > datetime.now(timezone.utc)
+    assert pending[0].recurrence == "daily"
+
+
 def test_reminder_worker_retries_if_send_fails(tmp_path) -> None:
     factory = session_factory(tmp_path)
     user = UserStore(factory).get_or_create(7006)

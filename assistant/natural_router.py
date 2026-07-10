@@ -339,6 +339,18 @@ def _loose_reminder_text(text: str) -> str | None:
         return None
     if re.search(r"\b(?:стоит|поставил|есть|список|покажи)\b", lowered):
         return None
+    daily_time = re.search(
+        r"\b(?:каждый\s+день|ежедневно)\b.*?"
+        r"\b(?:в\s+)?(?:час(?:ов|а)?\s+)?(?P<clock>(?:[01]?\d|2[0-3])(?::[0-5]\d)?)\b",
+        text,
+        re.IGNORECASE,
+    )
+    if daily_time:
+        message = _loose_reminder_message(text)
+        if not message:
+            return None
+        return f"каждый день в {_normalize_clock(daily_time.group('clock'))} {message}"
+
     date_time = re.search(
         r"\b(?P<date>сегодня|завтра|послезавтра)\b.*?"
         r"\b(?:в\s+)?(?:час(?:ов|а)?\s+)?(?P<clock>(?:[01]?\d|2[0-3])(?::[0-5]\d)?)\b",
@@ -359,7 +371,7 @@ def _loose_reminder_message(text: str) -> str:
     if len(parts) > 1:
         return _clean_loose_reminder_tail(parts[-1])
     after_time = re.split(
-        r"\b(?:сегодня|завтра|послезавтра)\b.*?"
+        r"\b(?:(?:сегодня|завтра|послезавтра)|(?:каждый\s+день|ежедневно))\b.*?"
         r"\b(?:в\s+)?(?:час(?:ов|а)?\s+)?(?:[01]?\d|2[0-3])(?::[0-5]\d)?\b\s*(?:утра|дня|вечера|ночи)?",
         value,
         maxsplit=1,

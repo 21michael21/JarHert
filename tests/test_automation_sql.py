@@ -123,3 +123,13 @@ def test_alembic_creates_update_idempotency_schema(tmp_path) -> None:
     assert "result_text" in {
         column["name"] for column in inspector.get_columns("agent_actions")
     }
+
+
+def test_alembic_creates_recurring_reminders_schema(tmp_path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'recurring_reminders.sqlite3'}"
+
+    run_migrations(database_url)
+
+    engine = make_session_factory(database_url).kw["bind"]
+    columns = {column["name"] for column in inspect(engine).get_columns("reminders")}
+    assert "recurrence" in columns

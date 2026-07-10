@@ -40,6 +40,15 @@ def test_routes_live_style_reminder_phrase() -> None:
     assert result.actions[0].payload["text"] == "завтра в 12:00 пора заниматься ml"
 
 
+def test_routes_daily_reminder_phrase() -> None:
+    result = route_natural_text(
+        "Поставь напоминалку чтобы каждый день в 19 часов вечера напоминало мне в чатик сюда что пора читать ганджубасик"
+    )
+
+    assert [action.type for action in result.actions] == [ActionType.REMINDER_CREATE]
+    assert result.actions[0].payload["text"] == "каждый день в 19:00 пора читать ганджубасик"
+
+
 def test_routes_task_list() -> None:
     result = route_natural_text("покажи задачи Today")
 

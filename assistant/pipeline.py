@@ -586,7 +586,12 @@ class AssistantPipeline:
         if not input_gate.ok:
             return self.responses.blocked_action(input_gate.reason, intent=Intent.REMIND)
         with self._perf.track("tool"):
-            item = self.reminders.add(user.user_id, input_gate.safe_text, parsed.remind_at)
+            item = self.reminders.add(
+                user.user_id,
+                input_gate.safe_text,
+                parsed.remind_at,
+                recurrence=parsed.recurrence,
+            )
             synced = self.docs_sync.append(
                 kind="reminder",
                 user_id=user.user_id,
@@ -595,8 +600,9 @@ class AssistantPipeline:
                 record_id=str(item.id),
             )
         suffix = " Отправил в Google Docs." if synced else ""
+        label = "Поставил ежедневное напоминание" if item.recurrence == "daily" else "Поставил напоминание"
         return AssistantReply(
-            text=f"Поставил напоминание #{item.id}: {item.remind_at.isoformat()} — {item.text}{suffix}",
+            text=f"{label} #{item.id}: {item.remind_at.isoformat()} — {item.text}{suffix}",
             intent=Intent.REMIND,
         )
 
@@ -604,7 +610,10 @@ class AssistantPipeline:
         items = self.reminders.list_pending_for_user(user.user_id)
         if not items:
             return AssistantReply(text="Активных напоминаний нет.", intent=Intent.REMINDERS)
-        lines = [f"{item.id}. {item.remind_at.isoformat()} — {item.text}" for item in items]
+        lines = [
+            f"{item.id}. {item.remind_at.isoformat()} — {item.text}{' · каждый день' if item.recurrence == 'daily' else ''}"
+            for item in items
+        ]
         return AssistantReply(text="Активные напоминания:\n" + "\n".join(lines), intent=Intent.REMINDERS)
 
     def _cancel_reminder(self, user: UserContext, text: str) -> AssistantReply:

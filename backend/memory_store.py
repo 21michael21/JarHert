@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, sessionmaker
@@ -82,13 +82,14 @@ class SqlReminderStore:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self.session_factory = session_factory
 
-    def add(self, user_id: int, text: str, remind_at: datetime) -> Reminder:
+    def add(self, user_id: int, text: str, remind_at: datetime, *, recurrence: str | None = None) -> Reminder:
         with self.session_factory() as db:
             record = ReminderRecord(
                 user_id=user_id,
                 text=text.strip(),
                 remind_at=remind_at,
                 status=ReminderStatus.PENDING.value,
+                recurrence=recurrence,
             )
             db.add(record)
             db.commit()
@@ -150,11 +151,21 @@ class SqlReminderStore:
     def mark_sent(self, reminder_id: int, *, sent_at: datetime | None = None) -> None:
         value = sent_at or datetime.now(timezone.utc)
         with self.session_factory() as db:
-            db.execute(
-                update(ReminderRecord)
-                .where(ReminderRecord.id == reminder_id)
-                .values(status=ReminderStatus.SENT.value, sent_at=value)
-            )
+            record = db.get(ReminderRecord, reminder_id)
+            if record is None:
+                return
+            if record.recurrence == "daily":
+                next_at = record.remind_at
+                if next_at.tzinfo is None:
+                    next_at = next_at.replace(tzinfo=timezone.utc)
+                while next_at <= value:
+                    next_at = next_at + timedelta(days=1)
+                record.status = ReminderStatus.PENDING.value
+                record.remind_at = next_at
+                record.sent_at = value
+            else:
+                record.status = ReminderStatus.SENT.value
+                record.sent_at = value
             db.commit()
 
     def release_for_retry(self, reminder_id: int, *, max_attempts: int = 3) -> None:

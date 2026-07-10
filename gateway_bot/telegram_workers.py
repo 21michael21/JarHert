@@ -46,7 +46,7 @@ def build_background_runtime(bot, *, blocking_executor=None) -> AutomationRuntim
             chat_id=tg_user_id,
             text=f"Напоминание #{reminder.id}: {reminder.text}",
             trace_id=f"reminder-{reminder.id}",
-            idempotency_key=f"reminder:{reminder.id}:delivery",
+            idempotency_key=f"reminder:{reminder.id}:{reminder.remind_at.isoformat()}:delivery",
         )
         if service.events is not None:
             service.events.log(

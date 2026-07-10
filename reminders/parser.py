@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 class ParsedReminder:
     remind_at: datetime
     text: str
+    recurrence: str | None = None
 
 
 RELATIVE_RE = re.compile(
@@ -27,6 +28,11 @@ DATE_TIME_RE = re.compile(
     re.IGNORECASE,
 )
 DATE_DEFAULT_RE = re.compile(r"^(?P<date>сегодня|завтра|послезавтра)\s+(?P<text>.+)$", re.IGNORECASE)
+DAILY_RE = re.compile(
+    r"^(?:каждый\s+день|ежедневно)\s+(?:в\s+)?(?:час(?:ов|а)?\s+)?"
+    r"(?P<time>\d{1,2}(?::\d{2})?)\s*(?:час(?:ов|а)?)?\s*(?:утра|дня|вечера|ночи)?\s+(?P<text>.+)$",
+    re.IGNORECASE,
+)
 
 ABSOLUTE_RE = re.compile(
     r"^(?P<date>\d{4}-\d{2}-\d{2})\s+(?P<time>\d{1,2}:\d{2})\s+(?P<text>.+)$",
@@ -45,6 +51,14 @@ def parse_reminder(
         return None
 
     base = now or datetime.now(timezone.utc)
+    daily = DAILY_RE.match(value)
+    if daily:
+        hour, minute = _clock_parts(_normalize_clock(daily.group("time")))
+        remind_at = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if remind_at <= base:
+            remind_at += timedelta(days=1)
+        return ParsedReminder(remind_at=remind_at, text=daily.group("text").strip(), recurrence="daily")
+
     half_hour = HALF_HOUR_RE.match(value)
     if half_hour:
         return ParsedReminder(remind_at=base + timedelta(minutes=30), text=half_hour.group("text").strip())

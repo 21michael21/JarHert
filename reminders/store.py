@@ -20,6 +20,7 @@ class Reminder:
     text: str
     remind_at: datetime
     status: ReminderStatus = ReminderStatus.PENDING
+    recurrence: str | None = None
 
 
 @dataclass
@@ -27,12 +28,13 @@ class InMemoryReminderStore:
     _items: list[Reminder] = field(default_factory=list)
     _next_id: int = 1
 
-    def add(self, user_id: int, text: str, remind_at: datetime) -> Reminder:
+    def add(self, user_id: int, text: str, remind_at: datetime, *, recurrence: str | None = None) -> Reminder:
         item = Reminder(
             id=self._next_id,
             user_id=user_id,
             text=text.strip(),
             remind_at=remind_at,
+            recurrence=recurrence,
         )
         self._next_id += 1
         self._items.append(item)
@@ -56,6 +58,7 @@ class InMemoryReminderStore:
                     text=item.text,
                     remind_at=item.remind_at,
                     status=ReminderStatus.CANCELLED,
+                    recurrence=item.recurrence,
                 )
                 return True
         return False

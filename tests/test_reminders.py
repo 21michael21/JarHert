@@ -51,3 +51,14 @@ def test_parse_weekday_reminder() -> None:
     assert reminder is not None
     assert reminder.remind_at.isoformat() == "2026-07-10T09:00:00+00:00"
     assert reminder.text == "проверить календарь"
+
+
+def test_parse_daily_reminder() -> None:
+    now = datetime(2026, 7, 10, 10, 0, tzinfo=timezone.utc)
+
+    reminder = parse_reminder("каждый день в 19 часов вечера читать ганджубасик", now=now)
+
+    assert reminder is not None
+    assert reminder.remind_at.isoformat() == "2026-07-10T19:00:00+00:00"
+    assert reminder.text == "читать ганджубасик"
+    assert reminder.recurrence == "daily"

@@ -165,6 +165,29 @@ def test_live_style_reminder_phrase_creates_reminder_without_ai() -> None:
     assert hermes.requests == []
 
 
+def test_daily_reminder_phrase_creates_recurring_reminder_without_ai() -> None:
+    reminders = InMemoryReminderStore()
+    hermes = FakeHermesClient()
+    pipeline = AssistantPipeline(
+        hermes,
+        DailyLimitStore(),
+        plain_text_ai_enabled=True,
+        reminders=reminders,
+    )
+
+    reply = pipeline.handle_text(
+        user(),
+        "Поставь напоминалку чтобы каждый день в 19 часов вечера напоминало мне в чатик сюда что пора читать ганджубасик",
+    )
+
+    item = reminders.list_pending_for_user(1)[0]
+    assert "Поставил ежедневное напоминание" in reply.text
+    assert item.text == "пора читать ганджубасик"
+    assert item.remind_at.hour == 19
+    assert item.recurrence == "daily"
+    assert hermes.requests == []
+
+
 def test_chat_followup_uses_previous_reminder_request() -> None:
     reminders = InMemoryReminderStore()
     pipeline = AssistantPipeline(

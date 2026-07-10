@@ -286,7 +286,12 @@ def _reminder_create(payload: dict[str, str], context: ToolContext) -> ToolExecu
     parsed = parse_reminder(payload["text"], default_time=default_time)
     if parsed is None:
         raise ToolExecutionError("Не понял время напоминания.", kind="permanent")
-    item = context.reminders.add(context.user.user_id, parsed.text, parsed.remind_at)
+    item = context.reminders.add(
+        context.user.user_id,
+        parsed.text,
+        parsed.remind_at,
+        recurrence=parsed.recurrence,
+    )
     synced = context.docs_sync.append(
         kind="reminder",
         user_id=context.user.user_id,
@@ -295,9 +300,8 @@ def _reminder_create(payload: dict[str, str], context: ToolContext) -> ToolExecu
         record_id=str(item.id),
     )
     suffix = " Отправил в Google Docs." if synced else ""
-    return ToolExecutionResult(
-        f"Поставил напоминание #{item.id}: {item.remind_at.isoformat()} — {item.text}{suffix}"
-    )
+    label = "Поставил ежедневное напоминание" if item.recurrence == "daily" else "Поставил напоминание"
+    return ToolExecutionResult(f"{label} #{item.id}: {item.remind_at.isoformat()} — {item.text}{suffix}")
 
 
 def _task_create(payload: dict[str, str], context: ToolContext) -> ToolExecutionResult:

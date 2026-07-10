@@ -71,7 +71,7 @@ def test_one_revision_rollback_and_reupgrade_are_reproducible(tmp_path) -> None:
     run_migrations(database_url)
 
     command.downgrade(config, "-1")
-    assert current_revision(database_url) == "0015_training_example_types"
+    assert current_revision(database_url) == "0016_preference_reasons"
     downgraded_columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("agent_actions")}
     assert {"depends_on_action_id", "compensation_for_action_id", "compensation_status"} <= downgraded_columns
     downgraded_health_columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("provider_health")}
@@ -87,7 +87,9 @@ def test_one_revision_rollback_and_reupgrade_are_reproducible(tmp_path) -> None:
         column["name"] for column in inspect(create_engine(database_url)).get_columns("training_examples")
     }
     assert {"example_type", "rejected_assistant_text"} <= downgraded_training_columns
-    assert "preference_reason" not in downgraded_training_columns
+    assert "preference_reason" in downgraded_training_columns
+    downgraded_reminder_columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("reminders")}
+    assert "recurrence" not in downgraded_reminder_columns
     command.upgrade(config, "head")
 
     assert current_revision(database_url) == head_revision()
@@ -106,6 +108,8 @@ def test_one_revision_rollback_and_reupgrade_are_reproducible(tmp_path) -> None:
         column["name"] for column in inspect(create_engine(database_url)).get_columns("training_examples")
     }
     assert {"example_type", "rejected_assistant_text", "preference_reason"} <= upgraded_training_columns
+    upgraded_reminder_columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("reminders")}
+    assert "recurrence" in upgraded_reminder_columns
 
 
 def test_stale_versioned_database_is_rejected_at_service_start(tmp_path) -> None:
