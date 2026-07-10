@@ -95,7 +95,7 @@ def test_pipeline_uses_previous_text_for_context_idea() -> None:
     pipeline.handle_text(user(), "Утренний дайджест полезен для фокуса")
     reply = pipeline.handle_text(user(), "запиши это как идею")
 
-    assert "Сделал" in reply.text
+    assert reply.text.startswith("Сохранил идею")
     assert ideas.list_for_user(1)[0].text == "Утренний дайджест полезен для фокуса"
     assert context.list_recent(1)[0].extracted_actions[0]["type"] == "idea.save"
 
@@ -219,6 +219,6 @@ def test_default_reminder_time_preference_is_used() -> None:
     pipeline.handle_text(user(), "напоминания по умолчанию в 11:30")
     reply = pipeline.handle_text(user(), "/remind до завтра проверить OAuth")
 
-    assert "Поставил напоминание" in reply.text
+    assert "напомню: проверить OAuth" in reply.text
     assert reminders.list_pending_for_user(1)[0].remind_at.hour == 11
     assert reminders.list_pending_for_user(1)[0].remind_at.minute == 30

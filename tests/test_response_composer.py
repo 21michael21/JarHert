@@ -56,3 +56,11 @@ def test_composer_formats_provider_fallback_without_provider_dump() -> None:
     assert reply.model == "free-model"
     assert reply.fallback_count == 2
     assert reply.blocked_reason == "raw_provider_error"
+
+
+def test_composer_daily_limit_text_is_not_free_provider_specific() -> None:
+    reply = ResponseComposer().daily_limit(intent=Intent.ASK)
+
+    assert reply.text == "AI-лимит на сегодня закончился. Если это твой бот, увеличь лимит в env или отключи его."
+    assert "бесплат" not in reply.text.lower()
+    assert reply.blocked_reason == "daily_limit_exceeded"

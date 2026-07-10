@@ -35,7 +35,7 @@ from assistant.provider_clients import HermesClient
 from assistant.quality_gates import check_input
 from assistant.response_composer import ResponseComposer
 from assistant.task_command_center import TaskCommandCenter, TaskCommandError
-from assistant.tool_registry import ToolContext, ToolExecutionResult, build_default_tool_registry
+from assistant.tool_registry import ToolContext, ToolExecutionResult, _format_reminder_reply, build_default_tool_registry
 from assistant.tracing import new_trace_id
 from assistant.types import AssistantReply, Intent, UserContext
 from reminders.parser import parse_reminder
@@ -592,17 +592,15 @@ class AssistantPipeline:
                 parsed.remind_at,
                 recurrence=parsed.recurrence,
             )
-            synced = self.docs_sync.append(
+            self.docs_sync.append(
                 kind="reminder",
                 user_id=user.user_id,
                 text=f"{item.remind_at.isoformat()} — {item.text}",
                 created_at=item.remind_at,
                 record_id=str(item.id),
             )
-        suffix = " Отправил в Google Docs." if synced else ""
-        label = "Поставил ежедневное напоминание" if item.recurrence == "daily" else "Поставил напоминание"
         return AssistantReply(
-            text=f"{label} #{item.id}: {item.remind_at.isoformat()} — {item.text}{suffix}",
+            text=_format_reminder_reply(item.remind_at, item.text, recurrence=item.recurrence),
             intent=Intent.REMIND,
         )
 

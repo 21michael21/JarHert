@@ -76,7 +76,7 @@ class ResponseComposer:
 
     def daily_limit(self, *, intent: Intent) -> AssistantReply:
         return AssistantReply(
-            text="Лимит бесплатных AI-запросов на сегодня закончился. Попробуй завтра.",
+            text="AI-лимит на сегодня закончился. Если это твой бот, увеличь лимит в env или отключи его.",
             intent=intent,
             blocked_reason="daily_limit_exceeded",
         )

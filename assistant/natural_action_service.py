@@ -97,6 +97,8 @@ class NaturalActionService:
             )
         if failed:
             return self.responses.partial_failure(done=done, failed=failed, intent=Intent.AGENT_DO)
+        if len(done) == 1:
+            return AssistantReply(text=done[0], intent=Intent.AGENT_DO, trace_id=trace_id)
         return self.responses.success_summary(done=done, intent=Intent.AGENT_DO)
 
     def execute_action(

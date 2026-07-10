@@ -164,7 +164,7 @@
   {
     "id": "reply_help_quality",
     "text": "/help",
-    "expected_reply_contains": ["Я умею:", "/ask вопрос", "/remind через 2 часа"],
+    "expected_reply_contains": ["Доступно:", "Trello", "Google Calendar", "Напоминания"],
     "max_reply_chars": 1200
   },
   {

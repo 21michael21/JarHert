@@ -328,16 +328,22 @@ def _reminder_create(payload: dict[str, str], context: ToolContext) -> ToolExecu
         parsed.remind_at,
         recurrence=parsed.recurrence,
     )
-    synced = context.docs_sync.append(
+    context.docs_sync.append(
         kind="reminder",
         user_id=context.user.user_id,
         text=f"{item.remind_at.isoformat()} — {item.text}",
         created_at=item.remind_at,
         record_id=str(item.id),
     )
-    suffix = " Отправил в Google Docs." if synced else ""
-    label = "Поставил ежедневное напоминание" if item.recurrence == "daily" else "Поставил напоминание"
-    return ToolExecutionResult(f"{label} #{item.id}: {item.remind_at.isoformat()} — {item.text}{suffix}")
+    return ToolExecutionResult(_format_reminder_reply(item.remind_at, item.text, recurrence=item.recurrence))
+
+
+def _format_reminder_reply(remind_at: datetime, text: str, *, recurrence: str | None = None) -> str:
+    clock = remind_at.strftime("%H:%M")
+    if recurrence == "daily":
+        return f"Ок, каждый день в {clock} напомню: {text}."
+    when = remind_at.strftime("%Y-%m-%d %H:%M")
+    return f"Ок, {when} напомню: {text}."
 
 
 def _task_create(payload: dict[str, str], context: ToolContext) -> ToolExecutionResult:

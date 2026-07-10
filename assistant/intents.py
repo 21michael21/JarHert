@@ -36,6 +36,13 @@ COMMAND_INTENTS = {
 
 
 NATURAL_PATTERNS: list[tuple[re.Pattern[str], Intent]] = [
+    (
+        re.compile(
+            r"^(?:.*\b)?(?:что\s+ты\s+умеешь|что\s+умеешь|какие\s+инструменты|что\s+доступно|твои\s+инструменты).*$",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        Intent.HELP,
+    ),
     (re.compile(r"^(?:идея|запиши\s+идею|сохрани\s+идею|запиши\s+мысль|сохрани\s+мысль)[:\s]+(?P<text>.+)$", re.IGNORECASE | re.DOTALL), Intent.IDEA),
     (re.compile(r"^(?:запомни|сохрани\s+важное|важно)[:\s]+(?P<text>.+)$", re.IGNORECASE | re.DOTALL), Intent.REMEMBER),
     (re.compile(r"^(?:найди|покажи)\s+заметки\s+(?:про|о)[:\s]+(?P<text>.+)$", re.IGNORECASE | re.DOTALL), Intent.NOTE_SEARCH),

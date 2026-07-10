@@ -126,7 +126,8 @@ def test_reminder_syncs_to_docs_when_configured() -> None:
 
     reply = pipeline.handle_text(user(1), "/remind 2026-07-09 09:30 проверить docs")
 
-    assert "Google Docs" in reply.text
+    assert reply.text == "Ок, 2026-07-09 09:30 напомню: проверить docs."
+    assert "Google Docs" not in reply.text
     assert docs.items[0][0] == "reminder"
     assert docs.items[0][1] == 1
     assert "проверить docs" in docs.items[0][2]
@@ -137,7 +138,7 @@ def test_remind_and_list_reminders() -> None:
     created = pipeline.handle_text(user(), "/remind 2026-07-09 09:30 проверить деплой")
     listed = pipeline.handle_text(user(), "/reminders")
 
-    assert "Поставил напоминание" in created.text
+    assert "напомню: проверить деплой" in created.text
     assert "проверить деплой" in listed.text
 
 
@@ -166,7 +167,7 @@ def test_live_style_reminder_phrase_creates_reminder_without_ai() -> None:
         "Бро просто напоминалку чтобы я завтра в часов 12 дня напоминалка пришла что пора заниматься ml",
     )
 
-    assert "Поставил напоминание" in reply.text
+    assert "напомню: пора заниматься ml" in reply.text
     assert "1. 1." not in reply.text
     assert reminders.list_pending_for_user(1)[0].text == "пора заниматься ml"
     assert reminders.list_pending_for_user(1)[0].remind_at.hour == 12
@@ -190,10 +191,45 @@ def test_daily_reminder_phrase_creates_recurring_reminder_without_ai() -> None:
     )
 
     item = reminders.list_pending_for_user(1)[0]
-    assert "Поставил ежедневное напоминание" in reply.text
+    assert reply.text == "Ок, каждый день в 19:00 напомню: пора читать ганджубасик."
     assert item.text == "пора читать ганджубасик"
     assert item.remind_at.hour == 19
     assert item.recurrence == "daily"
+    assert hermes.requests == []
+
+
+def test_daily_reminder_reply_is_short_and_not_technical() -> None:
+    reminders = InMemoryReminderStore()
+    docs = FakeDocsSync()
+    pipeline = AssistantPipeline(
+        FakeHermesClient(),
+        DailyLimitStore(),
+        plain_text_ai_enabled=True,
+        reminders=reminders,
+        docs_sync=docs,
+    )
+
+    reply = pipeline.handle_text(
+        user(),
+        "Поставь напоминалку чтобы каждый день в 19 часов вечера напоминало мне в чатик сюда что пора читать ганджубасик",
+    )
+
+    assert reply.text == "Ок, каждый день в 19:00 напомню: пора читать ганджубасик."
+    assert "#" not in reply.text
+    assert "T19:00" not in reply.text
+    assert "Google Docs" not in reply.text
+
+
+def test_capabilities_question_is_deterministic_and_does_not_use_ai() -> None:
+    hermes = FakeHermesClient()
+    pipeline = AssistantPipeline(hermes, DailyLimitStore(), plain_text_ai_enabled=True)
+
+    reply = pipeline.handle_text(user(), "Бро напиши какие инструменты тебе доступны Гугл календарь и трелло должен быть")
+
+    assert "Trello" in reply.text
+    assert "Google Calendar" in reply.text
+    assert "напомин" in reply.text.lower()
+    assert "замет" in reply.text.lower()
     assert hermes.requests == []
 
 
@@ -227,7 +263,7 @@ def test_bad_reminder_time_is_clear_error() -> None:
 def test_cancel_reminder() -> None:
     pipeline = make_pipeline()
     created = pipeline.handle_text(user(), "/remind 2026-07-09 09:30 проверить деплой")
-    assert "Поставил" in created.text
+    assert "напомню: проверить деплой" in created.text
 
     cancelled = pipeline.handle_text(user(), "/cancel_reminder 1")
     listed = pipeline.handle_text(user(), "/reminders")
@@ -401,7 +437,7 @@ def test_plain_text_mixed_idea_and_reminder_without_tags() -> None:
 
     assert "Сделал" in reply.text
     assert "Сохранил идею" in reply.text
-    assert "Поставил напоминание" in reply.text
+    assert "напомню: обсудить" in reply.text
     assert docs.items[0] == ("idea", 1, "про Hub ML")
     assert docs.items[1][0] == "reminder"
 
