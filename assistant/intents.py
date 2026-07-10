@@ -49,6 +49,20 @@ NATURAL_PATTERNS: list[tuple[re.Pattern[str], Intent]] = [
         Intent.NOTE_CREATE,
     ),
     (re.compile(r"^(?:напомни|поставь\s+напоминание)[:\s]+(?P<text>.+)$", re.IGNORECASE | re.DOTALL), Intent.REMIND),
+    (
+        re.compile(
+            r"^(?:напоминалк[а-я]*|напоминани[ея]|уведомлени[ея]).*(?:стоит|есть|поставил|покажи|список)",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        Intent.REMINDERS,
+    ),
+    (
+        re.compile(
+            r"^(?:можно\s+)?(?:в\s+чатик|в\s+этот\s+чат|сюда).*(?:уведомлени[ея]|напоминалк[а-я]*|напоминани[ея])",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        Intent.REMINDERS,
+    ),
     (re.compile(r"^(?:создай\s+задачу|добавь\s+задачу|заведи\s+задачу)[:\s]+(?P<text>.+)$", re.IGNORECASE | re.DOTALL), Intent.TASK),
     (re.compile(r"^(?:создай\s+задачи|добавь\s+задачи|заведи\s+задачи|раскидай\s+задачи|запланируй\s+задачи)[:\s]+(?P<text>.+)$", re.IGNORECASE | re.DOTALL), Intent.TASK_BATCH),
     (re.compile(r"^(?:покажи\s+задачи|список\s+задач)(?:[:\s]+(?P<text>.*))?$", re.IGNORECASE | re.DOTALL), Intent.TASKS),

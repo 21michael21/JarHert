@@ -134,6 +134,22 @@ def test_sql_user_preferences_persist(tmp_path) -> None:
     assert loaded.preferred_response_style == "short"
 
 
+def test_expressive_style_preference_can_be_enabled_and_disabled() -> None:
+    store = InMemoryPreferenceStore()
+    pipeline = AssistantPipeline(
+        FakeHermesClient(),
+        DailyLimitStore(),
+        preferences=store,
+    )
+
+    expressive = pipeline.handle_text(user(), "пиши живее можно с матом")
+    concise = pipeline.handle_text(user(), "без мата отвечай нормально")
+
+    assert "живее" in expressive.text
+    assert "без мата" in concise.text
+    assert store.get(1).preferred_response_style == "concise"
+
+
 def test_preference_updates_default_task_list_and_task_uses_it() -> None:
     task_center = FakeTaskCenter()
     pipeline = AssistantPipeline(

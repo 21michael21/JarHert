@@ -188,9 +188,13 @@ def _reminder_action(text: str, *, context_text: str | None = None) -> list[Plan
             )
         ]
     match = re.match(r"^(?:напомни|поставь\s+напоминание)[:\s]+(?P<text>.+)$", text, re.IGNORECASE)
-    if not match:
-        return []
-    return [_action(ActionType.REMINDER_CREATE, text=match.group("text").strip())]
+    if match:
+        return [_action(ActionType.REMINDER_CREATE, text=match.group("text").strip())]
+
+    loose = _loose_reminder_text(text)
+    if loose:
+        return [_action(ActionType.REMINDER_CREATE, text=loose)]
+    return []
 
 
 def _task_list_action(text: str) -> list[PlannedAction]:
@@ -327,6 +331,50 @@ def _timed_title(text: str, *, preferences: UserPreferences | None = None) -> tu
     raw_title = (text[: match.start()] + text[match.end() :]).strip() if match else text
     title = _clean_title(raw_title)
     return title, f"{date_prefix} {clock}", f"{date_prefix} {_add_minutes(clock, 30)}"
+
+
+def _loose_reminder_text(text: str) -> str | None:
+    lowered = text.lower()
+    if not any(marker in lowered for marker in ("напомин", "уведомлен")):
+        return None
+    if re.search(r"\b(?:стоит|поставил|есть|список|покажи)\b", lowered):
+        return None
+    date_time = re.search(
+        r"\b(?P<date>сегодня|завтра|послезавтра)\b.*?"
+        r"\b(?:в\s+)?(?:час(?:ов|а)?\s+)?(?P<clock>(?:[01]?\d|2[0-3])(?::[0-5]\d)?)\b",
+        text,
+        re.IGNORECASE,
+    )
+    if not date_time:
+        return None
+    message = _loose_reminder_message(text)
+    if not message:
+        return None
+    return f"{date_time.group('date').lower()} в {_normalize_clock(date_time.group('clock'))} {message}"
+
+
+def _loose_reminder_message(text: str) -> str:
+    value = " ".join((text or "").strip().split())
+    parts = re.split(r"\bчто\b", value, flags=re.IGNORECASE)
+    if len(parts) > 1:
+        return _clean_loose_reminder_tail(parts[-1])
+    after_time = re.split(
+        r"\b(?:сегодня|завтра|послезавтра)\b.*?"
+        r"\b(?:в\s+)?(?:час(?:ов|а)?\s+)?(?:[01]?\d|2[0-3])(?::[0-5]\d)?\b\s*(?:утра|дня|вечера|ночи)?",
+        value,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )
+    if len(after_time) > 1:
+        return _clean_loose_reminder_tail(after_time[-1])
+    return ""
+
+
+def _clean_loose_reminder_tail(text: str) -> str:
+    value = _strip_optional_colon(text.strip())
+    value = re.sub(r"^(?:мне|я|чтобы|чтоб|напоминалк[а-я]*|пришла|пришло|прислать|уведомлени[ея])\s+", "", value, flags=re.IGNORECASE)
+    value = re.sub(r"^(?:мне|я|чтобы|чтоб)\s+", "", value, flags=re.IGNORECASE)
+    return " ".join(value.strip(" .,-—:").split())
 
 
 def _date_prefix(text: str) -> str:

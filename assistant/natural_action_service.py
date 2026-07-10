@@ -87,7 +87,7 @@ class NaturalActionService:
             except (TaskCommandError, ToolExecutionError) as exc:
                 failed.append(f"{index}. {natural_action_label(action)}: {exc}")
                 continue
-            done.append(f"{index}. {summary}")
+            done.append(summary)
 
         if failed and not done:
             return self.responses.partial_failure(

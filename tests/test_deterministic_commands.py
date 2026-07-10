@@ -132,6 +132,59 @@ def test_remind_and_list_reminders() -> None:
     assert "проверить деплой" in listed.text
 
 
+def test_natural_reminder_question_lists_existing_reminders() -> None:
+    pipeline = make_pipeline()
+    pipeline.handle_text(user(), "/remind 2026-07-09 09:30 заниматься ML")
+
+    listed = pipeline.handle_text(user(), "Напоминалка стоит?")
+
+    assert listed.intent.name == "REMINDERS"
+    assert "заниматься ML" in listed.text
+
+
+def test_live_style_reminder_phrase_creates_reminder_without_ai() -> None:
+    reminders = InMemoryReminderStore()
+    hermes = FakeHermesClient()
+    pipeline = AssistantPipeline(
+        hermes,
+        DailyLimitStore(),
+        plain_text_ai_enabled=True,
+        reminders=reminders,
+    )
+
+    reply = pipeline.handle_text(
+        user(),
+        "Бро просто напоминалку чтобы я завтра в часов 12 дня напоминалка пришла что пора заниматься ml",
+    )
+
+    assert "Поставил напоминание" in reply.text
+    assert "1. 1." not in reply.text
+    assert reminders.list_pending_for_user(1)[0].text == "пора заниматься ml"
+    assert reminders.list_pending_for_user(1)[0].remind_at.hour == 12
+    assert reminders.list_pending_for_user(1)[0].remind_at.minute == 0
+    assert hermes.requests == []
+
+
+def test_chat_followup_uses_previous_reminder_request() -> None:
+    reminders = InMemoryReminderStore()
+    pipeline = AssistantPipeline(
+        FakeHermesClient(),
+        DailyLimitStore(),
+        plain_text_ai_enabled=True,
+        reminders=reminders,
+    )
+
+    pipeline.handle_text(
+        user(),
+        "Бро просто напоминалку чтобы я завтра в часов 12 дня напоминалка пришла что пора заниматься ml",
+    )
+    followup = pipeline.handle_text(user(), "Можно в чатик прислать уведомление")
+
+    assert followup.intent.name == "REMINDERS"
+    assert "пора заниматься ml" in followup.text
+    assert len(reminders.list_pending_for_user(1)) == 1
+
+
 def test_bad_reminder_time_is_clear_error() -> None:
     pipeline = make_pipeline()
     reply = pipeline.handle_text(user(), "/remind когда-нибудь проверить")

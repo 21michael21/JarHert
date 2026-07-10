@@ -113,6 +113,23 @@ def parse_preference_update(text: str) -> PreferenceUpdate | None:
             {"preferred_response_style": "detailed"},
             "Сохранил настройку: буду отвечать подробнее.",
         )
+    if lowered in {
+        "пиши живее",
+        "отвечай живее",
+        "пиши живее можно с матом",
+        "можно с матом",
+        "говори с матом",
+        "разрешаю мат",
+    }:
+        return PreferenceUpdate(
+            {"preferred_response_style": "expressive"},
+            "Сохранил настройку: буду отвечать живее. Мат — только когда он реально к месту.",
+        )
+    if lowered in {"без мата", "без мата отвечай нормально", "говори без мата", "отвечай нормально"}:
+        return PreferenceUpdate(
+            {"preferred_response_style": "concise"},
+            "Сохранил настройку: без мата, коротко и по делу.",
+        )
     return None
 
 

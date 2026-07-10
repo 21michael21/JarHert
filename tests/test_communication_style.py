@@ -53,6 +53,16 @@ def test_concise_overlay_prioritizes_explicit_user_length() -> None:
     assert "500 символов" in rendered
 
 
+def test_expressive_preference_allows_lively_language_with_boundaries() -> None:
+    guide = CommunicationStyleGuide("Базовый стиль.", version="test-v1")
+
+    rendered = guide.render("expressive")
+
+    assert "живой разговорный тон" in rendered
+    assert "уместный русский мат" in rendered
+    assert "без оскорблений" in rendered.lower()
+
+
 def test_disabled_style_guide_returns_empty_system_prompt() -> None:
     guide = load_communication_style(enabled=False)
 

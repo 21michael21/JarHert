@@ -21,6 +21,12 @@ WEEKDAY_RE = re.compile(
     r"^в\s+(?P<weekday>понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье)\s+(?P<text>.+)$",
     re.IGNORECASE,
 )
+DATE_TIME_RE = re.compile(
+    r"^(?P<date>сегодня|завтра|послезавтра)\s+(?:в\s+)?(?:час(?:ов|а)?\s+)?"
+    r"(?P<time>\d{1,2}(?::\d{2})?)\s*(?:утра|дня|вечера|ночи)?\s+(?P<text>.+)$",
+    re.IGNORECASE,
+)
+DATE_DEFAULT_RE = re.compile(r"^(?P<date>сегодня|завтра|послезавтра)\s+(?P<text>.+)$", re.IGNORECASE)
 
 ABSOLUTE_RE = re.compile(
     r"^(?P<date>\d{4}-\d{2}-\d{2})\s+(?P<time>\d{1,2}:\d{2})\s+(?P<text>.+)$",
@@ -67,6 +73,28 @@ def parse_reminder(
         remind_at = _next_weekday(base, weekday.group("weekday")).replace(hour=hour, minute=minute, second=0, microsecond=0)
         return ParsedReminder(remind_at=remind_at, text=weekday.group("text").strip())
 
+    date_time = DATE_TIME_RE.match(value)
+    if date_time:
+        hour, minute = _clock_parts(_normalize_clock(date_time.group("time")))
+        remind_at = (base + timedelta(days=_date_offset(date_time.group("date")))).replace(
+            hour=hour,
+            minute=minute,
+            second=0,
+            microsecond=0,
+        )
+        return ParsedReminder(remind_at=remind_at, text=date_time.group("text").strip())
+
+    date_default = DATE_DEFAULT_RE.match(value)
+    if date_default:
+        hour, minute = _clock_parts(default_time)
+        remind_at = (base + timedelta(days=_date_offset(date_default.group("date")))).replace(
+            hour=hour,
+            minute=minute,
+            second=0,
+            microsecond=0,
+        )
+        return ParsedReminder(remind_at=remind_at, text=date_default.group("text").strip())
+
     absolute = ABSOLUTE_RE.match(value)
     if absolute:
         raw = f"{absolute.group('date')} {absolute.group('time')}"
@@ -99,3 +127,19 @@ def _clock_parts(value: str) -> tuple[int, int]:
         return int(hours), int(minutes)
     except (AttributeError, ValueError):
         return 9, 0
+
+
+def _normalize_clock(value: str) -> str:
+    if ":" in value:
+        hours, minutes = value.split(":", 1)
+        return f"{int(hours):02d}:{minutes}"
+    return f"{int(value):02d}:00"
+
+
+def _date_offset(value: str) -> int:
+    lowered = value.lower()
+    if lowered == "послезавтра":
+        return 2
+    if lowered == "завтра":
+        return 1
+    return 0
