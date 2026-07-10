@@ -12,6 +12,7 @@ from assistant.tracing import new_trace_id
 from assistant.types import AssistantReply, Intent, ReplyButton, UserContext
 from backend.stores import EventStore, UserStore
 from backend.trace_store import SqlTraceStore, TraceSnapshot
+from backend.training_feedback_store import SqlTrainingFeedbackStore
 
 
 @dataclass
@@ -23,6 +24,7 @@ class GatewayService:
     events: EventStore | None = None
     traces: SqlTraceStore | None = None
     inbound_updates: object | None = None
+    training_feedback: SqlTrainingFeedbackStore | None = None
 
     def is_allowed(self, tg_user_id: int) -> bool:
         if not self.allowed_tg_user_ids:
@@ -75,12 +77,23 @@ class GatewayService:
                 {"source": "telegram", "idempotent": bool(idempotency_key)},
                 trace_id=trace_id,
             )
+        captured_feedback = self._capture_pending_feedback(user, trace_text, trace_id=trace_id)
+        if captured_feedback is not None:
+            if idempotency_key and self.inbound_updates is not None:
+                self.inbound_updates.complete(
+                    user_id,
+                    idempotency_key,
+                    _reply_to_payload(captured_feedback),
+                    trace_id=captured_feedback.trace_id,
+                )
+            return captured_feedback
         try:
             reply = self.pipeline.handle_text(user, text, idempotency_key=idempotency_key, trace_id=trace_id)
         except Exception:
             if idempotency_key and self.inbound_updates is not None:
                 self.inbound_updates.mark_failed(user_id, idempotency_key)
             raise
+        reply = self._attach_training_feedback_buttons(reply)
         if self.events is not None:
             self.events.log_assistant_response(
                 user_id,
@@ -101,6 +114,52 @@ class GatewayService:
                 trace_id=reply.trace_id,
             )
         return reply
+
+    def approve_training_reply(self, tg_user_id: int, turn_id: int) -> AssistantReply:
+        user, turn = self._training_turn_for_user(tg_user_id, turn_id)
+        if user is None:
+            return _not_allowed_reply()
+        if turn is None or self.training_feedback is None:
+            return AssistantReply(
+                text="Не нашёл этот ответ для обучения.",
+                intent=Intent.STATUS,
+                blocked_reason="training_turn_not_found",
+            )
+        example = self.training_feedback.approve_turn(user.user_id, turn)
+        self._log_training_event(user.user_id, "training_example_approved", example.id)
+        return AssistantReply(text="Сохранил согласованную пару для локального набора.", intent=Intent.STATUS)
+
+    def edit_training_reply(self, tg_user_id: int, turn_id: int) -> AssistantReply:
+        user, turn = self._training_turn_for_user(tg_user_id, turn_id)
+        if user is None:
+            return _not_allowed_reply()
+        if turn is None or self.training_feedback is None:
+            return AssistantReply(
+                text="Не нашёл этот ответ для обучения.",
+                intent=Intent.STATUS,
+                blocked_reason="training_turn_not_found",
+            )
+        example = self.training_feedback.begin_edit(user.user_id, turn)
+        if example.status.value == "approved":
+            return AssistantReply(text="Эта пара уже сохранена. Выбери другой ответ, если хочешь его исправить.", intent=Intent.STATUS)
+        self._log_training_event(user.user_id, "training_example_edit_requested", example.id)
+        return AssistantReply(
+            text="Пришли следующей репликой исправленную версию ответа. Сохраню только очищенную согласованную пару.",
+            intent=Intent.STATUS,
+        )
+
+    def shorten_training_reply(self, tg_user_id: int, turn_id: int, *, trace_id: str = "") -> AssistantReply:
+        user, turn = self._training_turn_for_user(tg_user_id, turn_id)
+        if user is None:
+            return _not_allowed_reply()
+        if turn is None:
+            return AssistantReply(
+                text="Не нашёл этот ответ для сокращения.",
+                intent=Intent.STATUS,
+                blocked_reason="training_turn_not_found",
+            )
+        reply = self.pipeline.rewrite_shorter(user, turn, trace_id=trace_id)
+        return self._attach_training_feedback_buttons(reply)
 
     def handle_input(
         self,
@@ -372,6 +431,59 @@ class GatewayService:
             is_admin=tg_user_id in (self.admin_tg_user_ids or set()),
         )
 
+    def _training_turn_for_user(self, tg_user_id: int, turn_id: int):
+        user = self._user_context(tg_user_id)
+        if user is None:
+            return None, None
+        get_turn = getattr(self.pipeline.conversation_turns, "get_for_user", None)
+        turn = get_turn(user.user_id, turn_id) if callable(get_turn) else None
+        return user, turn
+
+    def _capture_pending_feedback(self, user: UserContext, text: str, *, trace_id: str) -> AssistantReply | None:
+        if self.training_feedback is None or not text.strip():
+            return None
+        example = self.training_feedback.consume_pending_edit(user.user_id, text)
+        if example is None:
+            return None
+        self._log_training_event(user.user_id, "training_example_edited", example.id, trace_id=trace_id)
+        return AssistantReply(
+            text="Сохранил согласованную пару для локального набора.",
+            intent=Intent.STATUS,
+            trace_id=trace_id,
+        )
+
+    def _attach_training_feedback_buttons(self, reply: AssistantReply) -> AssistantReply:
+        if (
+            self.training_feedback is None
+            or reply.intent is not Intent.ASK
+            or reply.blocked_reason is not None
+            or reply.suppress_delivery
+            or reply.conversation_turn_id is None
+            or reply.buttons
+        ):
+            return reply
+        turn_id = reply.conversation_turn_id
+        return AssistantReply(
+            text=reply.text,
+            intent=reply.intent,
+            provider=reply.provider,
+            model=reply.model,
+            fallback_count=reply.fallback_count,
+            blocked_reason=reply.blocked_reason,
+            perf_ms=reply.perf_ms,
+            trace_id=reply.trace_id,
+            buttons=[
+                [ReplyButton("Нормально", f"ai:feedback_ok:{turn_id}")],
+                [ReplyButton("Сделай короче", f"ai:feedback_shorter:{turn_id}")],
+                [ReplyButton("Я исправил сам", f"ai:feedback_edit:{turn_id}")],
+            ],
+            conversation_turn_id=turn_id,
+        )
+
+    def _log_training_event(self, user_id: int, event_type: str, example_id: int, *, trace_id: str = "") -> None:
+        if self.events is not None:
+            self.events.log(user_id, event_type, {"example_id": example_id}, trace_id=trace_id)
+
 
 def _status_buttons(job_id: int | None) -> list[list[ReplyButton]]:
     if job_id is None:
@@ -509,6 +621,7 @@ def _reply_to_payload(reply: AssistantReply) -> dict:
         "blocked_reason": reply.blocked_reason,
         "perf_ms": dict(reply.perf_ms),
         "trace_id": reply.trace_id,
+        "conversation_turn_id": reply.conversation_turn_id,
         "buttons": [
             [
                 {"text": button.text, "callback_data": button.callback_data}
@@ -529,6 +642,11 @@ def _reply_from_payload(payload: dict) -> AssistantReply:
         blocked_reason=payload.get("blocked_reason"),
         perf_ms=dict(payload.get("perf_ms") or {}),
         trace_id=str(payload.get("trace_id") or ""),
+        conversation_turn_id=(
+            int(payload["conversation_turn_id"])
+            if payload.get("conversation_turn_id") is not None
+            else None
+        ),
         buttons=[
             [
                 ReplyButton(

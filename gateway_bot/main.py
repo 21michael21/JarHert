@@ -34,6 +34,7 @@ from backend.stores import (
     SqlProviderHealthStore,
     SqlReminderStore,
     SqlTraceStore,
+    SqlTrainingFeedbackStore,
     SqlUserPreferenceStore,
     UserStore,
 )
@@ -187,6 +188,7 @@ def build_gateway_service() -> GatewayService:
         events=event_store,
         traces=SqlTraceStore(get_session_factory()),
         inbound_updates=SqlInboundUpdateStore(get_session_factory()),
+        training_feedback=SqlTrainingFeedbackStore(get_session_factory()),
     )
 
 

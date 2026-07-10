@@ -39,6 +39,12 @@ def handle_callback_data(service, tg_user_id: int, data: str, *, update_trace_id
         reply = service.cancel_action(tg_user_id, item_id)
     elif parts[1] == "status":
         reply = service.job_status(tg_user_id, item_id)
+    elif parts[1] == "feedback_ok":
+        reply = service.approve_training_reply(tg_user_id, item_id)
+    elif parts[1] == "feedback_shorter":
+        reply = service.shorten_training_reply(tg_user_id, item_id, trace_id=update_trace_id)
+    elif parts[1] == "feedback_edit":
+        reply = service.edit_training_reply(tg_user_id, item_id)
     else:
         reply = service.handle_text(tg_user_id, "/status", trace_id=update_trace_id)
     return _log_callback_event(service, tg_user_id, reply, update_trace_id)

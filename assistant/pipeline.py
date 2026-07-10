@@ -18,7 +18,7 @@ from assistant.command_handlers import (
 )
 from assistant.communication_style import CommunicationStyleGuide, load_communication_style
 from assistant.contact_book import InMemoryContactBookStore
-from assistant.context_store import InMemoryConversationStore, actions_to_dicts
+from assistant.context_store import ConversationTurn, InMemoryConversationStore, actions_to_dicts
 from assistant.google_docs_sync import DocsSync, NullDocsSync
 from assistant.ideas import InMemoryIdeaStore
 from assistant.intents import parse_message
@@ -141,13 +141,59 @@ class AssistantPipeline:
             with recorder.track("total_response"):
                 reply = self._handle_text(user, text)
             reply = replace(reply, perf_ms=recorder.snapshot_ms(), trace_id=reply.trace_id or trace_id)
-            self.conversation_turns.add(
+            turn = self.conversation_turns.add(
                 user_id=user.user_id,
                 user_text=text,
                 assistant_text=reply.text,
                 extracted_actions=actions_to_dicts(request_context.extracted_actions),
             )
-            return reply
+            return replace(reply, conversation_turn_id=getattr(turn, "id", None))
+        finally:
+            self._request_context.reset(context_token)
+
+    def rewrite_shorter(
+        self,
+        user: UserContext,
+        source_turn: ConversationTurn,
+        *,
+        trace_id: str = "",
+    ) -> AssistantReply:
+        """Create another candidate reply; it is stored only after explicit feedback."""
+        if not self.limits.consume(user.user_id):
+            return self.responses.daily_limit(intent=Intent.ASK)
+        recorder = PerfRecorder()
+        trace_id = trace_id or new_trace_id()
+        request_context = _PipelineRequestContext(perf=recorder, trace_id=trace_id)
+        context_token = self._request_context.set(request_context)
+        prompt = (
+            "Перепиши ответ короче и яснее. Верни только готовый текст ответа, без пояснений о правке. "
+            "Не добавляй новых фактов.\n\n"
+            f"Запрос пользователя:\n{source_turn.user_text}\n\n"
+            f"Исходный ответ:\n{source_turn.assistant_text}"
+        )
+        try:
+            with recorder.track("total_response"):
+                reply = answer_with_ai(
+                    hermes=self.hermes,
+                    responses=self.responses,
+                    user=user,
+                    prompt=prompt,
+                    intent=Intent.ASK,
+                    style=self.preferences.get(user.user_id).preferred_response_style,
+                    communication_style=self.communication_style,
+                    max_output_chars=min(self.max_output_chars, 700),
+                    perf=self._perf,
+                    trace_id=trace_id,
+                    events=self.events,
+                )
+            reply = replace(reply, perf_ms=recorder.snapshot_ms(), trace_id=reply.trace_id or trace_id)
+            turn = self.conversation_turns.add(
+                user_id=user.user_id,
+                user_text=source_turn.user_text,
+                assistant_text=reply.text,
+                extracted_actions=[],
+            )
+            return replace(reply, conversation_turn_id=getattr(turn, "id", None))
         finally:
             self._request_context.reset(context_token)
 
