@@ -22,6 +22,14 @@ memory:
 cron:
   wrap_response: false
 
+approvals:
+  mode: manual
+  timeout: 60
+  cron_mode: deny
+
+command_allowlist:
+  - 'python "$HERMES_HOME/native_tools/cli.py" *'
+
 terminal:
   docker_image: "nikolaik/python-nodejs:python3.11-nodejs20"
   docker_forward_env: []
