@@ -14,6 +14,7 @@ from assistant.training_feedback import (
     TrainingFeedbackKind,
     TrainingFeedbackStatus,
     classify_training_example_type,
+    explain_preference,
 )
 from backend.models import TrainingExampleRecord
 
@@ -81,6 +82,11 @@ class SqlTrainingFeedbackStore:
             if record is None:
                 return None
             record.assistant_text = clean_text
+            record.preference_reason = explain_preference(
+                record.user_text,
+                record.rejected_assistant_text or "",
+                clean_text,
+            )
             record.status = TrainingFeedbackStatus.APPROVED.value
             record.approved_at = datetime.now(timezone.utc)
             db.commit()
@@ -163,6 +169,7 @@ def training_example_from_record(record: TrainingExampleRecord) -> TrainingExamp
         user_text=record.user_text,
         assistant_text=record.assistant_text,
         rejected_assistant_text=record.rejected_assistant_text,
+        preference_reason=record.preference_reason,
         feedback_kind=TrainingFeedbackKind(record.feedback_kind),
         example_type=TrainingExampleType(record.example_type),
         status=TrainingFeedbackStatus(record.status),

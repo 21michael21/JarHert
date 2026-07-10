@@ -4,7 +4,18 @@ from collections import Counter
 from typing import Iterable
 
 from assistant.training_data import build_consented_record
-from assistant.training_feedback import TrainingExample, TrainingExampleType, TrainingFeedbackStatus
+from assistant.training_feedback import (
+    TrainingExample,
+    TrainingExampleType,
+    TrainingFeedbackStatus,
+    explain_preference,
+    is_distinct_preference_pair,
+)
+
+
+PREFERENCE_MIN_COUNT = 80
+PREFERENCE_TARGET_COUNT = 100
+PREFERENCE_MAX_COUNT = 120
 
 
 TARGET_COUNTS = {
@@ -14,7 +25,7 @@ TARGET_COUNTS = {
     TrainingExampleType.INSUFFICIENT_DATA: 30,
     TrainingExampleType.CLARIFICATION: 30,
     TrainingExampleType.SAFE_REFUSAL: 30,
-    "preference_pairs": 40,
+    "preference_pairs": PREFERENCE_MIN_COUNT,
 }
 
 
@@ -72,6 +83,7 @@ def build_preference_records(examples: Iterable[TrainingExample]) -> list[dict]:
             example.status is not TrainingFeedbackStatus.APPROVED
             or not example.assistant_text
             or not example.rejected_assistant_text
+            or not is_distinct_preference_pair(example.rejected_assistant_text, example.assistant_text)
         ):
             continue
         records.append(
@@ -79,6 +91,8 @@ def build_preference_records(examples: Iterable[TrainingExample]) -> list[dict]:
                 "prompt": example.user_text,
                 "chosen": example.assistant_text,
                 "rejected": example.rejected_assistant_text,
+                "why_chosen": example.preference_reason
+                or explain_preference(example.user_text, example.rejected_assistant_text, example.assistant_text),
                 "metadata": {
                     "source": "explicit_telegram_feedback",
                     "example_id": example.id,
@@ -107,4 +121,10 @@ def training_feedback_progress(examples: Iterable[TrainingExample]) -> dict:
         "targets": {key.value if isinstance(key, TrainingExampleType) else key: value for key, value in TARGET_COUNTS.items()},
         "gaps": gaps,
         "target_ready": not any(gaps.values()),
+        "preference_range": {
+            "minimum": PREFERENCE_MIN_COUNT,
+            "target": PREFERENCE_TARGET_COUNT,
+            "maximum": PREFERENCE_MAX_COUNT,
+        },
+        "preference_overflow": max(0, normalized_counts["preference_pairs"] - PREFERENCE_MAX_COUNT),
     }

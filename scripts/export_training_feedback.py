@@ -30,13 +30,13 @@ def main() -> int:
     parser.add_argument("--tg-user-id", type=int, required=True)
     parser.add_argument("--output", type=Path, help="Optional combined JSONL for compatibility with older workflows.")
     parser.add_argument("--output-dir", type=Path, default=Path("data/training/feedback"))
-    parser.add_argument("--limit", type=int, default=400)
+    parser.add_argument("--limit", type=int, default=500)
     parser.add_argument("--confirm-consent", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--require-targets", action="store_true")
     args = parser.parse_args()
-    if not 1 <= args.limit <= 400:
-        raise SystemExit("--limit must be between 1 and 400")
+    if not 1 <= args.limit <= 500:
+        raise SystemExit("--limit must be between 1 and 500")
     if not args.dry_run and not args.confirm_consent:
         raise SystemExit("Refusing export without --confirm-consent")
 
@@ -48,7 +48,7 @@ def main() -> int:
     progress = training_feedback_progress(examples)
     print(
         "approved_feedback_export "
-        f"selected={len(examples)} target=340 dry_run={args.dry_run} "
+        f"selected={len(examples)} sft_target=300 preference_range=80..120 dry_run={args.dry_run} "
         f"target_ready={progress['target_ready']}"
     )
     print(json.dumps(progress, ensure_ascii=False, sort_keys=True))
@@ -56,7 +56,8 @@ def main() -> int:
         return 0 if not args.require_targets or progress["target_ready"] else 2
 
     system_prompt = load_communication_style(enabled=True).render("concise")
-    records = build_approved_feedback_records(system_prompt=system_prompt, examples=examples)
+    sft_examples = [example for example in examples if not example.rejected_assistant_text]
+    records = build_approved_feedback_records(system_prompt=system_prompt, examples=sft_examples)
     groups = split_approved_feedback_records(system_prompt=system_prompt, examples=examples)
     preferences = build_preference_records(examples)
     args.output_dir.mkdir(parents=True, exist_ok=True)

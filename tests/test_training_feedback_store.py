@@ -3,8 +3,12 @@ from assistant.training_feedback import (
     TrainingExampleType,
     TrainingFeedbackStatus,
     classify_training_example_type,
+    explain_preference,
 )
 from assistant.training_feedback_export import (
+    PREFERENCE_MAX_COUNT,
+    PREFERENCE_MIN_COUNT,
+    PREFERENCE_TARGET_COUNT,
     TARGET_COUNTS,
     build_approved_feedback_records,
     build_preference_records,
@@ -58,6 +62,7 @@ def test_corrected_reply_is_stored_only_after_explicit_edit_flow(tmp_path) -> No
     assert approved.status is TrainingFeedbackStatus.APPROVED
     assert approved.assistant_text == "Готовый короткий ответ. Пиши на [PHONE]"
     assert approved.rejected_assistant_text == "Используй [CREDENTIAL] и [URL]"
+    assert approved.preference_reason
     assert store.consume_pending_edit(user.id, "второй текст") is None
 
 
@@ -125,6 +130,7 @@ def test_feedback_export_separates_preference_pairs_and_reports_target_gaps(tmp_
             "prompt": approved.user_text,
             "chosen": "Исправленный короткий ответ.",
             "rejected": "Используй [CREDENTIAL] и [URL]",
+            "why_chosen": approved.preference_reason,
             "metadata": {
                 "source": "explicit_telegram_feedback",
                 "example_id": approved.id,
@@ -134,7 +140,40 @@ def test_feedback_export_separates_preference_pairs_and_reports_target_gaps(tmp_
     ]
     assert progress["counts"][TrainingExampleType.SHORT_ANSWER.value] == 0
     assert progress["counts"]["preference_pairs"] == 1
+    assert progress["preference_range"] == {
+        "minimum": PREFERENCE_MIN_COUNT,
+        "target": PREFERENCE_TARGET_COUNT,
+        "maximum": PREFERENCE_MAX_COUNT,
+    }
     assert progress["gaps"][TrainingExampleType.SHORT_ANSWER.value] == TARGET_COUNTS[TrainingExampleType.SHORT_ANSWER]
+
+
+def test_preference_reason_rewards_shorter_concrete_answer_without_ai_filler() -> None:
+    rejected = "Конечно, я с радостью подробно помогу. В целом стоит внимательно и комплексно проверить спрос."
+    chosen = "Проверь спрос на пяти созвонах до разработки."
+
+    reason = explain_preference("как начать MVP", rejected, chosen)
+
+    assert "короче" in reason
+    assert "конкрет" in reason
+
+
+def test_preference_reason_records_removed_unnecessary_question() -> None:
+    reason = explain_preference("как начать", "Сначала проверь спрос. Хочешь?", "Сначала проверь спрос.")
+
+    assert "лишний вопрос" in reason
+
+
+def test_identical_chosen_and_rejected_response_is_not_a_preference_pair(tmp_path) -> None:
+    factory = _factory(tmp_path)
+    user = UserStore(factory).get_or_create(1014)
+    store = SqlTrainingFeedbackStore(factory)
+    source = _turn(factory, user_id=user.id)
+    store.begin_edit(user.id, source)
+    approved = store.consume_pending_edit(user.id, "Используй token=private-value и https://example.com")
+
+    assert approved is not None
+    assert build_preference_records([approved]) == []
 
 
 def test_training_example_classifier_keeps_response_types_separate() -> None:
