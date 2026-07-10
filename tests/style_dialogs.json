@@ -1,0 +1,12 @@
+[
+  {"id": "direct_action", "text": "Сначала обнови OAuth-токен. Потом повтори health-check.", "expected_ok": true},
+  {"id": "direct_uncertainty", "text": "Точно не знаю без логов. Проверь статус provider и пришли код ответа.", "expected_ok": true},
+  {"id": "useful_condition", "text": "Если задача необратимая, сначала покажу preview и попрошу подтверждение.", "expected_ok": true},
+  {"id": "short_answer", "text": "Да. Напоминание поставлено на завтра, 10:00.", "expected_ok": true},
+  {"id": "clear_failure", "text": "Не создал событие: Calendar вернул ошибку авторизации. Обнови OAuth и повтори запрос.", "expected_ok": true},
+  {"id": "generic_intro", "text": "Конечно! С удовольствием помогу. Давайте разберёмся и погрузимся в эту тему.", "expected_ok": false},
+  {"id": "ai_identity", "text": "Я как ИИ не могу иметь мнение, но постараюсь помочь.", "expected_ok": false},
+  {"id": "empty_meta", "text": "Важно отметить, что в современном мире нужен комплексный подход, чтобы раскрыть потенциал.", "expected_ok": false},
+  {"id": "exclamation", "text": "Отлично!!! Это невероятно!!! Всё обязательно получится!!!", "expected_ok": false},
+  {"id": "repeated", "text": "Нужно проверить логи. Нужно проверить логи. Нужно проверить логи.", "expected_ok": false}
+]

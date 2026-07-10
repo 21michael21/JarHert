@@ -101,6 +101,7 @@ def test_task_suite_contains_meaningful_30_to_50_cases() -> None:
 
     assert 30 <= len(tasks) <= 50
     assert {"natural_action", "json_extraction", "russian_answer", "safety"} <= {task.category for task in tasks}
+    assert "communication_style" in {task.category for task in tasks}
 
 
 def test_provider_benchmark_summary_reports_p50_fallback_and_estimated_cost() -> None:

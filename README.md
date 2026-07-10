@@ -840,6 +840,23 @@ reports/provider_benchmarks/
 
 Benchmark делает реальные LLM-запросы к провайдерам из `.env`, поэтому запускай его осознанно.
 
+## Стиль общения
+
+Обычные AI-ответы получают отдельный system prompt, собранный по измеримым признакам локального redacted-корпуса Telegram. Raw-посты в репозиторий и runtime prompt не входят. JSON extractor, actions и tools стилевой overlay не получают.
+
+```env
+AI_STYLE_ENABLED=true
+AI_STYLE_PROMPT_PATH=
+```
+
+Проверка:
+
+```bash
+.venv/bin/python scripts/eval_style.py
+```
+
+Подробно про данные, transports, ограничения fine-tune и A/B-проверку: [docs/communication-style.md](docs/communication-style.md).
+
 ## Automation runtime
 
 Все фоновые процессы используют один lifecycle из `assistant/automation_runtime.py`:
