@@ -125,6 +125,14 @@ def parse_preference_update(text: str) -> PreferenceUpdate | None:
             {"preferred_response_style": "expressive"},
             "Сохранил настройку: живой режим с матом включён.",
         )
+    if (
+        ("матер" in lowered or "с матом" in lowered or "ругаться" in lowered)
+        and any(marker in lowered for marker in ("умеешь", "можешь", "пиши", "говори", "разрешаю"))
+    ):
+        return PreferenceUpdate(
+            {"preferred_response_style": "expressive"},
+            "Включил живой режим: коротко, жёстко, с матом где уместно. Без корпоративной ваты.",
+        )
     if lowered in {"без мата", "без мата отвечай нормально", "говори без мата", "отвечай нормально"}:
         return PreferenceUpdate(
             {"preferred_response_style": "concise"},

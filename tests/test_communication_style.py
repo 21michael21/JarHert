@@ -62,6 +62,7 @@ def test_expressive_preference_allows_lively_language_with_boundaries() -> None:
     assert "русский мат как обычную часть голоса" in rendered
     assert "не стерилизуй ответ" in rendered.lower()
     assert "не уходи в оскорбления" in rendered.lower()
+    assert "без корпоративной ваты" in rendered.lower()
 
 
 def test_disabled_style_guide_returns_empty_system_prompt() -> None:

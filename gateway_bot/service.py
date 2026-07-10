@@ -217,7 +217,7 @@ class GatewayService:
             text=f"Подтвердил action #{action.id}. Выполняю в очереди.",
             intent=Intent.AGENT_DO,
             trace_id=action.trace_id,
-            buttons=_status_buttons(action.job_id),
+            suppress_delivery=True,
         )
 
     def confirm_job(self, tg_user_id: int, job_id: int) -> AssistantReply:
@@ -259,7 +259,7 @@ class GatewayService:
             text=f"Подтвердил Job #{job_id}: {len(confirmed)} действий. Выполняю по порядку.",
             intent=Intent.AGENT_DO,
             trace_id=job.trace_id,
-            buttons=_status_buttons(job_id),
+            suppress_delivery=True,
         )
 
     def cancel_action(self, tg_user_id: int, action_id: int) -> AssistantReply:

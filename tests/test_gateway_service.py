@@ -115,6 +115,7 @@ def test_gateway_confirms_and_cancels_own_actions() -> None:
 
     assert "needs_confirmation" in status.text
     assert confirmed.trace_id == "trace-confirm"
+    assert confirmed.suppress_delivery is True
     assert queue.claim_next().id == action.id
 
 
@@ -158,6 +159,7 @@ def test_gateway_confirms_whole_job_with_single_button() -> None:
     assert status.buttons[0][0].callback_data == f"ai:confirm_job:{job.id}"
     assert status.buttons[0][1].callback_data == f"ai:cancel_job:{job.id}"
     assert "2 действий" in confirmed.text
+    assert confirmed.suppress_delivery is True
     assert queue.claim_next().id == first.id
     queue.mark_succeeded(first.id)
     assert queue.claim_next().id == second.id

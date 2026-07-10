@@ -23,3 +23,33 @@ def test_unknown_cause_policy_forbids_speculation_and_trailing_question() -> Non
     assert "Не называй возможные причины" in policy.instructions
     assert "Не заканчивай вопросом" in policy.instructions
     assert response == "Без логов причину не установить. Проверь ошибки и метрики."
+
+
+def test_default_policy_removes_obvious_extra_follow_up_question() -> None:
+    policy = classify_response_policy("А как ты умеешь материться и писать?")
+
+    response = policy.normalize(
+        "Могу писать живо, коротко и с лёгким матом, если это уместно. Что тебе нужно: жесткий стиль или нейтральный формат?"
+    )
+
+    assert response == "Могу писать живо, коротко и с лёгким матом, если это уместно."
+
+
+def test_default_policy_removes_trailing_invitation_sentence() -> None:
+    policy = classify_response_policy("А как ты умеешь материться и писать?")
+
+    response = policy.normalize(
+        "Да, могу без ваты и с нужным колоритом. Скажешь стиль и тему — подстрою."
+    )
+
+    assert response == "Да, могу без ваты и с нужным колоритом."
+
+
+def test_default_policy_removes_trailing_invitation_even_without_question_mark() -> None:
+    policy = classify_response_policy("А как ты умеешь материться и писать?")
+
+    response = policy.normalize(
+        "Так и есть — могу писать резко и по делу, без лишних слов. Хочешь, дам пример живого варианта или расскажи задачу — подскажу стиль."
+    )
+
+    assert response == "Так и есть — могу писать резко и по делу, без лишних слов."

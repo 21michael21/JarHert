@@ -86,9 +86,18 @@ def _is_unknown_cause(prompt: str) -> bool:
 
 
 def _remove_trailing_follow_up(text: str) -> str:
-    return re.sub(
-        r"(?:\s+|\n+)(?:хочешь|если\s+хочешь|могу|нужен\s+ли)\b[^?]{0,180}\?\s*$",
+    clean = re.sub(
+        r"(?:\s+|\n+)(?:хочешь|если\s+хочешь|могу|нужен\s+ли|скажешь|пришл[её]шь|дашь|расскажи)\b[^.!?]{0,220}[.!?]?\s*$",
         "",
         text,
         flags=re.IGNORECASE,
     ).strip()
+    if not clean.endswith("?"):
+        return clean
+    sentences = re.split(r"(?<=[.!?])\s+", clean)
+    if len(sentences) <= 1:
+        return clean
+    last = sentences[-1].lower()
+    if any(marker in last for marker in ("что тебе нужно", "уточни", "какой формат", "какой стиль", "нужно ли")):
+        return " ".join(sentences[:-1]).strip()
+    return clean
