@@ -1,7 +1,6 @@
 ---
 name: personal-operating-center
 description: Run a concise personal daily plan, review, and inbox triage.
-version: 0.1.0
 ---
 
 # Personal Operating Center
@@ -40,4 +39,3 @@ messy inbox, pick priorities, review the day, or prepare the next one.
 - A review contains no invented completion.
 - A multi-action request has one clear approval point, not one confirmation per
   line item.
-

@@ -1,7 +1,6 @@
 ---
 name: personal-memory
 description: Save, find, connect, and correct personal notes without losing context.
-version: 0.1.0
 ---
 
 # Personal Memory
@@ -35,4 +34,3 @@ requests such as `find notes about OAuth` or `what did I promise Ilya`.
 - A search result identifies the source note and its project/contact link.
 - An edit preserves a recoverable previous revision.
 - No unrelated person's note appears in a query.
-
