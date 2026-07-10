@@ -64,6 +64,21 @@ def test_calendar_crud_uses_adapter_scripts(tmp_path) -> None:
     assert all("-c" in call[0] for call in calls[1:])
 
 
+def test_calendar_create_normalizes_iso_datetime_for_legacy_cli(tmp_path) -> None:
+    calls = []
+    adapter = make_adapter(tmp_path, calls)
+
+    adapter.create_calendar_event(
+        title="ISO canary",
+        start="2030-01-02T12:00:00+03:00",
+        end="2030-01-02T12:15:00+03:00",
+    )
+
+    argv = calls[0][0]
+    assert argv[argv.index("--start") + 1] == "2030-01-02 12:00"
+    assert argv[argv.index("--end") + 1] == "2030-01-02 12:15"
+
+
 def test_health_checks_both_integrations(tmp_path) -> None:
     calls = []
     adapter = make_adapter(tmp_path, calls)

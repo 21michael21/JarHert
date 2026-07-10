@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -95,9 +96,9 @@ class TaskCalendarAdapter:
             "--title",
             _required(title, "title"),
             "--start",
-            _required(start, "start"),
+            _normalize_calendar_datetime(start),
             "--end",
-            _required(end, "end"),
+            _normalize_calendar_datetime(end),
         ]
         if reminder_minutes is not None:
             args.extend(["--reminder", str(max(0, reminder_minutes))])
@@ -110,7 +111,11 @@ class TaskCalendarAdapter:
     def move_calendar_event(self, *, title: str, start: str, end: str) -> str:
         return self._run_python(
             _CALENDAR_MOVE_SCRIPT,
-            {"title": _required(title, "title"), "start": _required(start, "start"), "end": _required(end, "end")},
+            {
+                "title": _required(title, "title"),
+                "start": _normalize_calendar_datetime(start),
+                "end": _normalize_calendar_datetime(end),
+            },
         )
 
     def delete_calendar_event(self, *, title: str) -> str:
@@ -174,6 +179,16 @@ def _required(value: str, label: str) -> str:
 def _append(argv: list[str], flag: str, value: str | None) -> None:
     if value is not None and str(value).strip():
         argv.extend([flag, str(value).strip()])
+
+
+def _normalize_calendar_datetime(value: str) -> str:
+    clean = _required(value, "calendar datetime")
+    candidate = clean[:-1] + "+00:00" if clean.endswith("Z") else clean
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError:
+        return clean
+    return parsed.strftime("%Y-%m-%d %H:%M")
 
 
 def _bounded(value: str, limit: int) -> str:
