@@ -53,6 +53,8 @@ class Settings:
     ai_daily_global_limit: int = int(os.getenv("AI_DAILY_GLOBAL_LIMIT", "200"))
     ai_max_input_chars: int = int(os.getenv("AI_MAX_INPUT_CHARS", "4000"))
     ai_max_output_chars: int = int(os.getenv("AI_MAX_OUTPUT_CHARS", "2500"))
+    ai_style_enabled: bool = _bool_env("AI_STYLE_ENABLED", True)
+    ai_style_prompt_path: str = os.getenv("AI_STYLE_PROMPT_PATH", "")
     ai_provider_deadline_seconds: float = float(
         os.getenv("AI_PROVIDER_DEADLINE_SECONDS", os.getenv("AI_REQUEST_TIMEOUT_SECONDS", "15"))
     )

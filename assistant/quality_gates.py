@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from assistant.style_quality import assess_communication_style
 from assistant.types import GateResult, GateStatus
 
 
@@ -86,11 +87,26 @@ def check_input(text: str, *, max_chars: int = 4000) -> GateResult:
 
 
 def check_output(text: str, *, max_chars: int = 2500) -> GateResult:
+    safety_gate = check_output_safety(text)
+    if not safety_gate.ok:
+        return safety_gate
+    safe_text = safety_gate.safe_text
+    if len(safe_text) > max_chars:
+        return GateResult(GateStatus.NEEDS_FALLBACK, "output_too_long")
+
+    if _has_repetitive_water(safe_text):
+        return GateResult(GateStatus.NEEDS_FALLBACK, "repetitive_water")
+
+    if not assess_communication_style(safe_text).ok:
+        return GateResult(GateStatus.NEEDS_FALLBACK, "style_slop")
+
+    return GateResult(GateStatus.OK, safe_text=safe_text)
+
+
+def check_output_safety(text: str) -> GateResult:
     safe_text = (text or "").strip()
     if not safe_text:
         return GateResult(GateStatus.NEEDS_FALLBACK, "empty_output")
-    if len(safe_text) > max_chars:
-        return GateResult(GateStatus.NEEDS_FALLBACK, "output_too_long")
 
     lowered = safe_text.lower()
     if _contains_unsafe_instruction(lowered):
@@ -107,9 +123,6 @@ def check_output(text: str, *, max_chars: int = 2500) -> GateResult:
     for pattern in AI_SLOP_PATTERNS:
         if re.search(pattern, lowered, flags=re.IGNORECASE):
             return GateResult(GateStatus.NEEDS_FALLBACK, "ai_slop_marker")
-
-    if _has_repetitive_water(safe_text):
-        return GateResult(GateStatus.NEEDS_FALLBACK, "repetitive_water")
 
     return GateResult(GateStatus.OK, safe_text=safe_text)
 

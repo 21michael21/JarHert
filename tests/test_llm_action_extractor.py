@@ -26,6 +26,7 @@ def test_llm_extractor_accepts_valid_actions_json() -> None:
     assert route.actions[0].payload["title"] == "ревью Hub ML"
     assert route.actions[0].payload["start"] == "tomorrow 09:00"
     assert not route.fallback_to_ai
+    assert hermes.requests[-1].system_prompt == ""
 
 
 def test_llm_extractor_strips_markdown_code_fence() -> None:

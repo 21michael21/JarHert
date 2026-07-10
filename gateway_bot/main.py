@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 
 from assistant.google_docs_sync import GoogleDocsWebhookSync, NullDocsSync
+from assistant.communication_style import load_communication_style
 from assistant.google_sheets_sync import GoogleServiceAccountConfig, GoogleSheetsSync
 from assistant.pipeline import AssistantPipeline
 from assistant.provider_clients import FakeHermesClient, HermesCliClient, HermesClient, HermesHttpClient
@@ -127,6 +128,10 @@ def build_pipeline() -> AssistantPipeline:
         events=event_store,
         monitor_jobs=SqlMonitorJobStore(session_factory),
         worker_leases=SqlAutomationLeaseStore(session_factory),
+        communication_style=load_communication_style(
+            enabled=settings.ai_style_enabled,
+            path=settings.ai_style_prompt_path,
+        ),
     )
 
 

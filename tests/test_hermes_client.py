@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
@@ -13,6 +14,7 @@ from assistant.hermes_client import (
     HermesCliClient,
     HermesClientError,
     HermesHttpClient,
+    OpenAIChatCompletionsClient,
     OpenAIResponsesClient,
     normalize_hermes_response,
 )
@@ -22,10 +24,12 @@ from assistant.provider_fallback import FallbackHermesClient as SplitFallbackHer
 from assistant.types import HermesRequest, HermesResponse, UserContext
 
 
-def request() -> HermesRequest:
+def request(*, system_prompt: str = "", max_output_tokens: int | None = None) -> HermesRequest:
     return HermesRequest(
         user=UserContext(user_id=7, tg_user_id=1007),
         prompt="объясни MVP",
+        system_prompt=system_prompt,
+        max_output_tokens=max_output_tokens,
     )
 
 
@@ -90,13 +94,14 @@ def test_http_client_posts_prompt_and_normalizes_response() -> None:
             path="/chat",
             timeout_seconds=2,
         )
-        response = client.ask(request())
+        response = client.ask(request(system_prompt="Отвечай кратко."))
     finally:
         server.shutdown()
         thread.join(timeout=2)
 
     assert seen["prompt"] == "объясни MVP"
     assert seen["message"] == "объясни MVP"
+    assert seen["system_prompt"] == "Отвечай кратко."
     assert seen["session"] == "telegram-ai-brooch-user-7"
     assert response.text == "Ответ Hermes"
     assert response.provider == "gemini"
@@ -143,6 +148,16 @@ def test_cli_client_replaces_prompt_placeholder_without_shell() -> None:
     response = client.ask(request())
     assert response.text == "CLI:объясни MVP"
     assert response.provider == "hermes-cli"
+
+
+def test_cli_client_passes_style_as_ephemeral_system_prompt() -> None:
+    code = "import os; print(os.getenv('HERMES_EPHEMERAL_SYSTEM_PROMPT', 'missing'))"
+    client = HermesCliClient([sys.executable, "-c", code], timeout_seconds=2)
+
+    response = client.ask(request(system_prompt="Отвечай прямо."))
+
+    assert response.text == "Отвечай прямо."
+    assert os.getenv("HERMES_EPHEMERAL_SYSTEM_PROMPT") is None
 
 
 def test_cli_client_rejects_nonzero_exit() -> None:
@@ -231,13 +246,57 @@ def test_openai_responses_client_extracts_nested_output_text() -> None:
             base_url=f"http://127.0.0.1:{server.server_port}/v1",
             timeout_seconds=2,
         )
-        response = client.ask(request())
+        response = client.ask(request(system_prompt="Сначала дай вывод.", max_output_tokens=120))
     finally:
         server.shutdown()
         thread.join(timeout=2)
 
     assert seen["model"] == "gpt-5-nano"
     assert seen["input"] == "объясни MVP"
+    assert seen["instructions"] == "Сначала дай вывод."
+    assert seen["max_output_tokens"] == 120
     assert response.text == "OpenAI ok"
     assert response.provider == "openai"
     assert response.model == "gpt-5-nano-2025-08-07"
+
+
+def test_openai_chat_client_uses_native_system_message() -> None:
+    seen: dict[str, object] = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # noqa: N802
+            length = int(self.headers["Content-Length"])
+            seen.update(json.loads(self.rfile.read(length)))
+            body = json.dumps(
+                {"model": "free-model", "choices": [{"message": {"content": "Короткий ответ"}}]}
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        client = OpenAIChatCompletionsClient(
+            api_key="test-key",
+            model="free-model",
+            base_url=f"http://127.0.0.1:{server.server_port}/v1",
+            provider="test-provider",
+        )
+        response = client.ask(request(system_prompt="Сначала дай вывод.", max_output_tokens=120))
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+
+    assert seen["messages"] == [
+        {"role": "system", "content": "Сначала дай вывод."},
+        {"role": "user", "content": "объясни MVP"},
+    ]
+    assert seen["max_tokens"] == 120
+    assert response.text == "Короткий ответ"

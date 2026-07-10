@@ -82,6 +82,8 @@ class GateResult:
 class HermesRequest:
     user: UserContext
     prompt: str
+    system_prompt: str = ""
+    max_output_tokens: int | None = None
     intent: Intent = Intent.ASK
     context: dict[str, str] = field(default_factory=dict)
     trace_id: str = ""

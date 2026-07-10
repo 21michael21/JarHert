@@ -16,6 +16,7 @@ from assistant.command_handlers import (
     task_payload,
     task_text_with_preferences,
 )
+from assistant.communication_style import CommunicationStyleGuide, load_communication_style
 from assistant.contact_book import InMemoryContactBookStore
 from assistant.context_store import InMemoryConversationStore, actions_to_dicts
 from assistant.google_docs_sync import DocsSync, NullDocsSync
@@ -77,6 +78,7 @@ class AssistantPipeline:
         events=None,
         monitor_jobs=None,
         worker_leases=None,
+        communication_style: CommunicationStyleGuide | None = None,
     ) -> None:
         self.hermes = hermes
         self.limits = limits
@@ -104,6 +106,7 @@ class AssistantPipeline:
         self.events = events
         self.monitor_jobs = monitor_jobs
         self.worker_leases = worker_leases
+        self.communication_style = communication_style or load_communication_style(enabled=True)
         self.natural_actions = NaturalActionService(
             action_executor=self.action_executor,
             agent_jobs=self.agent_jobs,
@@ -309,6 +312,7 @@ class AssistantPipeline:
             prompt=input_gate.safe_text,
             intent=parsed.intent,
             style=self.preferences.get(user.user_id).preferred_response_style,
+            communication_style=self.communication_style,
             max_output_chars=self.max_output_chars,
             perf=self._perf,
             trace_id=self._current_trace_id,

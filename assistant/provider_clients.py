@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import subprocess
 import time
@@ -73,6 +74,10 @@ class HermesHttpClient:
                 "telegram_user_hash": str(request.user.user_id),
             },
         }
+        if request.system_prompt:
+            payload["system_prompt"] = request.system_prompt
+        if request.max_output_tokens is not None:
+            payload["max_output_tokens"] = request.max_output_tokens
         body = json.dumps(payload).encode("utf-8")
         headers = {
             "Content-Type": "application/json",
@@ -125,10 +130,12 @@ class OpenAIResponsesClient:
         payload = {
             "model": self.model,
             "input": request.prompt,
-            "max_output_tokens": self.max_output_tokens,
+            "max_output_tokens": min(self.max_output_tokens, request.max_output_tokens or self.max_output_tokens),
             "reasoning": {"effort": "minimal"},
             "text": {"verbosity": "low"},
         }
+        if request.system_prompt:
+            payload["instructions"] = request.system_prompt
         body = json.dumps(payload).encode("utf-8")
         http_request = urllib.request.Request(
             self.url,
@@ -190,16 +197,17 @@ class OpenAIChatCompletionsClient:
 
     def ask(self, request: HermesRequest) -> HermesResponse:
         started = time.perf_counter()
+        system_prompt = request.system_prompt or "Отвечай кратко, по-русски, без воды и без упоминания, что ты ИИ."
         payload = {
             "model": self.model,
             "messages": [
                 {
                     "role": "system",
-                    "content": "Отвечай кратко, по-русски, без воды и без упоминания, что ты ИИ.",
+                    "content": system_prompt,
                 },
                 {"role": "user", "content": request.prompt},
             ],
-            "max_tokens": self.max_output_tokens,
+            "max_tokens": min(self.max_output_tokens, request.max_output_tokens or self.max_output_tokens),
             "temperature": 0.3,
         }
         if self.supports_json and request.context.get("response_format") == "json":
@@ -267,6 +275,10 @@ class HermesCliClient:
         started = time.perf_counter()
         has_prompt_placeholder = any("{prompt}" in part for part in self.command)
         command = [part.replace("{prompt}", request.prompt) for part in self.command]
+        environment = None
+        if request.system_prompt:
+            environment = os.environ.copy()
+            environment["HERMES_EPHEMERAL_SYSTEM_PROMPT"] = request.system_prompt
         try:
             result = subprocess.run(
                 command,
@@ -275,6 +287,7 @@ class HermesCliClient:
                 capture_output=True,
                 timeout=self.timeout_seconds,
                 check=False,
+                env=environment,
             )
         except subprocess.TimeoutExpired as error:
             raise HermesClientError("Hermes CLI timed out") from error

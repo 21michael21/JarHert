@@ -11,6 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.config import Settings
+from assistant.communication_style import load_communication_style
 from backend.migrations import is_sqlite_url, require_current_schema
 from gateway_bot.main import build_task_center
 from scripts.run_migrations import run_migrations
@@ -73,6 +74,22 @@ def _validate_task_center_config(settings: Settings) -> list[str]:
     return []
 
 
+def _validate_style_config(settings: Settings) -> list[str]:
+    if not settings.ai_style_enabled:
+        return []
+    if settings.ai_style_prompt_path.strip():
+        path = Path(settings.ai_style_prompt_path).expanduser()
+        if not path.exists():
+            return [f"AI_STYLE_PROMPT_PATH does not exist: {path}"]
+        if not path.is_file():
+            return [f"AI_STYLE_PROMPT_PATH is not a file: {path}"]
+    try:
+        load_communication_style(enabled=True, path=settings.ai_style_prompt_path)
+    except (OSError, ValueError) as error:
+        return [f"AI communication style is invalid: {error}"]
+    return []
+
+
 def main() -> int:
     settings = Settings()
     failures: list[str] = []
@@ -110,6 +127,17 @@ def main() -> int:
 
     if settings.app_env == "production" and is_sqlite_url(settings.database_url):
         failures.append("APP_ENV=production requires PostgreSQL DATABASE_URL; SQLite is a development adapter")
+
+    style_errors = _validate_style_config(settings)
+    if style_errors:
+        for error in style_errors:
+            print(f"communication_style=fail {error}")
+        failures.extend(style_errors)
+    elif settings.ai_style_enabled:
+        guide = load_communication_style(enabled=True, path=settings.ai_style_prompt_path)
+        print(f"communication_style=ok version={guide.version}")
+    else:
+        print("communication_style=disabled")
 
     if settings.hermes_mode == "fake":
         print("hermes=fake mode, no external runtime required")

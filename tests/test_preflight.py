@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from backend.config import Settings
-from scripts.preflight import _validate_task_center_config
+from scripts.preflight import _validate_style_config, _validate_task_center_config
 
 
 def _settings(**updates) -> Settings:
@@ -28,5 +28,19 @@ def test_preflight_rejects_missing_task_command_center_dir(tmp_path) -> None:
 
 def test_preflight_accepts_existing_task_command_center_dir(tmp_path) -> None:
     errors = _validate_task_center_config(_settings(task_command_center_dir=str(tmp_path)))
+
+    assert errors == []
+
+
+def test_preflight_rejects_missing_custom_style_prompt(tmp_path) -> None:
+    errors = _validate_style_config(
+        _settings(ai_style_enabled=True, ai_style_prompt_path=str(tmp_path / "missing.md"))
+    )
+
+    assert errors == [f"AI_STYLE_PROMPT_PATH does not exist: {tmp_path / 'missing.md'}"]
+
+
+def test_preflight_accepts_packaged_style_prompt() -> None:
+    errors = _validate_style_config(_settings(ai_style_enabled=True, ai_style_prompt_path=""))
 
     assert errors == []
