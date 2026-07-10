@@ -1,0 +1,167 @@
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+from dataclasses import dataclass
+from typing import Callable
+from urllib.parse import urlparse
+
+
+Execute = Callable[..., subprocess.CompletedProcess[str]]
+
+
+@dataclass(frozen=True)
+class SandboxTask:
+    mode: str
+    prompt: str
+    repository_url: str | None = None
+    source_urls: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class SandboxResult:
+    output: str
+    mode: str
+
+
+class SandboxedHermesWorker:
+    """Launch the same Hermes profile with its hardened Docker terminal backend."""
+
+    def __init__(
+        self,
+        *,
+        profile_binary: str = "jarhert",
+        execute: Execute = subprocess.run,
+        docker_available: Callable[[], bool] | None = None,
+        allowed_research_hosts: set[str] | None = None,
+    ) -> None:
+        self.profile_binary = profile_binary
+        self.execute = execute
+        self.docker_available = docker_available or _docker_available
+        self.allowed_research_hosts = {
+            host.strip().lower()
+            for host in (allowed_research_hosts or _research_hosts_from_env())
+            if host.strip()
+        }
+
+    def run(self, task: SandboxTask) -> SandboxResult:
+        if not self.docker_available():
+            raise RuntimeError("Docker sandbox недоступен; запуск на host запрещён.")
+        prompt = _build_prompt(task, self.allowed_research_hosts)
+        argv = [
+            self.profile_binary,
+            "chat",
+            "-Q",
+            "-q",
+            prompt,
+            "--toolsets",
+            "coding,web,skills",
+            "--skills",
+            "sandboxed-coding",
+            "--source",
+            "sandbox-worker",
+            "--max-turns",
+            "40",
+        ]
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "TERMINAL_ENV": "docker",
+                "TERMINAL_DOCKER_FORWARD_ENV": "[]",
+                "HERMES_SANDBOX_TASK": "1",
+            }
+        )
+        result = self.execute(
+            argv,
+            env=environment,
+            timeout=900,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Sandbox worker завершился с кодом {result.returncode}. Проверь Hermes logs."
+            )
+        return SandboxResult(output=(result.stdout or "").strip()[:20_000], mode=task.mode)
+
+
+def _build_prompt(task: SandboxTask, allowed_hosts: set[str]) -> str:
+    mode = task.mode.strip().lower()
+    user_prompt = " ".join(task.prompt.split())
+    if mode not in {"coding", "research"}:
+        raise ValueError("Sandbox mode должен быть coding или research.")
+    if not user_prompt or len(user_prompt) > 5000:
+        raise ValueError("Sandbox prompt должен содержать от 1 до 5000 символов.")
+
+    if mode == "coding":
+        repository = _validate_github_repository(task.repository_url)
+        return (
+            "Работай только внутри Docker workspace. Клонируй репозиторий "
+            f"{repository} в /workspace/task. Задача: {user_prompt}\n"
+            "Сначала изучи код, затем сделай отдельную ветку, минимальный diff и тесты. "
+            "Не читай host-файлы, не ищи credentials, не push, не merge и не deploy. "
+            "Верни итог, проверки и diff summary."
+        )
+
+    sources = tuple(_validate_research_url(url, allowed_hosts) for url in task.source_urls)
+    if not sources:
+        raise ValueError("Research task требует хотя бы один разрешённый source URL.")
+    if len(sources) > 10:
+        raise ValueError("Research task поддерживает не более 10 source URLs.")
+    source_list = "\n".join(f"- {url}" for url in sources)
+    return (
+        f"Исследовательская задача: {user_prompt}\n"
+        f"Разрешённые источники:\n{source_list}\n"
+        "Не используй другие источники. Не вводи credentials и не выполняй внешние действия. "
+        "Отдели факты от выводов, приложи ссылки и верни короткий отчёт."
+    )
+
+
+def _validate_github_repository(value: str | None) -> str:
+    parsed = urlparse(str(value or "").strip())
+    parts = [part for part in parsed.path.split("/") if part]
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "github.com"
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or len(parts) != 2
+        or any(part in {".", ".."} for part in parts)
+    ):
+        raise ValueError("Coding repository должен быть GitHub HTTPS URL вида owner/repo.")
+    return f"https://github.com/{parts[0]}/{parts[1]}"
+
+
+def _validate_research_url(value: str, allowed_hosts: set[str]) -> str:
+    parsed = urlparse(value.strip())
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or parsed.username or parsed.password:
+        raise ValueError("Research source должен быть HTTPS URL без credentials.")
+    if host not in allowed_hosts:
+        raise ValueError(f"Research host '{host}' отсутствует в allowlist.")
+    return value.strip()
+
+
+def _research_hosts_from_env() -> set[str]:
+    raw = os.getenv("HERMES_RESEARCH_ALLOWED_HOSTS", "github.com,api.github.com")
+    return {item.strip().lower() for item in raw.split(",") if item.strip()}
+
+
+def _docker_available() -> bool:
+    if shutil.which("docker") is None:
+        return False
+    try:
+        result = subprocess.run(
+            ["docker", "info"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
