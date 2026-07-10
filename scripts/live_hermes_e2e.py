@@ -63,6 +63,9 @@ def approval_button(message, approval_text: str) -> str | None:
     text = str(message.message or "").lower()
     if "1" in labels and approval_text.lower() in text:
         return "1"
+    if approval_text.lower() in text:
+        positive = ("approve", "allow", "confirm", "разреш", "подтверд", "выполн", "экспорт")
+        return next((label for label in labels if any(marker in label.lower() for marker in positive)), None)
     return None
 
 

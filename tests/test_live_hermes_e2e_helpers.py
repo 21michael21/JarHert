@@ -22,3 +22,12 @@ def test_approval_button_supports_numbered_telegram_clarify_buttons() -> None:
 
     assert approval_button(message, "Выполнить") == "1"
     assert approval_button(message, "Экспортировать") is None
+
+
+def test_approval_button_supports_native_mcp_elicitation() -> None:
+    message = Message(
+        message="Выполнить этот план?",
+        buttons=[[Button("Approve Once"), Button("Decline")]],
+    )
+
+    assert approval_button(message, "Выполнить") == "Approve Once"
