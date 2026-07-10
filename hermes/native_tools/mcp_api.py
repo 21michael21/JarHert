@@ -57,8 +57,12 @@ class NativeToolsAPI:
     def action_plan_approve(self, *, plan_id: int) -> dict[str, Any]:
         return _plan_payload(self._plans().approve(plan_id))
 
-    def action_plan_execute(self, *, plan_id: int) -> dict[str, Any]:
+    def action_plan_execute(self, *, plan_id: int, confirmed: bool = False) -> dict[str, Any]:
+        if not confirmed:
+            raise ValueError("Plan execution требует подтверждение пользователя.")
         store = self._plans()
+        if store.get(plan_id).status == "draft":
+            store.approve(plan_id)
         return _plan_payload(execute_plan(store, plan_id, self.adapter_factory()))
 
     def action_plan_cancel(self, *, plan_id: int) -> dict[str, Any]:

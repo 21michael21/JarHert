@@ -78,6 +78,8 @@ def has_bad_reply(message) -> bool:
             "не удалось",
             "не смог",
             "отсутствует в plan allowlist",
+            "требует подтверждение",
+            "должен быть подтверждён",
             " failed",
             "error:",
             "peer должен",

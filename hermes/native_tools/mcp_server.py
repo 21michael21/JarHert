@@ -89,13 +89,17 @@ TOOLS: dict[str, dict[str, Any]] = {
             "additionalProperties": False,
         },
     },
-    "action_plan_approve": {
-        "description": "Approve one complete mutation plan after the user pressed the single confirmation button.",
-        "inputSchema": _plan_id_schema(),
-    },
     "action_plan_execute": {
-        "description": "Execute an approved mutation plan exactly once and return per-action results.",
-        "inputSchema": _plan_id_schema(),
+        "description": "After the user pressed the confirmation button, atomically approve and execute the plan exactly once.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "plan_id": {"type": "integer", "minimum": 1},
+                "confirmed": {"const": True},
+            },
+            "required": ["plan_id", "confirmed"],
+            "additionalProperties": False,
+        },
     },
     "action_plan_cancel": {
         "description": "Cancel a draft mutation plan.",
@@ -124,7 +128,6 @@ def dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         "task_list": API.task_list,
         "calendar_list": API.calendar_list,
         "action_plan_create": API.action_plan_create,
-        "action_plan_approve": API.action_plan_approve,
         "action_plan_execute": API.action_plan_execute,
         "action_plan_cancel": API.action_plan_cancel,
         "telegram_text_export": API.telegram_text_export,

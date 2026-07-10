@@ -26,8 +26,8 @@ Show one compact preview for every action. Call the native `clarify` tool once
 with exactly two choices: `Выполнить` and `Отмена`. Telegram renders them as
 inline buttons.
 
-On `Выполнить`, call `mcp_jarhert_native_action_plan_approve`, then
-`mcp_jarhert_native_action_plan_execute` without another question.
+On `Выполнить`, call `mcp_jarhert_native_action_plan_execute` once with the
+existing `plan_id` and `confirmed=true`, without another question.
 
 On `Отмена`, call `mcp_jarhert_native_action_plan_cancel`. Reusing the same
 Telegram update ID returns the existing plan. Summarize succeeded and failed

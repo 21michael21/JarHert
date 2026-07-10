@@ -45,7 +45,6 @@ mcp_servers:
         - task_list
         - calendar_list
         - action_plan_create
-        - action_plan_approve
         - action_plan_execute
         - action_plan_cancel
         - telegram_text_export

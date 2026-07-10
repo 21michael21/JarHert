@@ -33,6 +33,7 @@ def test_native_mcp_exposes_only_explicit_tools() -> None:
     assert names == set(TOOLS)
     assert "shell" not in names
     assert "file_read" not in names
+    assert "action_plan_approve" not in names
 
     action_items = TOOLS["action_plan_create"]["inputSchema"]["properties"]["actions"]["items"]["oneOf"]
     assert {item["properties"]["type"]["const"] for item in action_items} == {
@@ -54,8 +55,9 @@ def test_native_api_plan_round_trip_and_health_redaction(tmp_path: Path) -> None
         actions=[{"type": "task.create", "payload": {"title": "MCP canary"}}],
         idempotency_key="telegram-update-1",
     )
-    api.action_plan_approve(plan_id=draft["id"])
-    completed = api.action_plan_execute(plan_id=draft["id"])
+    with pytest.raises(ValueError, match="подтверждение"):
+        api.action_plan_execute(plan_id=draft["id"])
+    completed = api.action_plan_execute(plan_id=draft["id"], confirmed=True)
 
     assert health == {"ok": True, "trello_ok": True, "calendar_ok": True}
     assert completed["status"] == "succeeded"
