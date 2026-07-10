@@ -55,6 +55,16 @@ def buttons(message) -> list[str]:
     return [str(button.text) for row in (message.buttons or []) for button in row]
 
 
+def approval_button(message, approval_text: str) -> str | None:
+    labels = buttons(message)
+    if approval_text in labels:
+        return approval_text
+    text = str(message.message or "").lower()
+    if "1" in labels and approval_text.lower() in text:
+        return "1"
+    return None
+
+
 def has_bad_reply(message) -> bool:
     text = str(message.message or "").lower()
     return any(
@@ -73,14 +83,14 @@ def has_bad_reply(message) -> bool:
     )
 
 
-async def send_plain(client, entity, text: str, timeout: int) -> tuple[Any, int]:
+async def send_plain(client, entity, text: str, timeout: int, *, marker: str) -> tuple[Any, int]:
     started = time.perf_counter()
     sent = await client.send_message(entity, text)
     reply = await wait_message(
         client,
         entity,
         after_id=int(sent.id),
-        predicate=lambda message: bool(str(message.message or "").strip()),
+        predicate=lambda message: marker.lower() in str(message.message or "").lower(),
         timeout=timeout,
     )
     if has_bad_reply(reply):
@@ -95,6 +105,7 @@ async def send_confirmed(
     timeout: int,
     *,
     approval_text: str = "Выполнить",
+    marker: str,
 ) -> tuple[Any, int]:
     started = time.perf_counter()
     sent = await client.send_message(entity, text)
@@ -102,16 +113,17 @@ async def send_confirmed(
         client,
         entity,
         after_id=int(sent.id),
-        predicate=lambda message: approval_text in buttons(message),
+        predicate=lambda message: marker.lower() in str(message.message or "").lower()
+        and approval_button(message, approval_text) is not None,
         timeout=timeout,
     )
-    await approval.click(text=approval_text)
+    await approval.click(text=approval_button(approval, approval_text))
     result = await wait_message(
         client,
         entity,
         after_id=int(approval.id) - 1,
-        predicate=lambda message: approval_text not in buttons(message)
-        and (bool(str(message.message or "").strip()) or message.file is not None),
+        predicate=lambda message: approval_button(message, approval_text) is None
+        and (marker.lower() in str(message.message or "").lower() or message.file is not None),
         timeout=timeout,
     )
     if has_bad_reply(result):
@@ -138,15 +150,29 @@ async def run(args, steps: list[Step]) -> None:
     task_title = f"JarHert E2E {run_id}"
     event_title = f"JarHert Calendar E2E {run_id}"
     try:
-        reply, latency = await send_plain(client, entity, "Ответь одной короткой фразой: ты на связи?", args.timeout)
+        reply, latency = await send_plain(
+            client,
+            entity,
+            f"Ответь ровно: JarHert E2E ping {run_id}",
+            args.timeout,
+            marker=run_id,
+        )
         steps.append(Step("llm_reply", True, latency, int(reply.id)))
 
         reply, latency = await send_confirmed(
-            client, entity, f"Создай в Trello задачу «{task_title}» в списке Today", args.timeout
+            client,
+            entity,
+            f"Создай в Trello задачу «{task_title}» в списке Today",
+            args.timeout,
+            marker=run_id,
         )
         steps.append(Step("trello_create", True, latency, int(reply.id)))
         reply, latency = await send_confirmed(
-            client, entity, f"Удали из Trello задачу «{task_title}»", args.timeout
+            client,
+            entity,
+            f"Удали из Trello задачу «{task_title}»",
+            args.timeout,
+            marker=run_id,
         )
         steps.append(Step("trello_delete", True, latency, int(reply.id)))
 
@@ -155,10 +181,15 @@ async def run(args, steps: list[Step]) -> None:
             entity,
             f"Создай в Google Calendar событие «{event_title}» на 2030-01-02 с 12:00 до 12:15 по Москве",
             args.timeout,
+            marker=run_id,
         )
         steps.append(Step("calendar_create", True, latency, int(reply.id)))
         reply, latency = await send_confirmed(
-            client, entity, f"Удали из Google Calendar событие «{event_title}»", args.timeout
+            client,
+            entity,
+            f"Удали из Google Calendar событие «{event_title}»",
+            args.timeout,
+            marker=run_id,
         )
         steps.append(Step("calendar_delete", True, latency, int(reply.id)))
 
@@ -168,6 +199,7 @@ async def run(args, steps: list[Step]) -> None:
             f"Экспортируй текст из чата @{username} в TXT, максимум 20 сообщений",
             args.timeout,
             approval_text="Экспортировать",
+            marker=username,
         )
         filename = str(getattr(reply.file, "name", "") or "") if reply.file else ""
         if not filename.lower().endswith(".txt"):
