@@ -16,6 +16,6 @@ COPY hermes ./hermes
 COPY alembic.ini ./
 COPY alembic ./alembic
 
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir -e '.[google]'
 
 CMD ["python", "-m", "gateway_bot.telegram_app"]
