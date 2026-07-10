@@ -108,8 +108,6 @@ class NaturalActionService:
         trace_id: str = "",
         idempotency_key: str = "",
     ) -> str:
-        if action.type == ActionType.CALENDAR_MOVE:
-            raise TaskCommandError("Перенос встреч пока требует уточнения и отдельного calendar update tool.")
         with perf.track("tool"):
             return self.action_executor.execute(
                 action,
@@ -125,8 +123,6 @@ class NaturalActionService:
         trace_id: str = "",
         idempotency_key: str = "",
     ) -> ToolExecutionResult:
-        if action.type == ActionType.CALENDAR_MOVE:
-            raise TaskCommandError("Перенос встреч пока требует уточнения и отдельного calendar update tool.")
         with perf.track("tool"):
             return self.action_executor.execute(
                 action,
@@ -196,10 +192,11 @@ class NaturalActionService:
             )
 
         return AssistantReply(
-            text=f"Принял, выполняю. Job #{job.id}.\nИтог пришлю отдельным сообщением.",
+            text=f"Job #{job.id} выполняется.",
             intent=Intent.AGENT_DO,
             trace_id=trace_id,
             buttons=[[ReplyButton("Статус job", f"ai:status:{job.id}")]],
+            suppress_delivery=True,
         )
 
     def queue_direct_action(

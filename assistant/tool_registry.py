@@ -183,11 +183,47 @@ def _default_tool_specs() -> list[ToolSpec]:
             permanent_errors=("validation", "not_configured"),
         ),
         ToolSpec(
+            name=ActionType.TASK_DELETE,
+            input_schema=InputSchema(required=("title",)),
+            timeout_seconds=20,
+            risk=ToolRisk.HIGH,
+            handler=_task_delete,
+            retryable_errors=("timeout", "tempor", "network", "rate"),
+            permanent_errors=("validation", "not_configured"),
+        ),
+        ToolSpec(
             name=ActionType.CALENDAR_CREATE,
             input_schema=InputSchema(required=("title", "start", "end")),
             timeout_seconds=20,
             risk=ToolRisk.MEDIUM,
             handler=_calendar_create,
+            retryable_errors=("timeout", "tempor", "network", "rate"),
+            permanent_errors=("validation", "not_configured"),
+        ),
+        ToolSpec(
+            name=ActionType.CALENDAR_LIST,
+            input_schema=InputSchema(optional=("when",)),
+            timeout_seconds=20,
+            risk=ToolRisk.LOW,
+            handler=_calendar_list,
+            retryable_errors=("timeout", "tempor", "network", "rate"),
+            permanent_errors=("validation", "not_configured"),
+        ),
+        ToolSpec(
+            name=ActionType.CALENDAR_MOVE,
+            input_schema=InputSchema(required=("title", "start"), optional=("end",)),
+            timeout_seconds=20,
+            risk=ToolRisk.MEDIUM,
+            handler=_calendar_move,
+            retryable_errors=("timeout", "tempor", "network", "rate"),
+            permanent_errors=("validation", "not_configured"),
+        ),
+        ToolSpec(
+            name=ActionType.CALENDAR_DELETE,
+            input_schema=InputSchema(required=("title",)),
+            timeout_seconds=20,
+            risk=ToolRisk.HIGH,
+            handler=_calendar_delete,
             retryable_errors=("timeout", "tempor", "network", "rate"),
             permanent_errors=("validation", "not_configured"),
         ),
@@ -346,12 +382,38 @@ def _task_done(payload: dict[str, str], context: ToolContext) -> ToolExecutionRe
     return ToolExecutionResult("Закрыл задачу:\n" + output, meta=extract_tool_result_ids(output))
 
 
+def _task_delete(payload: dict[str, str], context: ToolContext) -> ToolExecutionResult:
+    center = _require_task_center(context)
+    output = center.delete_task(payload["title"])
+    return ToolExecutionResult("Удалил задачу:\n" + output, meta=extract_tool_result_ids(output))
+
+
 def _calendar_create(payload: dict[str, str], context: ToolContext) -> ToolExecutionResult:
     center = _require_task_center(context)
     output = center.create_calendar_event(
         f"{payload['title']} | start={payload['start']} | end={payload['end']}"
     )
     return ToolExecutionResult("Создал событие:\n" + output, meta=extract_tool_result_ids(output))
+
+
+def _calendar_list(payload: dict[str, str], context: ToolContext) -> ToolExecutionResult:
+    center = _require_task_center(context)
+    output = center.list_calendar_events(payload.get("when", "today"))
+    return ToolExecutionResult("Календарь:\n" + output)
+
+
+def _calendar_move(payload: dict[str, str], context: ToolContext) -> ToolExecutionResult:
+    center = _require_task_center(context)
+    start = payload["start"]
+    end = payload.get("end") or _default_end_from_start(start)
+    output = center.move_calendar_event(f"{payload['title']} | start={start} | end={end}")
+    return ToolExecutionResult("Перенёс событие:\n" + output, meta=extract_tool_result_ids(output))
+
+
+def _calendar_delete(payload: dict[str, str], context: ToolContext) -> ToolExecutionResult:
+    center = _require_task_center(context)
+    output = center.delete_calendar_event(payload["title"])
+    return ToolExecutionResult("Удалил событие:\n" + output, meta=extract_tool_result_ids(output))
 
 
 def _telegram_reply(payload: dict[str, str], context: ToolContext) -> ToolExecutionResult:
@@ -418,6 +480,14 @@ def _require_task_center(context: ToolContext) -> TaskCommandCenter:
     if context.task_center is None:
         raise ToolExecutionError("Task Command Center не подключён.", kind="permanent")
     return context.task_center
+
+
+def _default_end_from_start(start: str) -> str:
+    match = re.search(r"(?P<hour>[01]?\d|2[0-3]):(?P<minute>[0-5]\d)", start)
+    if not match:
+        return start
+    total = (int(match.group("hour")) * 60 + int(match.group("minute")) + 30) % (24 * 60)
+    return f"{start[:match.start()]}{total // 60:02d}:{total % 60:02d}{start[match.end():]}"
 
 
 def _parse_send_at(value: str | None) -> datetime | None:

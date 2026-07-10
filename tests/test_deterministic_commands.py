@@ -1,4 +1,5 @@
 from assistant.action_queue import ActionStatus, InMemoryActionQueueStore
+from assistant.action_schema import ActionType
 from assistant.hermes_client import FakeHermesClient
 from assistant.ideas import InMemoryIdeaStore
 from assistant.limits import DailyLimitStore
@@ -36,6 +37,14 @@ class FakeTaskCenter:
     def create_task_with_calendar(self, **kwargs):
         self.calls.append(("task_with_calendar", kwargs))
         return "Created Trello card and calendar event"
+
+    def delete_task(self, text):
+        self.calls.append(("delete_task", text))
+        return "Deleted Trello card"
+
+    def move_calendar_event(self, text):
+        self.calls.append(("move_calendar_event", text))
+        return "Moved calendar event"
 
 
 def make_pipeline() -> AssistantPipeline:
@@ -332,6 +341,49 @@ def test_plain_text_creates_task_and_calendar_without_tags() -> None:
     assert task_center.calls[0][1]["title"] == "проверь сервер"
     assert task_center.calls[0][1]["start"] == "tomorrow 10:00"
     assert task_center.calls[1][1] == "созвон с Ильей | start=tomorrow 12:00 | end=tomorrow 12:30"
+
+
+def test_plain_text_delete_task_uses_single_job_confirmation() -> None:
+    queue = InMemoryActionQueueStore()
+    task_center = FakeTaskCenter()
+    pipeline = AssistantPipeline(
+        FakeHermesClient(),
+        DailyLimitStore(),
+        plain_text_ai_enabled=True,
+        task_center=task_center,
+        action_queue=queue,
+    )
+
+    reply = pipeline.handle_text(user(), "удали задачу проверить сервер")
+
+    assert "Нужно одно подтверждение" in reply.text
+    assert reply.buttons[0][0].callback_data == "ai:confirm_job:1"
+    queued = queue.list_for_user(user().user_id, limit=20)[0]
+    assert queued.type == ActionType.TASK_DELETE
+    assert queued.payload == {"title": "проверить сервер"}
+    assert task_center.calls == []
+
+
+def test_plain_text_calendar_move_uses_single_job_confirmation() -> None:
+    queue = InMemoryActionQueueStore()
+    task_center = FakeTaskCenter()
+    pipeline = AssistantPipeline(
+        FakeHermesClient(),
+        DailyLimitStore(),
+        plain_text_ai_enabled=True,
+        task_center=task_center,
+        action_queue=queue,
+    )
+
+    reply = pipeline.handle_text(user(), "перенеси встречу с Ильей на завтра утром")
+
+    assert "Нужно одно подтверждение" in reply.text
+    assert reply.buttons[0][0].callback_data == "ai:confirm_job:1"
+    queued = queue.list_for_user(user().user_id, limit=20)[0]
+    assert queued.type == ActionType.CALENDAR_MOVE
+    assert queued.payload["title"] == "встречу с Ильей"
+    assert queued.payload["start"] == "tomorrow 09:00"
+    assert task_center.calls == []
 
 
 def test_plain_text_mixed_idea_and_reminder_without_tags() -> None:

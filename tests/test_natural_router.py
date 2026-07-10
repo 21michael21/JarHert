@@ -114,6 +114,29 @@ def test_routes_task_move() -> None:
     assert result.actions[0].payload == {"title": "проверить сервер", "to": "Done"}
 
 
+def test_routes_task_delete() -> None:
+    result = route_natural_text("удали задачу проверить сервер")
+
+    assert [action.type for action in result.actions] == [ActionType.TASK_DELETE]
+    assert result.actions[0].payload == {"title": "проверить сервер"}
+    assert not result.actions[0].needs_confirmation
+
+
+def test_routes_calendar_list_today() -> None:
+    result = route_natural_text("покажи календарь сегодня")
+
+    assert [action.type for action in result.actions] == [ActionType.CALENDAR_LIST]
+    assert result.actions[0].payload == {"when": "today"}
+
+
+def test_routes_calendar_delete() -> None:
+    result = route_natural_text("удали встречу с Ильей")
+
+    assert [action.type for action in result.actions] == [ActionType.CALENDAR_DELETE]
+    assert result.actions[0].payload == {"title": "встречу с Ильей"}
+    assert not result.actions[0].needs_confirmation
+
+
 def test_routes_implicit_agent_goal() -> None:
     result = route_natural_text("гермес сделай полный аудит задач и календаря")
 

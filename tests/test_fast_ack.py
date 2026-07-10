@@ -68,6 +68,25 @@ def test_heavy_natural_action_returns_fast_ack_and_queues_work() -> None:
     assert queued.status == ActionStatus.RUNNING
 
 
+def test_low_risk_queued_action_suppresses_noise_until_worker_delivers_result() -> None:
+    queue = InMemoryActionQueueStore()
+    pipeline = AssistantPipeline(
+        FakeHermesClient(),
+        DailyLimitStore(),
+        plain_text_ai_enabled=True,
+        task_center=SlowTaskCenter(),
+        action_queue=queue,
+    )
+
+    reply = pipeline.handle_text(user(), "покажи задачи Today")
+
+    assert reply.suppress_delivery is True
+    assert "Принял" not in reply.text
+    queued = queue.claim_next()
+    assert queued is not None
+    assert queued.type == ActionType.TASK_LIST
+
+
 def test_replayed_telegram_update_creates_one_job_and_action() -> None:
     queue = InMemoryActionQueueStore()
     jobs = InMemoryAgentJobStore()

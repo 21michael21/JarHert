@@ -77,7 +77,10 @@ def _route_single(
         lambda value: _reminder_action(value, context_text=context_text),
         _task_list_action,
         _task_done_action,
+        _task_delete_action,
         _task_move_action,
+        _calendar_list_action,
+        _calendar_delete_action,
         lambda value: _ambiguous_move_action(value, preferences=preferences),
         lambda value: _calendar_move_action(value, preferences=preferences),
         _agent_job_action,
@@ -220,11 +223,46 @@ def _task_done_action(text: str) -> list[PlannedAction]:
     return [_action(ActionType.TASK_DONE, title=match.group("title").strip())]
 
 
+def _task_delete_action(text: str) -> list[PlannedAction]:
+    match = re.match(r"^(?:удали|удалить)\s+задачу\s+(?P<title>.+)$", text, re.IGNORECASE)
+    if not match:
+        return []
+    return [
+        PlannedAction(
+            ActionType.TASK_DELETE,
+            payload={"title": match.group("title").strip()},
+            confidence=0.9,
+        )
+    ]
+
+
 def _task_move_action(text: str) -> list[PlannedAction]:
     match = re.match(r"^(?:перенеси|перемести)\s+задачу\s+(?P<title>.+?)\s+в\s+(?P<to>[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё\s-]*)$", text, re.IGNORECASE)
     if not match:
         return []
     return [_action(ActionType.TASK_MOVE, title=match.group("title").strip(), to=match.group("to").strip())]
+
+
+def _calendar_list_action(text: str) -> list[PlannedAction]:
+    lowered = text.lower()
+    if re.match(r"^(?:покажи|что\s+у\s+меня|какой)\s+(?:календарь|расписание|события).*\bзавтра\b", lowered):
+        return [PlannedAction(ActionType.CALENDAR_LIST, payload={"when": "tomorrow"}, confidence=0.9)]
+    if re.match(r"^(?:покажи|что\s+у\s+меня|какой)\s+(?:календарь|расписание|события)(?:.*\bсегодня\b)?", lowered):
+        return [PlannedAction(ActionType.CALENDAR_LIST, payload={"when": "today"}, confidence=0.9)]
+    return []
+
+
+def _calendar_delete_action(text: str) -> list[PlannedAction]:
+    match = re.match(r"^(?:удали|удалить|отмени|отменить)\s+(?P<title>встречу|созвон|колл|звонок|событие)(?P<rest>.+)$", text, re.IGNORECASE)
+    if not match:
+        return []
+    return [
+        PlannedAction(
+            ActionType.CALENDAR_DELETE,
+            payload={"title": f"{match.group('title')}{match.group('rest')}".strip()},
+            confidence=0.86,
+        )
+    ]
 
 
 def _ambiguous_move_action(text: str, *, preferences: UserPreferences | None = None) -> list[PlannedAction]:
@@ -256,7 +294,7 @@ def _calendar_move_action(text: str, *, preferences: UserPreferences | None = No
         payload["start"] = start
     if end:
         payload["end"] = end
-    return [PlannedAction(ActionType.CALENDAR_MOVE, payload=payload, confidence=0.72, needs_confirmation=True)]
+    return [PlannedAction(ActionType.CALENDAR_MOVE, payload=payload, confidence=0.72)]
 
 
 def _agent_job_action(text: str) -> list[PlannedAction]:

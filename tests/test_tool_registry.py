@@ -45,9 +45,25 @@ class FakeTaskCenter:
         self.calls.append(("complete_task", text))
         return "task done"
 
+    def delete_task(self, text):
+        self.calls.append(("delete_task", text))
+        return "task deleted"
+
     def create_calendar_event(self, text):
         self.calls.append(("create_calendar_event", text))
         return "calendar event calendar_event_id=event123456"
+
+    def list_calendar_events(self, text):
+        self.calls.append(("list_calendar_events", text))
+        return "calendar list"
+
+    def move_calendar_event(self, text):
+        self.calls.append(("move_calendar_event", text))
+        return "calendar moved calendar_event_id=event123456"
+
+    def delete_calendar_event(self, text):
+        self.calls.append(("delete_calendar_event", text))
+        return "calendar deleted calendar_event_id=event123456"
 
 
 def make_context(task_center=None) -> ToolContext:
@@ -75,7 +91,11 @@ def test_default_registry_has_only_safe_allowlisted_tools() -> None:
         "task.list",
         "task.move",
         "task.done",
+        "task.delete",
         "calendar.create",
+        "calendar.list",
+        "calendar.move",
+        "calendar.delete",
         "telegram.reply",
     }.issubset(names)
     assert "shell.run" not in names
@@ -164,3 +184,47 @@ def test_tool_requires_configured_task_center() -> None:
 
     assert not exc.value.retryable
     assert exc.value.kind == "permanent"
+
+
+def test_executor_routes_task_delete_to_registered_tool() -> None:
+    task_center = FakeTaskCenter()
+    context = make_context(task_center=task_center)
+    executor = ActionExecutor(build_default_tool_registry())
+
+    result = executor.execute(PlannedAction(ActionType.TASK_DELETE, {"title": "проверить сервер"}), context)
+
+    assert "Удалил задачу" in result.message
+    assert task_center.calls == [("delete_task", "проверить сервер")]
+
+
+def test_executor_routes_calendar_crud_to_registered_tools() -> None:
+    task_center = FakeTaskCenter()
+    context = make_context(task_center=task_center)
+    executor = ActionExecutor(build_default_tool_registry())
+
+    listed = executor.execute(PlannedAction(ActionType.CALENDAR_LIST, {"when": "today"}), context)
+    moved = executor.execute(
+        PlannedAction(ActionType.CALENDAR_MOVE, {"title": "созвон", "start": "tomorrow 10:00", "end": "tomorrow 10:30"}),
+        context,
+    )
+    deleted = executor.execute(PlannedAction(ActionType.CALENDAR_DELETE, {"title": "созвон"}), context)
+
+    assert "Календарь" in listed.message
+    assert "Перенёс событие" in moved.message
+    assert "Удалил событие" in deleted.message
+    assert task_center.calls == [
+        ("list_calendar_events", "today"),
+        ("move_calendar_event", "созвон | start=tomorrow 10:00 | end=tomorrow 10:30"),
+        ("delete_calendar_event", "созвон"),
+    ]
+
+
+def test_executor_routes_calendar_tomorrow_list_to_registered_tool() -> None:
+    task_center = FakeTaskCenter()
+    context = make_context(task_center=task_center)
+    executor = ActionExecutor(build_default_tool_registry())
+
+    result = executor.execute(PlannedAction(ActionType.CALENDAR_LIST, {"when": "tomorrow"}), context)
+
+    assert "Календарь" in result.message
+    assert task_center.calls == [("list_calendar_events", "tomorrow")]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -133,6 +134,11 @@ class TaskCommandCenter:
         summary = fields.get("summary") or fields.get("итог") or "Готово."
         return self._run([*self._base_args(), "done", "--card", title, "--summary", summary])
 
+    def delete_task(self, text: str) -> str:
+        fields = _parse_fields(text)
+        title = _required_title(fields)
+        return self._run([*self._base_args(), "delete", "--card", title, "--yes"])
+
     def create_calendar_event(self, text: str) -> str:
         fields = _parse_fields(text)
         title = _required_title(fields)
@@ -146,6 +152,25 @@ class TaskCommandCenter:
         _append_optional(args, "--reminder", fields.get("reminder") or fields.get("напоминание"))
         _append_optional(args, "--description", fields.get("description") or fields.get("описание"))
         return self._run(args)
+
+    def list_calendar_events(self, text: str) -> str:
+        fields = _parse_fields(text, allow_positional=False)
+        when = (fields.get("when") or fields.get("когда") or _positional_list_name(text) or "today").strip()
+        return self._run_python(_CALENDAR_LIST_SCRIPT, {"when": when})
+
+    def move_calendar_event(self, text: str) -> str:
+        fields = _parse_fields(text)
+        title = _required_title(fields)
+        start = fields.get("start") or fields.get("начало")
+        end = fields.get("end") or fields.get("конец")
+        if not start or not end:
+            raise TaskCommandError("Для переноса события нужны поля start и end.")
+        return self._run_python(_CALENDAR_MOVE_SCRIPT, {"title": title, "start": start, "end": end})
+
+    def delete_calendar_event(self, text: str) -> str:
+        fields = _parse_fields(text)
+        title = _required_title(fields)
+        return self._run_python(_CALENDAR_DELETE_SCRIPT, {"title": title})
 
     def health_check(self) -> TaskCenterHealth:
         if not self.root.exists():
@@ -184,6 +209,9 @@ class TaskCommandCenter:
             message = error or output or f"taskctl exited with {result.returncode}"
             raise TaskCommandError(_truncate(message, 900))
         return _truncate(output or "Готово.", 1800)
+
+    def _run_python(self, script: str, payload: dict[str, str]) -> str:
+        return self._run([str(self._python_path()), "-c", script, json.dumps(payload, ensure_ascii=False)])
 
     def _probe(self, args: list[str]) -> tuple[bool, str]:
         try:
@@ -251,4 +279,112 @@ calendar = GoogleCalendarClient(config, Path("."))
 calendar.validate_setup()
 events = calendar.list_today_events()
 print(f"calendar_ok events_today={len(events)}")
+""".strip()
+
+
+_CALENDAR_LIST_SCRIPT = """
+import json
+import sys
+from datetime import date, datetime, time, timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
+from src.config import load_config
+from src.formatter import format_event
+from src.google_calendar_client import GoogleCalendarClient, _event_start
+
+payload = json.loads(sys.argv[1])
+config = load_config(Path("."))
+calendar = GoogleCalendarClient(config, Path("."))
+when = str(payload.get("when") or "today").strip().lower()
+tz = ZoneInfo(config.timezone)
+day = date.today() + (timedelta(days=1) if when in {"tomorrow", "завтра"} else timedelta(days=0))
+start = datetime.combine(day, time.min, tz)
+end = start + timedelta(days=1)
+if config.mock:
+    events = [
+        event
+        for event in calendar._load_store()["events"]
+        if _event_start(event) and start <= _event_start(event) < end
+    ]
+else:
+    service = calendar.authenticate()
+    response = service.events().list(
+        calendarId=config.google_calendar_id,
+        timeMin=start.isoformat(),
+        timeMax=end.isoformat(),
+        singleEvents=True,
+        orderBy="startTime",
+    ).execute()
+    events = list(response.get("items", []))
+print("No events found." if not events else "\\n".join(format_event(event) for event in events))
+""".strip()
+
+
+_CALENDAR_MOVE_SCRIPT = """
+import json
+import sys
+from pathlib import Path
+from src.config import load_config
+from src.date_parser import parse_datetime
+from src.formatter import format_event
+from src.google_calendar_client import GoogleCalendarClient
+from src.models import CalendarEventInput
+
+payload = json.loads(sys.argv[1])
+config = load_config(Path("."))
+calendar = GoogleCalendarClient(config, Path("."))
+event = calendar.find_event_by_title(payload["title"])
+body = calendar.build_event_body(
+    CalendarEventInput(
+        title=str(event.get("summary") or payload["title"]),
+        start=parse_datetime(payload["start"], config.timezone),
+        end=parse_datetime(payload["end"], config.timezone),
+        reminder_minutes=None,
+        description=str(event.get("description") or ""),
+    )
+)
+event_id = str(event["id"])
+if config.mock:
+    store = calendar._load_store()
+    moved = None
+    for item in store["events"]:
+        if str(item.get("id")) == event_id:
+            item.update(body)
+            item["id"] = event_id
+            item["htmlLink"] = event.get("htmlLink")
+            moved = item
+            break
+    if moved is None:
+        raise SystemExit(f"Cannot find calendar event id '{event_id}'.")
+    calendar._save_store(store)
+else:
+    service = calendar.authenticate()
+    moved = service.events().update(
+        calendarId=config.google_calendar_id,
+        eventId=event_id,
+        body=body,
+    ).execute()
+print(format_event(moved))
+print(f"calendar_event_id={moved.get('id')}")
+if moved.get("htmlLink"):
+    print(moved.get("htmlLink"))
+""".strip()
+
+
+_CALENDAR_DELETE_SCRIPT = """
+import json
+import sys
+from pathlib import Path
+from src.config import load_config
+from src.formatter import format_event
+from src.google_calendar_client import GoogleCalendarClient
+
+payload = json.loads(sys.argv[1])
+config = load_config(Path("."))
+calendar = GoogleCalendarClient(config, Path("."))
+event = calendar.delete_event_by_title(payload["title"])
+print(format_event(event))
+print(f"calendar_event_id={event.get('id')}")
+if event.get("htmlLink"):
+    print(event.get("htmlLink"))
 """.strip()

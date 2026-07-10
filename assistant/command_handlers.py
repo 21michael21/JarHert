@@ -126,8 +126,11 @@ def is_heavy_action(action: PlannedAction) -> bool:
         ActionType.TASK_LIST,
         ActionType.TASK_MOVE,
         ActionType.TASK_DONE,
+        ActionType.TASK_DELETE,
         ActionType.CALENDAR_CREATE,
+        ActionType.CALENDAR_LIST,
         ActionType.CALENDAR_MOVE,
+        ActionType.CALENDAR_DELETE,
         ActionType.TELEGRAM_SEND_MESSAGE,
     }
 
