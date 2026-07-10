@@ -14,12 +14,9 @@ Accept only a numeric peer ID or `@username`. Default to TXT and 5000 messages
 unless the user asks otherwise. Call native `clarify` once with two choices:
 `Экспортировать` and `Отмена`. Telegram renders these as inline buttons.
 
-After `Экспортировать`, run:
-
-```bash
-python "$HERMES_HOME/native_tools/cli.py" chat export \
-  --peer "@username" --format txt --limit 5000 --confirmed
-```
+After `Экспортировать`, call `mcp_jarhert_native_telegram_text_export` exactly
+once with `confirmed=true`, `output_format=txt`, the peer and the requested
+limit. Do not use terminal for the export.
 
 Do not read the resulting file into model context. Return a short count and the
 attachment marker:

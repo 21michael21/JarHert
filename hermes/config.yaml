@@ -22,13 +22,35 @@ memory:
 cron:
   wrap_response: false
 
-approvals:
-  mode: manual
-  timeout: 60
-  cron_mode: deny
-
-command_allowlist:
-  - 'python "$HERMES_HOME/native_tools/cli.py" *'
+mcp_servers:
+  jarhert_native:
+    command: "${HERMES_HOME}/.venv/bin/python"
+    args:
+      - "${HERMES_HOME}/native_tools/mcp_server.py"
+    env:
+      HERMES_HOME: "${HERMES_HOME}"
+      PERSONAL_OS_DB: "${HERMES_HOME}/data/personal-os.sqlite3"
+      TASK_COMMAND_CENTER_DIR: "${TASK_COMMAND_CENTER_DIR}"
+      TASK_COMMAND_CENTER_PYTHON: "${TASK_COMMAND_CENTER_PYTHON}"
+      TELEGRAM_API_ID: "${TELEGRAM_API_ID}"
+      TELEGRAM_API_HASH: "${TELEGRAM_API_HASH}"
+      TELEGRAM_USER_SESSION: "${TELEGRAM_USER_SESSION}"
+    enabled: true
+    timeout: 120
+    connect_timeout: 30
+    supports_parallel_tool_calls: false
+    tools:
+      include:
+        - integration_health
+        - task_list
+        - calendar_list
+        - action_plan_create
+        - action_plan_approve
+        - action_plan_execute
+        - action_plan_cancel
+        - telegram_text_export
+      resources: false
+      prompts: false
 
 terminal:
   docker_image: "nikolaik/python-nodejs:python3.11-nodejs20"
