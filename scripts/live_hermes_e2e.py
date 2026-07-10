@@ -31,14 +31,15 @@ def load_env(path: Path) -> None:
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
-def bot_username(token: str) -> str:
+def bot_identity(token: str) -> tuple[str, int]:
     request = urllib.request.Request(f"https://api.telegram.org/bot{token}/getMe")
     with urllib.request.urlopen(request, timeout=10) as response:
         payload = json.loads(response.read(1_000_000))
     username = str((payload.get("result") or {}).get("username") or "")
-    if not payload.get("ok") or not username:
+    bot_id = int((payload.get("result") or {}).get("id") or 0)
+    if not payload.get("ok") or not username or not bot_id:
         raise RuntimeError("Telegram getMe failed")
-    return username
+    return username, bot_id
 
 
 async def wait_message(client, entity, *, after_id: int, predicate: Callable[[Any], bool], timeout: int):
@@ -79,6 +80,7 @@ def has_bad_reply(message) -> bool:
             "отсутствует в plan allowlist",
             " failed",
             "error:",
+            "peer должен",
         )
     )
 
@@ -121,7 +123,7 @@ async def send_confirmed(
     result = await wait_message(
         client,
         entity,
-        after_id=int(approval.id) - 1,
+        after_id=int(approval.id),
         predicate=lambda message: approval_button(message, approval_text) is None
         and (marker.lower() in str(message.message or "").lower() or message.file is not None),
         timeout=timeout,
@@ -137,7 +139,7 @@ async def run(args, steps: list[Step]) -> None:
     except ModuleNotFoundError as error:
         raise RuntimeError("Install Telethon before live E2E") from error
     token = os.environ["TELEGRAM_BOT_TOKEN"]
-    username = bot_username(token)
+    username, bot_id = bot_identity(token)
     api_id = int(os.environ["TELEGRAM_API_ID"])
     api_hash = os.environ["TELEGRAM_API_HASH"]
     session = os.environ["TELEGRAM_USER_SESSION"]
@@ -196,10 +198,10 @@ async def run(args, steps: list[Step]) -> None:
         reply, latency = await send_confirmed(
             client,
             entity,
-            f"Экспортируй текст из чата @{username} в TXT, максимум 20 сообщений",
+            f"Экспортируй текст из Telegram peer {bot_id} в TXT, максимум 20 сообщений. Проверка {run_id}",
             args.timeout,
             approval_text="Экспортировать",
-            marker=username,
+            marker=run_id,
         )
         filename = str(getattr(reply.file, "name", "") or "") if reply.file else ""
         if not filename.lower().endswith(".txt"):
