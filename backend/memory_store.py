@@ -292,12 +292,16 @@ class SqlDailyLimitStore(DailyLimitStore):
         self.session_factory = session_factory
 
     def can_consume(self, user_id: int, *, today: date | None = None) -> bool:
+        if self.per_user_limit <= 0 and self.global_limit <= 0:
+            return True
         day = today or date.today()
         day_key = day.isoformat()
         with self.session_factory() as db:
             user_count = self._request_count(db, user_id, day_key)
             global_count = db.scalar(select(func.coalesce(func.sum(UsageDaily.request_count), 0)).where(UsageDaily.day == day_key))
-            return user_count < self.per_user_limit and (global_count or 0) < self.global_limit
+            user_ok = self.per_user_limit <= 0 or user_count < self.per_user_limit
+            global_ok = self.global_limit <= 0 or (global_count or 0) < self.global_limit
+            return user_ok and global_ok
 
     def consume(self, user_id: int, *, today: date | None = None) -> bool:
         day = today or date.today()
@@ -314,7 +318,9 @@ class SqlDailyLimitStore(DailyLimitStore):
                 db.add(record)
                 db.flush()
             global_count = db.scalar(select(func.coalesce(func.sum(UsageDaily.request_count), 0)).where(UsageDaily.day == day_key)) or 0
-            if record.request_count >= self.per_user_limit or global_count >= self.global_limit:
+            user_blocked = self.per_user_limit > 0 and record.request_count >= self.per_user_limit
+            global_blocked = self.global_limit > 0 and global_count >= self.global_limit
+            if user_blocked or global_blocked:
                 db.rollback()
                 return False
             record.request_count += 1
@@ -322,6 +328,8 @@ class SqlDailyLimitStore(DailyLimitStore):
             return True
 
     def remaining_for_user(self, user_id: int, *, today: date | None = None) -> int:
+        if self.per_user_limit <= 0:
+            return 2_147_483_647
         day = today or date.today()
         with self.session_factory() as db:
             used = self._request_count(db, user_id, day.isoformat())

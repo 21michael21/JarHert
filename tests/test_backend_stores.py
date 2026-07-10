@@ -100,6 +100,15 @@ def test_sql_daily_limit_persists(tmp_path) -> None:
     assert not limits_two.consume(user.id)
 
 
+def test_sql_daily_limit_zero_means_unlimited(tmp_path) -> None:
+    factory = session_factory(tmp_path)
+    user = UserStore(factory).get_or_create(7004)
+    limits = SqlDailyLimitStore(factory, per_user_limit=0, global_limit=0)
+
+    assert all(limits.consume(user.id) for _ in range(5))
+    assert limits.remaining_for_user(user.id) > 1_000_000
+
+
 def test_gateway_logs_events(tmp_path) -> None:
     factory = session_factory(tmp_path)
     service = GatewayService(

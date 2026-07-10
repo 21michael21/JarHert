@@ -56,6 +56,25 @@ def test_pipeline_enforces_daily_limit() -> None:
     assert second.blocked_reason == "daily_limit_exceeded"
 
 
+def test_pipeline_admin_bypasses_daily_limit() -> None:
+    pipeline = AssistantPipeline(FakeHermesClient(), DailyLimitStore(per_user_limit=1, global_limit=1))
+    admin = UserContext(user_id=1, tg_user_id=1001, is_admin=True)
+
+    first = pipeline.handle_text(admin, "/ask раз")
+    second = pipeline.handle_text(admin, "/ask два")
+
+    assert first.blocked_reason is None
+    assert second.blocked_reason is None
+    assert pipeline.limits.remaining_for_user(admin.user_id) == 1
+
+
+def test_zero_daily_limit_means_unlimited() -> None:
+    limits = DailyLimitStore(per_user_limit=0, global_limit=0)
+
+    assert all(limits.consume(1) for _ in range(5))
+    assert limits.remaining_for_user(1) > 1_000_000
+
+
 def test_pipeline_rejects_bad_hermes_output() -> None:
     hermes = FakeHermesClient([HermesResponse(text='{"error": "429 rate limit"}')])
     pipeline = AssistantPipeline(hermes, DailyLimitStore())

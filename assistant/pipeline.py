@@ -159,7 +159,7 @@ class AssistantPipeline:
         trace_id: str = "",
     ) -> AssistantReply:
         """Create another candidate reply; it is stored only after explicit feedback."""
-        if not self.limits.consume(user.user_id):
+        if not self._consume_ai_limit(user):
             return self.responses.daily_limit(intent=Intent.ASK)
         recorder = PerfRecorder()
         trace_id = trace_id or new_trace_id()
@@ -334,7 +334,7 @@ class AssistantPipeline:
             return self.responses.blocked_action(input_gate.reason, intent=parsed.intent)
 
         if parsed.intent == Intent.ASK and should_try_llm_action_extractor(input_gate.safe_text):
-            if not self.limits.consume(user.user_id):
+            if not self._consume_ai_limit(user):
                 return self.responses.daily_limit(intent=parsed.intent)
             with self._perf.track("llm"):
                 extracted_route = self.action_extractor.extract(user, input_gate.safe_text)
@@ -348,7 +348,7 @@ class AssistantPipeline:
                 blocked_reason=extracted_route.reason or "natural_action_parse_failed",
             )
 
-        if not self.limits.consume(user.user_id):
+        if not self._consume_ai_limit(user):
             return self.responses.daily_limit(intent=parsed.intent)
 
         return answer_with_ai(
@@ -955,6 +955,11 @@ class AssistantPipeline:
             preferences=self.preferences.get(user.user_id),
             idempotency_key=idempotency_key,
         )
+
+    def _consume_ai_limit(self, user: UserContext) -> bool:
+        if user.is_admin:
+            return True
+        return self.limits.consume(user.user_id)
 
     def _route_natural_text(self, user: UserContext, text: str) -> NaturalRoute:
         return self.natural_actions.route_text(
