@@ -1,5 +1,36 @@
 # Telegram AI Brooch
 
+> Migration direction: Hermes Agent becomes the only production Telegram
+> runtime. The Python gateway documented below is legacy during the migration
+> and must not run beside `hermes gateway` with the same bot token. The native
+> profile, skills, and ownership boundary are in
+> `docs/adr/0002-hermes-native-personal-os.md`.
+
+## Hermes-native profile
+
+The repository now contains Hermes skills for a personal operating center,
+personal memory, and sandboxed coding. They are ordinary Hermes skills, not a
+second bot or service.
+
+On a machine where Hermes is installed, point the dedicated Hermes profile at
+the checked-out skill directory:
+
+```bash
+export JARHERT_HERMES_SKILLS_DIR=/opt/jarhert/hermes/skills
+# Merge hermes/jarhert-native-config.yaml.example into ~/.hermes/config.yaml.
+hermes skills list
+```
+
+Expected skills:
+
+- `personal-operating-center` — plan today, triage inbox, evening review;
+- `personal-memory` — notes, promises, projects, and contacts;
+- `sandboxed-coding` — repository work only in an isolated workspace.
+
+Keep credentials in `~/.hermes/.env`. Use Hermes Telegram pairing or an
+explicit allowlist. Do not copy a token into this repository and do not start
+the legacy `gateway_bot` once `hermes gateway` owns the bot token.
+
 Отдельный Telegram AI-помощник на базе Hermes Agent.
 
 Цель MVP: быстрый и безопасный помощник в Telegram, который отвечает через Hermes, сохраняет важное, ставит напоминания и не тратит бесплатные LLM-квоты на задачи, которые обычный код делает лучше.

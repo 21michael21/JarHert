@@ -1,0 +1,27 @@
+# Copy selected values into ~/.hermes/config.yaml for the dedicated JarHert
+# profile. Keep API keys in ~/.hermes/.env, never in this repository.
+
+skills:
+  external_dirs:
+    - ${JARHERT_HERMES_SKILLS_DIR}
+  # The agent may propose a reusable procedure, but a human approves its first
+  # write. After the workflow proves useful, this can be relaxed per skill.
+  write_approval: true
+  guard_agent_created: true
+
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  memory_char_limit: 2200
+  user_char_limit: 1375
+  write_approval: true
+
+cron:
+  # Telegram messages should look like normal assistant messages, not system
+  # notifications with a large wrapper.
+  wrap_response: false
+
+# Do not configure Telegram here by copying a token into the repository.
+# Configure the Hermes gateway through ~/.hermes/.env and allow only paired or
+# explicitly allowlisted users. Do not run JarHert gateway_bot with that token.
+
