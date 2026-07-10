@@ -23,6 +23,14 @@ jarhert skills list
 keeps API keys, Telegram token, memories, sessions and runtime databases in the
 local profile and never takes them from git.
 
+Install the lightweight native dependency used for owner-authorized Telegram
+text export:
+
+```bash
+~/.hermes/hermes-agent/venv/bin/python \
+  ~/.hermes/profiles/jarhert/scripts/bootstrap_native_deps.py
+```
+
 Expected native skills:
 
 - `personal-operating-center` — plan today, triage inbox, evening review;

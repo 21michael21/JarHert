@@ -50,3 +50,4 @@ distribution_owned:
   - skills/
   - native_tools/
   - scripts/
+  - requirements-native.txt
