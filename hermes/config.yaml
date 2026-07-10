@@ -1,6 +1,6 @@
 model:
-  provider: openrouter
-  default: openrouter/free
+  provider: openai-api
+  default: gpt-5-nano
 
 skills:
   write_approval: true

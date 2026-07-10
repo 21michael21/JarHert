@@ -23,6 +23,10 @@ jarhert skills list
 keeps API keys, Telegram token, memories, sessions and runtime databases in the
 local profile and never takes them from git.
 
+The stable profile uses direct `openai-api` with `gpt-5-nano`. Free gateways
+are not in the primary route because their availability and model selection are
+not predictable enough for reminders and external actions.
+
 Install the lightweight native dependency used for owner-authorized Telegram
 text export:
 
