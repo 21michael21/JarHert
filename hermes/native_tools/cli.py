@@ -1,0 +1,107 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from dataclasses import asdict
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from native_tools.contacts import ContactStore, ContactStoreError
+    from native_tools.delivery import HermesTelegramSender, dispatch_due_messages
+else:
+    from .contacts import ContactStore, ContactStoreError
+    from .delivery import HermesTelegramSender, dispatch_due_messages
+
+
+def database_path() -> Path:
+    explicit = os.getenv("PERSONAL_OS_DB", "").strip()
+    if explicit:
+        return Path(explicit).expanduser()
+    home = Path(os.getenv("HERMES_HOME", "~/.hermes")).expanduser()
+    return home / "data" / "personal-os.sqlite3"
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="personal-os")
+    parser.add_argument("--db", type=Path, default=database_path())
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    contact = commands.add_parser("contact")
+    contact_commands = contact.add_subparsers(dest="contact_command", required=True)
+    contact_add = contact_commands.add_parser("add")
+    contact_add.add_argument("--name", required=True)
+    contact_add.add_argument("--telegram-chat-id", type=int, required=True)
+    contact_add.add_argument("--alias", action="append", default=[])
+    contact_commands.add_parser("list")
+
+    message = commands.add_parser("message")
+    message_commands = message.add_subparsers(dest="message_command", required=True)
+    plan = message_commands.add_parser("plan")
+    plan.add_argument("--items-json", required=True)
+    plan.add_argument("--idempotency-key", required=True)
+    approve = message_commands.add_parser("approve")
+    approve.add_argument("plan_id", type=int)
+    show = message_commands.add_parser("show")
+    show.add_argument("plan_id", type=int)
+
+    dispatch = commands.add_parser("dispatch")
+    dispatch.add_argument("--limit", type=int, default=20)
+    dispatch.add_argument("--now")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    store = ContactStore(args.db)
+    try:
+        payload = run_command(store, args)
+    except (ContactStoreError, ValueError, json.JSONDecodeError) as error:
+        print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False))
+        return 2
+    print(json.dumps({"ok": True, "result": _json_value(payload)}, ensure_ascii=False, separators=(",", ":")))
+    return 0
+
+
+def run_command(store: ContactStore, args: argparse.Namespace) -> Any:
+    if args.command == "contact" and args.contact_command == "add":
+        return store.add_contact(
+            name=args.name,
+            telegram_chat_id=args.telegram_chat_id,
+            aliases=args.alias,
+        )
+    if args.command == "contact" and args.contact_command == "list":
+        return store.list_contacts()
+    if args.command == "message" and args.message_command == "plan":
+        items = json.loads(args.items_json)
+        if not isinstance(items, list):
+            raise ValueError("items-json должен быть JSON-массивом.")
+        return store.create_message_plan(items, idempotency_key=args.idempotency_key)
+    if args.command == "message" and args.message_command == "approve":
+        return store.approve_message_plan(args.plan_id)
+    if args.command == "message" and args.message_command == "show":
+        return store.get_message_plan(args.plan_id)
+    if args.command == "dispatch":
+        now = datetime.fromisoformat(args.now) if args.now else None
+        return dispatch_due_messages(store, HermesTelegramSender(), now=now, limit=args.limit)
+    raise ValueError("Неизвестная команда.")
+
+
+def _json_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, tuple):
+        return [_json_value(item) for item in value]
+    if isinstance(value, list):
+        return [_json_value(item) for item in value]
+    if hasattr(value, "__dataclass_fields__"):
+        return {key: _json_value(item) for key, item in asdict(value).items()}
+    return value
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

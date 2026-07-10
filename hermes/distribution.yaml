@@ -25,4 +25,5 @@ distribution_owned:
   - AGENTS.md
   - config.yaml
   - skills/
-
+  - native_tools/
+  - scripts/

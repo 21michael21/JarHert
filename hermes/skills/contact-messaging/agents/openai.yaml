@@ -1,0 +1,4 @@
+interface:
+  display_name: "Contact Messaging"
+  short_description: "Contacts, previews, and scheduled Telegram messages"
+  default_prompt: "Prepare or schedule a Telegram message to a saved contact."
