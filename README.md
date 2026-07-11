@@ -45,6 +45,27 @@ The managed source clone on the server is `/home/deploy/jarhert-profile` by
 default. It is pinned to the exact commit pushed to `origin/main`; the upstream
 Hermes Agent clone is never pulled or reset by this command.
 
+### Task Command Center sync for the native Hermes profile
+
+Task Command Center stays outside JarHert Git because its local folder contains
+Trello credentials and Google OAuth files. The native profile invokes it as a
+local adapter, so copy it to the same VDS separately and only with an explicit
+secret-copy flag:
+
+```bash
+TASK_COMMAND_CENTER_SOURCE=/absolute/path/to/task-command-center \
+JARHERT_VPS=deploy@your-vps-host \
+TASK_COMMAND_CENTER_COPY_SECRETS=1 \
+deploy/vps/sync_task_command_center.sh
+```
+
+The command sends the source code and its `.env`, `client_secret.json` and
+`token.json` directly to `/home/deploy/task-command-center`, creates an isolated
+venv there, applies mode-600 permissions to secrets, updates only the two TCC
+path variables in the live Hermes profile, then performs read-only Trello and
+Calendar health checks. It does not print, commit or copy those secrets into
+the JarHert profile distribution.
+
 ### Encrypted backup, rotation and restore proof
 
 `hermes/scripts/backup_profile.py` makes an SQLite-consistent snapshot of the
