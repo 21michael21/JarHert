@@ -26,7 +26,7 @@ done
 
 ssh "$REMOTE" "mkdir -p '$REMOTE_DIR'"
 rsync -a --delete --exclude '.env' --exclude '.venv/' --exclude '.git/' --exclude '.pytest_cache/' --exclude '__pycache__/' --exclude '.taskctl_mock/' --exclude 'client_secret.json' --exclude 'token.json*' "$SOURCE_DIR/" "$REMOTE:$REMOTE_DIR/"
-rsync -a --chmod=F600 "$SOURCE_DIR/.env" "$SOURCE_DIR/client_secret.json" "$SOURCE_DIR/token.json" "$REMOTE:$REMOTE_DIR/"
+rsync -a "$SOURCE_DIR/.env" "$SOURCE_DIR/client_secret.json" "$SOURCE_DIR/token.json" "$REMOTE:$REMOTE_DIR/"
 
 ssh "$REMOTE" bash -s -- "$REMOTE_DIR" "$PROFILE_ENV" <<'REMOTE_SCRIPT'
 set -Eeuo pipefail
