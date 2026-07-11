@@ -25,6 +25,18 @@ messy inbox, pick priorities, review the day, or prepare the next one.
 6. Keep the final reply short. Ask one question only if a missing fact changes
    the action.
 
+## Proactive delivery
+
+Use one script-only Hermes cron for each cadence. Both jobs are idempotent and
+use no model:
+
+```bash
+hermes cron create "0 8 * * *" --name "Daily Brief" \
+  --script dispatch_personal_summary.py --no-agent --deliver local -- --kind daily
+hermes cron create "0 18 * * 0" --name "Weekly Review" \
+  --script dispatch_personal_summary.py --no-agent --deliver local -- --kind weekly
+```
+
 ## Guardrails
 
 - A reminder, Calendar event, task, or outgoing message is real only after its

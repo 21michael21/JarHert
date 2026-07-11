@@ -13,6 +13,7 @@ from .monitors import Monitor, MonitorRegistry
 from .personal_os import PersonalOSStore
 from .personal_crm import PersonalCRMStore
 from .personal_productivity import PersonalProductivityStore, local_day_bounds
+from .personal_rhythms import PersonalRhythmStore, format_daily_brief
 from .task_calendar import TaskCalendarAdapter
 from .telegram_text_export import ExportResult, run_telegram_export
 
@@ -306,6 +307,24 @@ class NativeToolsAPI:
             "integration_errors": errors,
         }
 
+    def personal_daily_brief(
+        self,
+        *,
+        now: str | None = None,
+        timezone_name: str = "Europe/Moscow",
+    ) -> dict[str, Any]:
+        data = self.personal_today(now=now, timezone_name=timezone_name)
+        return {"text": format_daily_brief(data), "data": data}
+
+    def personal_weekly_review(
+        self,
+        *,
+        now: str | None = None,
+        timezone_name: str = "Europe/Moscow",
+    ) -> dict[str, Any]:
+        self._capabilities().require("personal.read")
+        return self._rhythms().weekly_review(now=now, timezone_name=timezone_name)
+
     def work_mode_get(self) -> dict[str, Any]:
         return _value_payload(self._capabilities().get_mode())
 
@@ -411,6 +430,9 @@ class NativeToolsAPI:
 
     def _crm(self) -> PersonalCRMStore:
         return PersonalCRMStore(self.database_path)
+
+    def _rhythms(self) -> PersonalRhythmStore:
+        return PersonalRhythmStore(self.database_path)
 
     def _capabilities(self) -> CapabilityPolicyStore:
         return CapabilityPolicyStore(self.database_path)

@@ -406,6 +406,24 @@ def personal_today(
 
 
 @mcp.tool()
+def personal_daily_brief(
+    now: str | None = None,
+    timezone_name: str = "Europe/Moscow",
+) -> dict[str, object]:
+    """Build one factual morning brief without an extra LLM call."""
+    return api.personal_daily_brief(now=now, timezone_name=timezone_name)
+
+
+@mcp.tool()
+def personal_weekly_review(
+    now: str | None = None,
+    timezone_name: str = "Europe/Moscow",
+) -> dict[str, object]:
+    """Summarize completed, moved, failed work and the next three commitments."""
+    return api.personal_weekly_review(now=now, timezone_name=timezone_name)
+
+
+@mcp.tool()
 async def commitment_complete_confirmed(commitment_id: int, ctx: Context) -> dict[str, object]:
     """Ask once, then mark one open promise as done."""
     if not await _confirm(ctx, f"Отметить обещание #{commitment_id} выполненным?"):

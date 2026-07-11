@@ -69,6 +69,8 @@ mcp_servers:
         - crm_interaction_log
         - crm_timeline
         - personal_today
+        - personal_daily_brief
+        - personal_weekly_review
         - work_mode_get
         - work_mode_set
         - telegram_text_export_confirmed
