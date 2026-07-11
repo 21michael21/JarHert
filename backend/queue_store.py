@@ -425,12 +425,46 @@ class SqlActionQueueStore:
                 .where(
                     AgentActionRecord.user_id == user_id,
                     AgentActionRecord.job_id == job_id,
-                    AgentActionRecord.status.in_([ActionStatus.QUEUED.value, ActionStatus.NEEDS_CONFIRMATION.value]),
+                    AgentActionRecord.status.in_([
+                        ActionStatus.QUEUED.value,
+                        ActionStatus.NEEDS_CONFIRMATION.value,
+                        ActionStatus.PAUSED.value,
+                    ]),
                 )
                 .order_by(AgentActionRecord.created_at.asc(), AgentActionRecord.id.asc())
             ).all()
             for record in records:
                 record.status = ActionStatus.CANCELLED.value
+            db.commit()
+            for record in records:
+                db.refresh(record)
+            return [agent_action_from_record(record) for record in records]
+
+    def pause_job_for_user(self, user_id: int, job_id: int) -> list[AgentAction]:
+        return self._change_job_status(user_id, job_id, ActionStatus.QUEUED, ActionStatus.PAUSED)
+
+    def resume_job_for_user(self, user_id: int, job_id: int) -> list[AgentAction]:
+        return self._change_job_status(user_id, job_id, ActionStatus.PAUSED, ActionStatus.QUEUED)
+
+    def _change_job_status(
+        self,
+        user_id: int,
+        job_id: int,
+        current: ActionStatus,
+        target: ActionStatus,
+    ) -> list[AgentAction]:
+        with self.session_factory() as db:
+            records = db.scalars(
+                select(AgentActionRecord)
+                .where(
+                    AgentActionRecord.user_id == user_id,
+                    AgentActionRecord.job_id == job_id,
+                    AgentActionRecord.status == current.value,
+                )
+                .order_by(AgentActionRecord.created_at.asc(), AgentActionRecord.id.asc())
+            ).all()
+            for record in records:
+                record.status = target.value
             db.commit()
             for record in records:
                 db.refresh(record)

@@ -21,6 +21,7 @@ class JobStatusSummary:
     queued: int = 0
     needs_confirmation: int = 0
     cancelled: int = 0
+    paused: int = 0
     compensation_available: int = 0
     compensation_not_supported: int = 0
     next_action_id: int | None = None
@@ -48,12 +49,14 @@ def compute_job_status(actions: list[AgentAction]) -> JobStatusSummary:
             ActionStatus.NEEDS_CONFIRMATION,
             ActionStatus.QUEUED,
             ActionStatus.RUNNING,
+            ActionStatus.PAUSED,
         }:
             next_action_id = action.id
 
     failed = counts[ActionStatus.FAILED]
     blocked = counts[ActionStatus.BLOCKED]
     cancelled = counts[ActionStatus.CANCELLED]
+    paused = counts[ActionStatus.PAUSED]
     succeeded = counts[ActionStatus.SUCCEEDED]
     running = counts[ActionStatus.RUNNING]
     queued = counts[ActionStatus.QUEUED]
@@ -65,6 +68,8 @@ def compute_job_status(actions: list[AgentAction]) -> JobStatusSummary:
         status = "running"
     elif failed or blocked:
         status = "partial_failure" if succeeded else "failed"
+    elif paused:
+        status = "paused"
     elif needs_confirmation:
         status = "needs_confirmation"
     elif queued:
@@ -88,6 +93,7 @@ def compute_job_status(actions: list[AgentAction]) -> JobStatusSummary:
         queued=queued,
         needs_confirmation=needs_confirmation,
         cancelled=cancelled,
+        paused=paused,
         compensation_available=compensation_available,
         compensation_not_supported=compensation_not_supported,
         next_action_id=next_action_id,

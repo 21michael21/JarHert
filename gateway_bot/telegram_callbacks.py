@@ -33,6 +33,10 @@ def handle_callback_data(service, tg_user_id: int, data: str, *, update_trace_id
         reply = service.confirm_job(tg_user_id, item_id)
     elif parts[1] == "cancel_job":
         reply = service.cancel_job(tg_user_id, item_id)
+    elif parts[1] == "pause_job":
+        reply = service.pause_job(tg_user_id, item_id)
+    elif parts[1] == "resume_job":
+        reply = service.resume_job(tg_user_id, item_id)
     elif parts[1] == "confirm":
         reply = service.confirm_action(tg_user_id, item_id)
     elif parts[1] == "cancel":

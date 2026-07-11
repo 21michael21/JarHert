@@ -16,6 +16,7 @@ class ActionStatus(str, Enum):
     NEEDS_CONFIRMATION = "needs_confirmation"
     CANCELLED = "cancelled"
     BLOCKED = "blocked"
+    PAUSED = "paused"
 
 
 @dataclass(frozen=True)
@@ -278,12 +279,34 @@ class InMemoryActionQueueStore:
         for item in sorted(self._items, key=lambda value: (value.created_at, value.id)):
             if item.user_id != user_id or item.job_id != job_id:
                 continue
-            if item.status not in {ActionStatus.QUEUED, ActionStatus.NEEDS_CONFIRMATION}:
+            if item.status not in {ActionStatus.QUEUED, ActionStatus.NEEDS_CONFIRMATION, ActionStatus.PAUSED}:
                 continue
             updated = replace(item, status=ActionStatus.CANCELLED, updated_at=datetime.now(timezone.utc))
             self._replace(updated)
             cancelled.append(updated)
         return cancelled
+
+    def pause_job_for_user(self, user_id: int, job_id: int) -> list[AgentAction]:
+        return self._change_job_status(user_id, job_id, ActionStatus.QUEUED, ActionStatus.PAUSED)
+
+    def resume_job_for_user(self, user_id: int, job_id: int) -> list[AgentAction]:
+        return self._change_job_status(user_id, job_id, ActionStatus.PAUSED, ActionStatus.QUEUED)
+
+    def _change_job_status(
+        self,
+        user_id: int,
+        job_id: int,
+        current: ActionStatus,
+        target: ActionStatus,
+    ) -> list[AgentAction]:
+        changed: list[AgentAction] = []
+        for item in sorted(self._items, key=lambda value: (value.created_at, value.id)):
+            if item.user_id != user_id or item.job_id != job_id or item.status != current:
+                continue
+            updated = replace(item, status=target, updated_at=datetime.now(timezone.utc))
+            self._replace(updated)
+            changed.append(updated)
+        return changed
 
     def block_dependents(self, action_id: int, reason: str) -> list[AgentAction]:
         blocked: list[AgentAction] = []

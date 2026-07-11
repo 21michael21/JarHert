@@ -205,6 +205,37 @@ def test_gateway_cancels_whole_job_with_single_button() -> None:
     assert "cancelled" in service.job_status(1001, job.id).text
 
 
+def test_gateway_pauses_and_resumes_own_job_from_command() -> None:
+    from assistant.action_queue import InMemoryActionQueueStore
+    from assistant.action_schema import ActionType
+    from assistant.agent_jobs import InMemoryAgentJobStore
+
+    queue = InMemoryActionQueueStore()
+    jobs = InMemoryAgentJobStore()
+    job = jobs.create(1001, "длинная задача", ["сохранить", "создать"])
+    first = queue.enqueue(user_id=1001, job_id=job.id, action_type=ActionType.IDEA_SAVE, payload={"text": "идея"})
+    queue.mark_succeeded(first.id, result_text="Идея сохранена")
+    queue.enqueue(user_id=1001, job_id=job.id, action_type=ActionType.TASK_CREATE, payload={"title": "задача"})
+    service = GatewayService(
+        pipeline=AssistantPipeline(
+            FakeHermesClient(),
+            DailyLimitStore(),
+            agent_jobs=jobs,
+            action_queue=queue,
+        )
+    )
+
+    paused = service.handle_text(1001, f"/job pause {job.id}")
+    status = service.job_status(1001, job.id)
+    resumed = service.handle_text(1001, f"/job resume {job.id}")
+
+    assert "приостанов" in paused.text.lower()
+    assert "Идея сохранена" in status.text
+    assert status.buttons[0][0].callback_data == f"ai:resume_job:{job.id}"
+    assert "продолж" in resumed.text.lower()
+    assert queue.claim_next().job_id == job.id
+
+
 def test_telegram_callback_routes_job_level_confirmation() -> None:
     from gateway_bot.telegram_callbacks import handle_callback_data
 

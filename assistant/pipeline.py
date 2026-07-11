@@ -806,6 +806,27 @@ class AssistantPipeline:
 
     def _agent_job(self, user: UserContext, text: str) -> AssistantReply:
         value = (text or "").strip()
+        command, _, job_value = value.partition(" ")
+        if command in {"pause", "resume", "cancel"} and job_value.isdigit():
+            if self.action_queue is None:
+                return AssistantReply(
+                    text="Очередь действий не подключена.",
+                    intent=Intent.AGENT_JOB,
+                    blocked_reason="queue_disabled",
+                )
+            from assistant.planner_dag import PlannerDag
+
+            planner = PlannerDag(jobs=self.agent_jobs, actions=self.action_queue)
+            try:
+                job = getattr(planner, command)(user_id=user.user_id, job_id=int(job_value))
+            except KeyError:
+                return AssistantReply(
+                    text=f"Не нашёл job #{job_value}.",
+                    intent=Intent.AGENT_JOB,
+                    blocked_reason="agent_job_not_found",
+                )
+            verb = {"pause": "Приостановил", "resume": "Продолжил", "cancel": "Отменил"}[command]
+            return AssistantReply(text=f"{verb} Job #{job.id}.", intent=Intent.AGENT_JOB, trace_id=job.trace_id)
         if not value.isdigit():
             return AssistantReply(
                 text="Укажи номер job: /job 1",

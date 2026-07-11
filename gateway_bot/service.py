@@ -380,6 +380,8 @@ class GatewayService:
                 lines.append(
                     f"{action.id}. {action.type.value} — {action.status.value}{dependency}{compensation}{ids}"
                 )
+                if action.status == ActionStatus.SUCCEEDED and action.result_text:
+                    lines.append(f"   checkpoint: {action.result_text[:160]}")
         buttons = []
         if any(action.status == ActionStatus.NEEDS_CONFIRMATION for action in actions):
             buttons.append(
@@ -388,7 +390,27 @@ class GatewayService:
                     ReplyButton("Отменить всё", f"ai:cancel_job:{job.id}"),
                 ]
             )
+        elif job.status == "paused":
+            buttons.append(
+                [
+                    ReplyButton("Продолжить", f"ai:resume_job:{job.id}"),
+                    ReplyButton("Отменить", f"ai:cancel_job:{job.id}"),
+                ]
+            )
+        elif any(action.status in {ActionStatus.QUEUED, ActionStatus.RUNNING} for action in actions):
+            buttons.append(
+                [
+                    ReplyButton("Пауза", f"ai:pause_job:{job.id}"),
+                    ReplyButton("Отменить", f"ai:cancel_job:{job.id}"),
+                ]
+            )
         return AssistantReply(text="\n".join(lines), intent=Intent.AGENT_JOB, trace_id=job.trace_id, buttons=buttons)
+
+    def pause_job(self, tg_user_id: int, job_id: int) -> AssistantReply:
+        return self.handle_text(tg_user_id, f"/job pause {job_id}")
+
+    def resume_job(self, tg_user_id: int, job_id: int) -> AssistantReply:
+        return self.handle_text(tg_user_id, f"/job resume {job_id}")
 
     def trace_status(self, tg_user_id: int, trace_id: str) -> AssistantReply:
         user = self._user_context(tg_user_id)

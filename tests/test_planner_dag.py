@@ -47,6 +47,7 @@ def test_planner_dag_pause_resume_cancel_and_compensation_candidates() -> None:
     queue.mark_succeeded(first.id, result_meta={"trello_card_id": "abc"})
 
     assert planner.pause(user_id=1, job_id=job.id).status == "paused"
+    assert queue.claim_next() is None
     assert planner.resume(user_id=1, job_id=job.id).status == "queued"
     failed = queue.claim_next()
     queue.mark_failed(failed.id, "calendar failed")
@@ -57,3 +58,24 @@ def test_planner_dag_pause_resume_cancel_and_compensation_candidates() -> None:
 
     cancelled = planner.cancel(user_id=1, job_id=job.id)
     assert cancelled.status == "cancelled"
+
+
+def test_planner_dag_exposes_partial_results_while_paused() -> None:
+    jobs = InMemoryAgentJobStore()
+    queue = InMemoryActionQueueStore()
+    planner = PlannerDag(jobs=jobs, actions=queue)
+    job = planner.create_plan(
+        user_id=1,
+        goal="план с checkpoint",
+        nodes=[
+            PlanNode("note", ActionType.IDEA_SAVE, {"text": "сохранить"}),
+            PlanNode("task", ActionType.TASK_CREATE, {"title": "создать"}, depends_on=("note",)),
+        ],
+    )
+    first = queue.claim_next()
+    queue.mark_succeeded(first.id, result_meta={"note_id": "n1"}, result_text="Заметка сохранена")
+
+    planner.pause(user_id=1, job_id=job.id)
+
+    assert planner.partial_results(user_id=1, job_id=job.id) == ["Заметка сохранена"]
+    assert queue.claim_next() is None

@@ -55,10 +55,16 @@ class PlannerDag:
 
     def pause(self, *, user_id: int, job_id: int) -> AgentJob:
         job = self._require_job(user_id, job_id)
+        pause_job = getattr(self.actions, "pause_job_for_user", None)
+        if pause_job is not None:
+            pause_job(user_id, job_id)
         return self.jobs.mark_status(job.id, "paused")
 
     def resume(self, *, user_id: int, job_id: int) -> AgentJob:
         job = self._require_job(user_id, job_id)
+        resume_job = getattr(self.actions, "resume_job_for_user", None)
+        if resume_job is not None:
+            resume_job(user_id, job_id)
         return self.jobs.mark_status(job.id, "queued")
 
     def cancel(self, *, user_id: int, job_id: int) -> AgentJob:
