@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from hermes.native_tools.mcp_api import NativeToolsAPI
 from hermes.native_tools.skill_distillation import SkillDistiller
 
 
@@ -112,3 +113,24 @@ def test_same_key_cannot_merge_a_different_procedure(tmp_path) -> None:
                 {"tool": "telegram_delivery", "summary": "Сообщить об итоге"},
             ],
         )
+
+
+def test_native_api_returns_reviewable_skill_after_three_feedback_events(tmp_path) -> None:
+    api = NativeToolsAPI(database_path=tmp_path / "personal-os.sqlite3")
+
+    results = [
+        api.skill_feedback(
+            workflow_key="morning-plan",
+            title="Утренний план",
+            steps=STEPS,
+            idempotency_key=f"telegram-feedback-{index}",
+            useful=True,
+        )
+        for index in range(3)
+    ]
+
+    assert results[0]["status"] == "observing"
+    assert results[2]["status"] == "ready_for_review"
+    assert results[2]["confirmation_count"] == 3
+    assert "# Утренний план" in results[2]["skill_markdown"]
+    assert api.skill_candidates(ready_only=True)["items"] == [results[2]]

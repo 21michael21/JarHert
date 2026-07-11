@@ -44,6 +44,11 @@ class ReminderCreatePayload(BaseModel):
     recurrence: Literal["daily", "weekly", "monthly"] | None = None
 
 
+class SkillStep(BaseModel):
+    tool: str
+    summary: str
+
+
 MemoryBlockType = Literal["profile", "person", "project", "commitment", "preference"]
 ProjectTool = Literal["tasks", "calendar", "notes", "reminders", "contacts", "messages", "monitors", "sandbox"]
 
@@ -239,6 +244,30 @@ async def monitor_disable(monitor_id: int, ctx: Context) -> dict[str, object]:
     if not await _confirm(ctx, f"Отключить monitor #{monitor_id}?"):
         return {"status": "unchanged", "monitor_id": monitor_id}
     return api.monitor_disable(monitor_id=monitor_id)
+
+
+@mcp.tool()
+def skill_feedback(
+    workflow_key: str,
+    title: str,
+    steps: Annotated[list[SkillStep], Field(min_length=2, max_length=12)],
+    idempotency_key: str,
+    useful: bool,
+) -> dict[str, object]:
+    """Record explicit useful/not-useful feedback for one successful workflow."""
+    return api.skill_feedback(
+        workflow_key=workflow_key,
+        title=title,
+        steps=[step.model_dump() for step in steps],
+        idempotency_key=idempotency_key,
+        useful=useful,
+    )
+
+
+@mcp.tool()
+def skill_candidates(ready_only: bool = True) -> dict[str, object]:
+    """List inert skill drafts; writing still requires a separate diff approval."""
+    return api.skill_candidates(ready_only=ready_only)
 
 
 @mcp.tool()

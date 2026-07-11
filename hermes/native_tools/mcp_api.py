@@ -15,6 +15,7 @@ from .personal_os import PersonalOSStore
 from .personal_crm import PersonalCRMStore
 from .personal_productivity import PersonalProductivityStore, local_day_bounds
 from .personal_rhythms import PersonalRhythmStore, format_daily_brief
+from .skill_distillation import SkillDistiller
 from .task_calendar import TaskCalendarAdapter
 from .telegram_text_export import ExportResult, run_telegram_export
 
@@ -120,6 +121,32 @@ class NativeToolsAPI:
     def monitor_disable(self, *, monitor_id: int) -> dict[str, Any]:
         self._capabilities().require("monitor.write")
         return _monitor_payload(self._monitors().disable(monitor_id))
+
+    def skill_feedback(
+        self,
+        *,
+        workflow_key: str,
+        title: str,
+        steps: list[dict[str, Any]],
+        idempotency_key: str,
+        useful: bool,
+    ) -> dict[str, Any]:
+        self._capabilities().require("skill.feedback")
+        return _value_payload(
+            self._skills().observe(
+                workflow_key=workflow_key,
+                title=title,
+                steps=steps,
+                idempotency_key=idempotency_key,
+                success=True,
+                confirmed=bool(useful),
+            )
+        )
+
+    def skill_candidates(self, *, ready_only: bool = False) -> dict[str, Any]:
+        self._capabilities().require("skill.list")
+        items = self._skills().list_candidates(ready_only=ready_only)
+        return {"items": [_value_payload(item) for item in items]}
 
     def memory_block_upsert(self, **payload: Any) -> dict[str, Any]:
         self._capabilities().require("memory.write")
@@ -430,6 +457,9 @@ class NativeToolsAPI:
 
     def _monitors(self) -> MonitorRegistry:
         return MonitorRegistry(self.database_path)
+
+    def _skills(self) -> SkillDistiller:
+        return SkillDistiller(self.database_path)
 
     def _memory_consolidator(self) -> MemoryConsolidator:
         return MemoryConsolidator(self.database_path)

@@ -55,6 +55,8 @@ mcp_servers:
         - monitor_add_github_releases
         - monitor_list
         - monitor_disable
+        - skill_feedback
+        - skill_candidates
         - memory_block_upsert
         - memory_block_list
         - memory_consolidation_list

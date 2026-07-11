@@ -66,6 +66,8 @@ CAPABILITIES = {
     "crm.read": CapabilityRule("low", ALL_MODES),
     "crm.write": CapabilityRule("low", ALL_MODES),
     "personal.read": CapabilityRule("low", ALL_MODES),
+    "skill.feedback": CapabilityRule("low", ALL_MODES),
+    "skill.list": CapabilityRule("low", ALL_MODES),
     "project.read": CapabilityRule("low", ALL_MODES),
     "project.write": CapabilityRule("medium", ALL_MODES),
     "telegram.export": CapabilityRule("high", ALL_MODES),
