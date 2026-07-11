@@ -212,6 +212,33 @@ class AgentJobRecord(Base):
     )
 
 
+class CodingJobRecord(Base):
+    __tablename__ = "coding_jobs"
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_coding_jobs_user_idempotency"),
+        Index("ix_coding_jobs_status_created", "status", "created_at"),
+        Index("ix_coding_jobs_status_lease", "status", "lease_until"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    mode: Mapped[str] = mapped_column(String(20), nullable=False)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    repository_url: Mapped[str | None] = mapped_column(Text)
+    source_urls: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list, server_default=text("'[]'"))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued", server_default="queued")
+    idempotency_key: Mapped[str | None] = mapped_column(String(180))
+    worker_id: Mapped[str | None] = mapped_column(String(100))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    result_text: Mapped[str | None] = mapped_column(Text)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
 class AgentActionRecord(Base):
     __tablename__ = "agent_actions"
     __table_args__ = (

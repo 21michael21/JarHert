@@ -71,12 +71,13 @@ def test_one_revision_rollback_and_reupgrade_are_reproducible(tmp_path) -> None:
     run_migrations(database_url)
 
     command.downgrade(config, "-1")
-    assert current_revision(database_url) == "0016_preference_reasons"
+    assert current_revision(database_url) == "0017_recurring_reminders"
     downgraded_columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("agent_actions")}
     assert {"depends_on_action_id", "compensation_for_action_id", "compensation_status"} <= downgraded_columns
     downgraded_health_columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("provider_health")}
     assert {"quality_score", "quality_sample_count"} <= downgraded_health_columns
     downgraded_tables = set(inspect(create_engine(database_url)).get_table_names())
+    assert "coding_jobs" not in downgraded_tables
     assert {"provider_budget_daily", "provider_budget_entries"} <= downgraded_tables
     assert {"notes", "note_history"} <= downgraded_tables
     assert {"contacts", "contact_aliases"} <= downgraded_tables
@@ -89,7 +90,7 @@ def test_one_revision_rollback_and_reupgrade_are_reproducible(tmp_path) -> None:
     assert {"example_type", "rejected_assistant_text"} <= downgraded_training_columns
     assert "preference_reason" in downgraded_training_columns
     downgraded_reminder_columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("reminders")}
-    assert "recurrence" not in downgraded_reminder_columns
+    assert "recurrence" in downgraded_reminder_columns
     command.upgrade(config, "head")
 
     assert current_revision(database_url) == head_revision()
@@ -98,6 +99,7 @@ def test_one_revision_rollback_and_reupgrade_are_reproducible(tmp_path) -> None:
     upgraded_health_columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("provider_health")}
     assert {"quality_score", "quality_sample_count"} <= upgraded_health_columns
     upgraded_tables = set(inspect(create_engine(database_url)).get_table_names())
+    assert "coding_jobs" in upgraded_tables
     assert {"provider_budget_daily", "provider_budget_entries"} <= upgraded_tables
     assert {"notes", "note_history"} <= upgraded_tables
     assert {"contacts", "contact_aliases"} <= upgraded_tables
