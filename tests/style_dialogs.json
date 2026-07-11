@@ -8,5 +8,7 @@
   {"id": "ai_identity", "text": "Я как ИИ не могу иметь мнение, но постараюсь помочь.", "expected_ok": false},
   {"id": "empty_meta", "text": "Важно отметить, что в современном мире нужен комплексный подход, чтобы раскрыть потенциал.", "expected_ok": false},
   {"id": "exclamation", "text": "Отлично!!! Это невероятно!!! Всё обязательно получится!!!", "expected_ok": false},
-  {"id": "repeated", "text": "Нужно проверить логи. Нужно проверить логи. Нужно проверить логи.", "expected_ok": false}
+  {"id": "repeated", "text": "Нужно проверить логи. Нужно проверить логи. Нужно проверить логи.", "expected_ok": false},
+  {"id": "natural_emoji", "text": "Вот где затык: OAuth протух. Обнови токен и повтори проверку 👀", "expected_ok": true},
+  {"id": "emoji_spam", "text": "Погнали 🔥🔥🔥🚀⚡✅🏆", "expected_ok": false}
 ]

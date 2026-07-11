@@ -63,6 +63,7 @@ def test_expressive_preference_allows_lively_language_with_boundaries() -> None:
     assert "не стерилизуй ответ" in rendered.lower()
     assert "не уходи в оскорбления" in rendered.lower()
     assert "без корпоративной ваты" in rendered.lower()
+    assert "эмодзи" in rendered.lower()
 
 
 def test_disabled_style_guide_returns_empty_system_prompt() -> None:
@@ -93,6 +94,9 @@ def test_default_style_has_compact_lively_moves_without_impersonation() -> None:
     assert "Вот где затык" in guide.prompt
     assert "Не повторяй один и тот же заход" in guide.prompt
     assert "не изображай автора" in guide.prompt.lower()
+    assert "🔥" in guide.prompt
+    assert "не больше двух эмодзи" in guide.prompt.lower()
+    assert "не копируй примеры дословно" in guide.prompt.lower()
 
 
 def test_profile_declared_response_limit_is_enforced_for_ordinary_answers(tmp_path) -> None:

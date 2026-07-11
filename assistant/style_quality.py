@@ -28,6 +28,7 @@ ROBOTIC_CHAT_PATTERNS = (
     r"\bкак могу помочь\??\s*$",
     r"\bуточняющий вопрос:\s*",
 )
+EMOJI_PATTERN = re.compile("[\U0001F300-\U0001FAFF\u2600-\u27BF]")
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,10 @@ def assess_communication_style(text: str) -> StyleAssessment:
     if clean.count("!") >= 3:
         score -= 35
         issues.append("excessive_exclamation")
+
+    if len(EMOJI_PATTERN.findall(clean)) > 2:
+        score -= 40
+        issues.append("emoji_spam")
 
     normalized_sentences = [
         " ".join(part.lower().split())

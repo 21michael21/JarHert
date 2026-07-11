@@ -120,10 +120,14 @@ def parse_preference_update(text: str) -> PreferenceUpdate | None:
         "можно с матом",
         "говори с матом",
         "разрешаю мат",
+        "пиши живее со смайликами",
+        "пиши живее с эмодзи",
+        "добавь эмодзи",
+        "добавь смайлики",
     }:
         return PreferenceUpdate(
             {"preferred_response_style": "expressive"},
-            "Сохранил настройку: живой режим с матом включён.",
+            "Сохранил настройку: живой режим с матом и уместными эмодзи включён 🔥",
         )
     if (
         ("матер" in lowered or "с матом" in lowered or "ругаться" in lowered)

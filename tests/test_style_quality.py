@@ -37,6 +37,15 @@ def test_robotic_processing_reply_fails_style_assessment() -> None:
     assert "robotic_chat" in assessment.issues
 
 
+def test_one_contextual_emoji_passes_but_emoji_spam_fails() -> None:
+    natural = assess_communication_style("Вот где затык: OAuth протух. Обнови токен 👀")
+    spam = assess_communication_style("Погнали 🔥🔥🔥🚀⚡✅🏆")
+
+    assert natural.ok is True
+    assert spam.ok is False
+    assert "emoji_spam" in spam.issues
+
+
 def test_runtime_output_gate_rejects_severe_style_slop() -> None:
     result = check_output(
         "Конечно! С удовольствием помогу. Давайте разберёмся и погрузимся в этот важный вопрос."

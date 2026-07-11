@@ -167,6 +167,18 @@ def test_live_question_about_swearing_enables_expressive_style_without_ai() -> N
     assert hermes.requests == []
 
 
+def test_emoji_phrase_enables_expressive_style_without_ai() -> None:
+    store = InMemoryPreferenceStore()
+    hermes = FakeHermesClient()
+    pipeline = AssistantPipeline(hermes, DailyLimitStore(), preferences=store)
+
+    reply = pipeline.handle_text(user(), "пиши живее со смайликами")
+
+    assert "живой режим" in reply.text.lower()
+    assert store.get(1).preferred_response_style == "expressive"
+    assert hermes.requests == []
+
+
 def test_preference_updates_default_task_list_and_task_uses_it() -> None:
     task_center = FakeTaskCenter()
     pipeline = AssistantPipeline(
