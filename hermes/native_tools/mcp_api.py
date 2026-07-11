@@ -364,6 +364,23 @@ class NativeToolsAPI:
         )
         return {"items": [_value_payload(item) for item in items]}
 
+    def note_search(self, *, query: str, project: str | None = None, limit: int = 20) -> dict[str, Any]:
+        self._capabilities().require("memory.read")
+        return {"items": [_value_payload(item) for item in self._personal_os().search_notes(query=query, project=project, limit=limit)]}
+
+    def note_edit(self, *, note_id: int, content: str) -> dict[str, Any]:
+        self._capabilities().require("memory.write")
+        return _value_payload(self._personal_os().edit_note(note_id, content=content))
+
+    def note_history(self, *, note_id: int) -> dict[str, Any]:
+        self._capabilities().require("memory.read")
+        return {"items": [_value_payload(item) for item in self._personal_os().list_note_history(note_id)]}
+
+    def note_delete(self, *, note_id: int) -> dict[str, Any]:
+        self._capabilities().require("note.delete")
+        self._personal_os().delete_note(note_id)
+        return {"status": "deleted", "id": int(note_id)}
+
     def memory_consolidate(self) -> dict[str, Any]:
         self._capabilities().require("memory.write")
         return self._memory_consolidator().consolidate()

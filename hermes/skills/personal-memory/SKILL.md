@@ -15,9 +15,11 @@ requests such as `find notes about OAuth` or `what did I promise Ilya`.
 1. Use `mcp_jarhert_native_memory_block_upsert` only when the user explicitly
    asks to remember a stable profile, person, project, commitment, or preference
    fact. Do not save ordinary chat automatically.
-2. Use `mcp_jarhert_native_memory_block_list` with a type/project filter before
-   answering personal-memory questions. Return only the matching block group.
-3. Search by words first. Return short excerpts and dates, never a giant dump.
+2. Use `mcp_jarhert_native_note_search` for notes by words, then return only
+   short matching excerpts. Use `memory_block_list` for structured profile or
+   preference facts.
+3. Edit through `mcp_jarhert_native_note_edit`, which keeps local history. For
+   deletion use `mcp_jarhert_native_note_delete_confirmed` and one confirmation.
 4. For promises, call `mcp_jarhert_native_commitment_list` with the named contact
    or project. Mark one done only through
    `mcp_jarhert_native_commitment_complete_confirmed`.

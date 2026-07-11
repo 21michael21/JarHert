@@ -490,6 +490,36 @@ def memory_block_list(
 
 
 @mcp.tool()
+def note_search(
+    query: str,
+    project: str | None = None,
+    limit: Annotated[int, Field(ge=1, le=100)] = 20,
+) -> dict[str, object]:
+    """Find only matching personal notes through SQLite full-text search."""
+    return api.note_search(query=query, project=project, limit=limit)
+
+
+@mcp.tool()
+def note_edit(note_id: int, content: str) -> dict[str, object]:
+    """Edit one visible note while keeping its previous text in local history."""
+    return api.note_edit(note_id=note_id, content=content)
+
+
+@mcp.tool()
+def note_history(note_id: int) -> dict[str, object]:
+    """Read previous versions of one note without exposing other notes."""
+    return api.note_history(note_id=note_id)
+
+
+@mcp.tool()
+async def note_delete_confirmed(note_id: int, ctx: Context) -> dict[str, object]:
+    """Permanently delete one note and its local history after a single confirmation."""
+    if not await _confirm(ctx, f"Удалить заметку #{note_id} и её локальную историю?"):
+        return {"status": "unchanged", "id": note_id}
+    return api.note_delete(note_id=note_id)
+
+
+@mcp.tool()
 def memory_consolidation_list() -> dict[str, object]:
     """Read compact snapshots built only from explicitly confirmed facts."""
     return api.memory_consolidation_list()

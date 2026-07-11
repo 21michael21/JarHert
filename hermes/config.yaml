@@ -90,6 +90,10 @@ mcp_servers:
         - skill_candidates
         - memory_block_upsert
         - memory_block_list
+        - note_search
+        - note_edit
+        - note_history
+        - note_delete_confirmed
         - memory_consolidation_list
         - project_context_upsert
         - project_context_list

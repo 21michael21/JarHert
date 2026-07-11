@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -25,6 +26,14 @@ class MemoryBlock:
     content: str
     project: str | None
     updated_at: str
+
+
+@dataclass(frozen=True)
+class NoteRevision:
+    id: int
+    note_id: int
+    content: str
+    changed_at: str
 
 
 @dataclass(frozen=True)
@@ -76,6 +85,12 @@ class PersonalOSStore:
         clean_project = _optional(project, limit=120)
         project_key = clean_project or ""
         with self._connect() as connection:
+            existing = connection.execute(
+                "SELECT * FROM memory_blocks WHERE block_type = ? AND subject = ? AND project_key = ?",
+                (kind, clean_subject, project_key),
+            ).fetchone()
+            if kind == "note" and existing is not None and str(existing["content"]) != clean_content:
+                self._record_note_history(connection, existing)
             connection.execute(
                 """
                 INSERT INTO memory_blocks(block_type, subject, content, project_key, updated_at)
@@ -93,6 +108,8 @@ class PersonalOSStore:
                 """,
                 (kind, clean_subject, project_key),
             ).fetchone()
+            if kind == "note":
+                self._sync_note_fts(connection, row)
         return _memory_from_row(row)
 
     def list_memory_blocks(
@@ -118,6 +135,82 @@ class PersonalOSStore:
         with self._connect() as connection:
             rows = connection.execute(query, values).fetchall()
         return [_memory_from_row(row) for row in rows]
+
+    def search_notes(self, *, query: str, project: str | None = None, limit: int = 20) -> list[MemoryBlock]:
+        fts_query = _fts_query(query)
+        if not fts_query:
+            return []
+        values: list[Any] = [fts_query]
+        clauses = ["memory_blocks_fts MATCH ?"]
+        if project:
+            clauses.append("blocks.project_key = ?")
+            values.append(_required(project, "Project", limit=120))
+        values.append(max(1, min(int(limit), 100)))
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT blocks.* FROM memory_blocks_fts
+                JOIN memory_blocks AS blocks ON blocks.id = memory_blocks_fts.note_id
+                WHERE {' AND '.join(clauses)} AND blocks.block_type = 'note'
+                ORDER BY rank LIMIT ?
+                """,
+                values,
+            ).fetchall()
+        return [_memory_from_row(row) for row in rows]
+
+    def edit_note(self, note_id: int, *, content: str) -> MemoryBlock:
+        clean_content = _required(content, "Note content", limit=4000)
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM memory_blocks WHERE id = ? AND block_type = 'note'", (int(note_id),)
+            ).fetchone()
+            if row is None:
+                raise ValueError("Заметка не найдена.")
+            if str(row["content"]) != clean_content:
+                self._record_note_history(connection, row)
+                connection.execute(
+                    "UPDATE memory_blocks SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (clean_content, int(note_id)),
+                )
+            updated = connection.execute("SELECT * FROM memory_blocks WHERE id = ?", (int(note_id),)).fetchone()
+            self._sync_note_fts(connection, updated)
+        return _memory_from_row(updated)
+
+    def list_note_history(self, note_id: int) -> list[NoteRevision]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM memory_block_history WHERE note_id = ? ORDER BY id DESC", (int(note_id),)
+            ).fetchall()
+        return [
+            NoteRevision(id=int(row["id"]), note_id=int(row["note_id"]), content=str(row["content"]), changed_at=str(row["changed_at"]))
+            for row in rows
+        ]
+
+    def delete_note(self, note_id: int) -> None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT id FROM memory_blocks WHERE id = ? AND block_type = 'note'", (int(note_id),)
+            ).fetchone()
+            if row is None:
+                raise ValueError("Заметка не найдена.")
+            connection.execute("DELETE FROM memory_blocks_fts WHERE note_id = ?", (int(note_id),))
+            connection.execute("DELETE FROM memory_block_history WHERE note_id = ?", (int(note_id),))
+            connection.execute("DELETE FROM memory_blocks WHERE id = ?", (int(note_id),))
+
+    @staticmethod
+    def _record_note_history(connection: sqlite3.Connection, row: sqlite3.Row) -> None:
+        connection.execute(
+            "INSERT INTO memory_block_history(note_id, content) VALUES (?, ?)",
+            (int(row["id"]), str(row["content"])),
+        )
+
+    @staticmethod
+    def _sync_note_fts(connection: sqlite3.Connection, row: sqlite3.Row) -> None:
+        connection.execute("DELETE FROM memory_blocks_fts WHERE note_id = ?", (int(row["id"]),))
+        connection.execute(
+            "INSERT INTO memory_blocks_fts(note_id, subject, content, project_key) VALUES (?, ?, ?, ?)",
+            (int(row["id"]), str(row["subject"]), str(row["content"]), str(row["project_key"])),
+        )
 
     def upsert_project(
         self,
@@ -294,6 +387,16 @@ class PersonalOSStore:
                 );
                 CREATE INDEX IF NOT EXISTS ix_memory_blocks_type_project
                     ON memory_blocks(block_type, project_key, updated_at);
+                CREATE TABLE IF NOT EXISTS memory_block_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    note_id INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    changed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS ix_memory_block_history_note ON memory_block_history(note_id, id DESC);
+                CREATE VIRTUAL TABLE IF NOT EXISTS memory_blocks_fts USING fts5(
+                    note_id UNINDEXED, subject, content, project_key, tokenize='unicode61'
+                );
                 CREATE TABLE IF NOT EXISTS project_contexts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     project_key TEXT NOT NULL UNIQUE,
@@ -333,6 +436,14 @@ class PersonalOSStore:
                 connection.execute("ALTER TABLE commitments ADD COLUMN idempotency_key TEXT")
             connection.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS ux_commitments_idempotency ON commitments(idempotency_key)"
+            )
+            connection.execute(
+                """
+                INSERT INTO memory_blocks_fts(note_id, subject, content, project_key)
+                SELECT id, subject, content, project_key FROM memory_blocks AS blocks
+                WHERE block_type = 'note'
+                  AND NOT EXISTS (SELECT 1 FROM memory_blocks_fts WHERE note_id = blocks.id)
+                """
             )
 
     def _connect(self) -> sqlite3.Connection:
@@ -405,6 +516,11 @@ def _optional(value: str | None, *, limit: int) -> str | None:
     if value is None or not str(value).strip():
         return None
     return _required(value, "Value", limit=limit)
+
+
+def _fts_query(value: str) -> str:
+    tokens = re.findall(r"[\w-]{2,}", str(value or ""), flags=re.UNICODE)[:10]
+    return " AND ".join(f'"{token}"' for token in tokens)
 
 
 def _unique(values: list[str]) -> list[str]:

@@ -64,6 +64,7 @@ CAPABILITIES = {
     "trip.cancel": CapabilityRule("medium", ALL_MODES),
     "memory.read": CapabilityRule("low", ALL_MODES),
     "memory.write": CapabilityRule("low", ALL_MODES),
+    "note.delete": CapabilityRule("medium", ALL_MODES),
     "note.save": CapabilityRule("low", ALL_MODES),
     "commitment.create": CapabilityRule("low", ALL_MODES),
     "commitment.list": CapabilityRule("low", ALL_MODES),

@@ -50,6 +50,24 @@ def test_memory_block_upsert_updates_same_subject_without_duplicate(tmp_path: Pa
     assert len(api.memory_block_list(block_type="preference")["items"]) == 1
 
 
+def test_notes_support_search_edit_history_and_delete(tmp_path: Path) -> None:
+    api = NativeToolsAPI(database_path=tmp_path / "personal-os.sqlite3")
+    note = api.memory_block_upsert(
+        block_type="note",
+        subject="OAuth",
+        content="Проверить refresh token перед релизом.",
+        project="Hub_ML",
+    )
+
+    assert api.note_search(query="refresh token", project="Hub_ML")["items"][0]["id"] == note["id"]
+    edited = api.note_edit(note_id=note["id"], content="Проверить rotation refresh token перед релизом.")
+
+    assert edited["content"].startswith("Проверить rotation")
+    assert api.note_history(note_id=note["id"])["items"][0]["content"] == "Проверить refresh token перед релизом."
+    assert api.note_delete(note_id=note["id"])["status"] == "deleted"
+    assert api.note_search(query="refresh") == {"items": []}
+
+
 def test_project_context_resolves_alias_and_returns_scoped_integrations(tmp_path: Path) -> None:
     api = NativeToolsAPI(database_path=tmp_path / "personal-os.sqlite3")
 
@@ -87,6 +105,10 @@ def test_profile_exposes_personal_os_only_through_native_mcp() -> None:
     for tool in (
         "memory_block_upsert",
         "memory_block_list",
+        "note_search",
+        "note_edit",
+        "note_history",
+        "note_delete_confirmed",
         "project_context_upsert",
         "project_context_list",
         "project_context_resolve",
