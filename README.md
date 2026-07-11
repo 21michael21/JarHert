@@ -46,6 +46,18 @@ The managed source clone on the server is `/home/deploy/jarhert-profile` by
 default. It is pinned to the exact commit pushed to `origin/main`; the upstream
 Hermes Agent clone is never pulled or reset by this command.
 
+### Локальный голосовой inbox
+
+Профиль включает бесплатное локальное распознавание Telegram-голосовых через
+`faster-whisper` с моделью `base`. Оно работает на VPS, не использует API-ключ
+и не отправляет аудио стороннему провайдеру. Сырая расшифровка не дублируется в
+чате: одна голосовая даёт один нормальный ответ или один план действий.
+
+На сервере с 2 CPU и 4 GB RAM оставь модель `base` и не запускай несколько
+голосовых параллельно. Первый запрос может быть медленнее: Hermes загрузит
+модель в память. Не меняй `stt.provider` на облачный сервис, если цель —
+оставить распознавание бесплатным и локальным.
+
 ### Task Command Center sync for the native Hermes profile
 
 Task Command Center stays outside JarHert Git because its local folder contains

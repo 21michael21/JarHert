@@ -86,7 +86,7 @@ if [[ "$SYNC_CONFIG" == "1" ]]; then
   cp -a "$SOURCE_DIR/hermes/config.yaml" "$PROFILE_DIR/config.yaml"
 elif [[ "$SYNC_CONFIG" == "merge" ]]; then
   "$HERMES_PYTHON" "$SOURCE_DIR/deploy/vps/merge_hermes_tools.py" "$SOURCE_DIR/hermes/config.yaml" "$PROFILE_DIR/config.yaml"
-  echo "Merged native MCP tools while preserving live config.yaml."
+  echo "Merged safe JarHert defaults while preserving live config.yaml."
 else
   echo "Preserved live config.yaml (set SYNC_PROFILE_CONFIG=1 to update it explicitly)."
 fi

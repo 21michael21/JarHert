@@ -5,6 +5,16 @@ model:
 agent:
   reasoning_effort: low
 
+# Voice messages stay on the VPS: faster-whisper "base" is already cached
+# there and does not use an API key.  Suppress a raw transcript echo so one
+# voice note produces one useful response rather than chat noise.
+stt:
+  enabled: true
+  echo_transcripts: false
+  provider: local
+  local:
+    model: base
+
 skills:
   write_approval: true
   guard_agent_created: true
