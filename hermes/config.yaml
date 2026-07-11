@@ -45,6 +45,13 @@ mcp_servers:
         - task_list
         - calendar_list
         - action_plan_confirm_execute
+        - contact_add
+        - contact_list
+        - message_plan_confirm_schedule
+        - message_plan_cancel_confirmed
+        - monitor_add_github_releases
+        - monitor_list
+        - monitor_disable
         - telegram_text_export_confirmed
       resources: false
       prompts: false

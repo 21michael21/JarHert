@@ -18,6 +18,12 @@ class Consent(BaseModel):
     pass
 
 
+class ScheduledMessagePayload(BaseModel):
+    contact: str
+    text: str
+    send_at: str
+
+
 class TaskCreatePayload(BaseModel):
     title: str
     list_name: str = "Inbox"
@@ -133,6 +139,58 @@ def task_list(list_name: str | None = None) -> dict[str, str]:
 def calendar_list(when: str = "today") -> dict[str, str]:
     """List Google Calendar events for today or tomorrow."""
     return api.calendar_list(when=when)
+
+
+@mcp.tool()
+def contact_add(name: str, telegram_chat_id: int, aliases: list[str] | None = None) -> dict[str, object]:
+    """Save one exact Telegram contact and optional aliases."""
+    return api.contact_add(name=name, telegram_chat_id=telegram_chat_id, aliases=aliases or [])
+
+
+@mcp.tool()
+def contact_list() -> dict[str, object]:
+    """List saved Telegram contacts without guessing recipients."""
+    return api.contact_list()
+
+
+@mcp.tool()
+async def message_plan_confirm_schedule(
+    items: Annotated[list[ScheduledMessagePayload], Field(min_length=1, max_length=20)],
+    idempotency_key: str,
+    ctx: Context,
+) -> dict[str, object]:
+    """Preview a complete Telegram message plan once, then schedule every item."""
+    return await api.message_plan_confirm_schedule(
+        items=[item.model_dump() for item in items],
+        idempotency_key=idempotency_key,
+        confirmer=lambda preview: _confirm(ctx, f"Запланировать сообщения?\n{preview}"),
+    )
+
+
+@mcp.tool()
+async def message_plan_cancel_confirmed(plan_id: int, ctx: Context) -> dict[str, object]:
+    """Ask once, then cancel a draft or scheduled Telegram message plan."""
+    if not await _confirm(ctx, f"Отменить план сообщений #{plan_id}?"):
+        return {"status": "unchanged", "plan_id": plan_id}
+    return api.message_plan_cancel(plan_id=plan_id)
+
+
+@mcp.tool()
+def monitor_add_github_releases(name: str, owner: str, repo: str, condition: str) -> dict[str, object]:
+    """Add one diff-first GitHub latest-release monitor."""
+    return api.monitor_add_github_releases(name=name, owner=owner, repo=repo, condition=condition)
+
+
+@mcp.tool()
+def monitor_list() -> dict[str, object]:
+    """List configured proactive monitors."""
+    return api.monitor_list()
+
+
+@mcp.tool()
+def monitor_disable(monitor_id: int) -> dict[str, object]:
+    """Disable one proactive monitor while preserving its audit state."""
+    return api.monitor_disable(monitor_id=monitor_id)
 
 
 @mcp.tool()

@@ -157,6 +157,29 @@ class ContactStore:
         with self._connect() as connection:
             return self._get_plan(connection, plan_id)
 
+    def cancel_message_plan(self, plan_id: int) -> MessagePlan:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT status FROM message_plans WHERE id = ?", (plan_id,)).fetchone()
+            if row is None:
+                raise ContactStoreError("План сообщений не найден.")
+            if row["status"] in {"draft", "scheduled"}:
+                connection.execute(
+                    "UPDATE message_plans SET status = 'cancelled' WHERE id = ?",
+                    (plan_id,),
+                )
+                connection.execute(
+                    """
+                    UPDATE scheduled_messages SET status = 'cancelled'
+                    WHERE plan_id = ? AND status IN ('draft', 'scheduled')
+                    """,
+                    (plan_id,),
+                )
+            elif row["status"] != "cancelled":
+                raise ContactStoreError(f"План нельзя отменить в статусе {row['status']}.")
+            connection.commit()
+            return self._get_plan(connection, plan_id)
+
     def count_message_plans(self) -> int:
         with self._connect() as connection:
             return int(connection.execute("SELECT COUNT(*) FROM message_plans").fetchone()[0])

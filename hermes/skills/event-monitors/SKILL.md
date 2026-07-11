@@ -5,36 +5,25 @@ description: Create and operate diff-first proactive monitors that stay silent u
 
 # Event monitors
 
-Use the deterministic CLI at `$HERMES_HOME/native_tools/cli.py`. It hashes a
-small normalized source payload before any model is involved.
+Use only the `jarhert_native` MCP tools for user-facing monitor management. The
+background runner hashes a small normalized source payload before any model is
+involved.
 
 ## Create and manage
 
 Only `github_releases` is allowlisted in this version.
 
-```bash
-python "$HERMES_HOME/native_tools/cli.py" monitor add \
-  --name "codex-releases" \
-  --source-type github_releases \
-  --source-config-json '{"owner":"openai","repo":"codex"}' \
-  --condition "Напиши только если в релизе есть важные возможности"
-python "$HERMES_HOME/native_tools/cli.py" monitor list
-python "$HERMES_HOME/native_tools/cli.py" monitor remove <monitor_id>
-```
+Call `mcp_jarhert_native_monitor_add_github_releases` with the monitor name,
+owner, repository, and condition. Use `mcp_jarhert_native_monitor_list` to list
+monitors and `mcp_jarhert_native_monitor_disable` to disable one.
 
 `remove` disables the monitor and keeps its state for audit.
 
 ## Check workflow
 
-Run all enabled monitors with:
-
-```bash
-python "$HERMES_HOME/native_tools/cli.py" monitor check
-```
-
-An empty result means baseline or no change. Say nothing and do not call a
-provider. For each changed item, evaluate only its `diff`, `current`, and
-`condition`:
+The internal cron script checks all enabled monitors. An empty result means
+baseline or no change. Say nothing and do not call a provider. For each changed
+item, evaluate only its `diff`, `current`, and `condition`:
 
 1. If the condition is false, return no Telegram message.
 2. If the condition is true, write one short factual message with the source URL.

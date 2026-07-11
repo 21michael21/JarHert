@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from .action_plans import ActionPlan, ActionPlanStore, execute_plan
+from .contacts import ContactStore, MessagePlan
+from .monitors import Monitor, MonitorRegistry
 from .task_calendar import TaskCalendarAdapter
 from .telegram_text_export import ExportResult, run_telegram_export
 
@@ -49,6 +51,59 @@ class NativeToolsAPI:
 
     def calendar_list(self, *, when: str = "today") -> dict[str, str]:
         return {"items": self.adapter_factory().list_calendar_events(when=when)}
+
+    def contact_add(self, *, name: str, telegram_chat_id: int, aliases: list[str]) -> dict[str, Any]:
+        return _value_payload(
+            self._contacts().add_contact(
+                name=name,
+                telegram_chat_id=telegram_chat_id,
+                aliases=aliases,
+            )
+        )
+
+    def contact_list(self) -> dict[str, Any]:
+        return {"items": [_value_payload(item) for item in self._contacts().list_contacts()]}
+
+    async def message_plan_confirm_schedule(
+        self,
+        *,
+        items: list[dict[str, Any]],
+        idempotency_key: str,
+        confirmer: Confirmer,
+    ) -> dict[str, Any]:
+        store = self._contacts()
+        plan = store.create_message_plan(items, idempotency_key=idempotency_key)
+        if plan.status != "draft":
+            return _message_plan_payload(plan)
+        if not await confirmer(_message_plan_preview(plan)):
+            return _message_plan_payload(store.cancel_message_plan(plan.id))
+        return _message_plan_payload(store.approve_message_plan(plan.id))
+
+    def message_plan_cancel(self, *, plan_id: int) -> dict[str, Any]:
+        return _message_plan_payload(self._contacts().cancel_message_plan(plan_id))
+
+    def monitor_add_github_releases(
+        self,
+        *,
+        name: str,
+        owner: str,
+        repo: str,
+        condition: str,
+    ) -> dict[str, Any]:
+        return _monitor_payload(
+            self._monitors().add(
+                name=name,
+                source_type="github_releases",
+                source_config={"owner": owner, "repo": repo},
+                condition=condition,
+            )
+        )
+
+    def monitor_list(self) -> dict[str, Any]:
+        return {"items": [_monitor_payload(item) for item in self._monitors().list()]}
+
+    def monitor_disable(self, *, monitor_id: int) -> dict[str, Any]:
+        return _monitor_payload(self._monitors().disable(monitor_id))
 
     def action_plan_create(
         self, *, actions: list[dict[str, Any]], idempotency_key: str
@@ -129,6 +184,12 @@ class NativeToolsAPI:
     def _plans(self) -> ActionPlanStore:
         return ActionPlanStore(self.database_path)
 
+    def _contacts(self) -> ContactStore:
+        return ContactStore(self.database_path)
+
+    def _monitors(self) -> MonitorRegistry:
+        return MonitorRegistry(self.database_path)
+
 
 def _plan_payload(plan: ActionPlan) -> dict[str, Any]:
     return {
@@ -145,3 +206,32 @@ def _plan_preview(plan: ActionPlan) -> str:
         title = str(action.payload.get("title") or "без названия")
         rows.append(f"{action.position + 1}. {action.action_type}: {title}")
     return "\n".join(rows)
+
+
+def _message_plan_payload(plan: MessagePlan) -> dict[str, Any]:
+    return _value_payload(plan)
+
+
+def _message_plan_preview(plan: MessagePlan) -> str:
+    return "\n".join(
+        f"{index}. {item.contact_name}: {item.text} ({item.send_at.isoformat()})"
+        for index, item in enumerate(plan.messages, start=1)
+    )
+
+
+def _monitor_payload(monitor: Monitor) -> dict[str, Any]:
+    return _value_payload(monitor)
+
+
+def _value_payload(value: Any) -> Any:
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if isinstance(value, tuple):
+        return [_value_payload(item) for item in value]
+    if isinstance(value, list):
+        return [_value_payload(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _value_payload(item) for key, item in value.items()}
+    if hasattr(value, "__dataclass_fields__"):
+        return {name: _value_payload(getattr(value, name)) for name in value.__dataclass_fields__}
+    return value

@@ -5,45 +5,33 @@ description: Save Telegram contacts and aliases, prepare one preview for one or 
 
 # Contact messaging
 
-Use the deterministic CLI at `$HERMES_HOME/native_tools/cli.py`. Treat its JSON
-as the source of truth. Never claim success from the command text alone.
+Use only the `jarhert_native` MCP tools below. Their structured result is the
+source of truth. Never use terminal commands for contacts or message plans.
 
 ## Contacts
 
 Resolve only an exact saved name or alias, ignoring letter case. Never choose a
 similar contact by fuzzy match.
 
-```bash
-python "$HERMES_HOME/native_tools/cli.py" contact list
-python "$HERMES_HOME/native_tools/cli.py" contact add \
-  --name "Илья" --telegram-chat-id 123456 --alias "Ильюха" --alias "Илье"
-```
+Call `mcp_jarhert_native_contact_list` to inspect saved contacts and
+`mcp_jarhert_native_contact_add` to save an exact name, Telegram chat ID, and
+aliases.
 
 If a contact is missing, ask for their Telegram chat ID once. Do not search
 private chats, infer an ID, or expose the contact book.
 
 ## One preview and one confirmation
 
-Build one JSON array for the complete request. Every item needs `contact`,
-`text`, and an ISO timestamp with timezone in `send_at`.
+Build one array for the complete request. Every item needs `contact`, `text`,
+and an ISO timestamp with timezone in `send_at`. Call
+`mcp_jarhert_native_message_plan_confirm_schedule` exactly once. The tool owns
+the preview, the single confirmation, scheduling, and idempotent replay.
 
-```bash
-python "$HERMES_HOME/native_tools/cli.py" message plan \
-  --idempotency-key "telegram-update-<update_id>" \
-  --items-json '[{"contact":"Илья","text":"Созвонимся завтра?","send_at":"2030-01-02T12:00:00+03:00"}]'
-```
+To cancel a complete draft or scheduled plan, call
+`mcp_jarhert_native_message_plan_cancel_confirmed`. It owns the confirmation.
 
-Show one compact preview containing all recipients, texts, and send times. Ask
-one question: `Запланировать?` Do not run `approve` before an explicit yes.
-
-After confirmation, approve the whole plan once:
-
-```bash
-python "$HERMES_HOME/native_tools/cli.py" message approve <plan_id>
-```
-
-Replaying the same Telegram update ID returns the same plan and cannot schedule
-a duplicate.
+Reuse the same idempotency key when retrying one tool call. The store returns
+the original plan and cannot schedule a duplicate.
 
 ## Delivery
 
@@ -59,4 +47,3 @@ hermes cron create "* * * * *" \
 Do not create a cron job per message. Do not send through Telegram directly as
 part of planning. The dispatcher records success, Telegram result ID, attempts,
 and the final error.
-

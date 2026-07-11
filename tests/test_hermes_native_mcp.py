@@ -100,14 +100,96 @@ def test_native_api_export_requires_confirmation(tmp_path: Path) -> None:
     assert calls == [{"peer": "@example", "output_format": "txt", "limit": 10}]
 
 
+def test_native_api_exposes_contacts_and_idempotent_message_plan(tmp_path: Path) -> None:
+    api = NativeToolsAPI(database_path=tmp_path / "personal.sqlite3")
+    api.contact_add(name="Илья", telegram_chat_id=123, aliases=["Илье"])
+    confirmations: list[str] = []
+
+    async def confirm(preview: str) -> bool:
+        confirmations.append(preview)
+        return True
+
+    items = [{"contact": "Илье", "text": "Созвон завтра", "send_at": "2030-01-02T12:00:00+03:00"}]
+    first = asyncio.run(
+        api.message_plan_confirm_schedule(
+            items=items,
+            idempotency_key="telegram-update-contacts-1",
+            confirmer=confirm,
+        )
+    )
+    replay = asyncio.run(
+        api.message_plan_confirm_schedule(
+            items=items,
+            idempotency_key="telegram-update-contacts-1",
+            confirmer=confirm,
+        )
+    )
+
+    assert api.contact_list() == {
+        "items": [{"id": 1, "name": "Илья", "telegram_chat_id": 123, "aliases": ["Илья", "Илье"]}]
+    }
+    assert first["status"] == "scheduled"
+    assert replay == first
+    assert len(confirmations) == 1
+    assert "Илья" in confirmations[0]
+
+
+def test_native_api_cancelled_message_plan_stays_cancelled(tmp_path: Path) -> None:
+    api = NativeToolsAPI(database_path=tmp_path / "personal.sqlite3")
+    api.contact_add(name="Илья", telegram_chat_id=123, aliases=[])
+
+    async def decline(_preview: str) -> bool:
+        return False
+
+    result = asyncio.run(
+        api.message_plan_confirm_schedule(
+            items=[{"contact": "Илья", "text": "Не отправлять", "send_at": "2030-01-02T12:00:00+03:00"}],
+            idempotency_key="telegram-update-contacts-2",
+            confirmer=decline,
+        )
+    )
+
+    assert result["status"] == "cancelled"
+    assert {item["status"] for item in result["messages"]} == {"cancelled"}
+
+
+def test_native_api_exposes_github_monitors(tmp_path: Path) -> None:
+    api = NativeToolsAPI(database_path=tmp_path / "personal.sqlite3")
+
+    created = api.monitor_add_github_releases(
+        name="codex-releases",
+        owner="openai",
+        repo="codex",
+        condition="Только важные релизы",
+    )
+    disabled = api.monitor_disable(monitor_id=created["id"])
+
+    assert created["source_type"] == "github_releases"
+    assert disabled["enabled"] is False
+    assert api.monitor_list() == {"items": [disabled]}
+
+
 def test_profile_uses_native_mcp_instead_of_terminal_allowlist() -> None:
     config = (ROOT / "hermes" / "config.yaml").read_text(encoding="utf-8")
+    contact_skill = (ROOT / "hermes" / "skills" / "contact-messaging" / "SKILL.md").read_text(encoding="utf-8")
+    monitor_skill = (ROOT / "hermes" / "skills" / "event-monitors" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "mcp_servers:\n  jarhert_native:" in config
     assert "${HERMES_HOME}/.venv/bin/python" in config
     assert "native_tools/mcp_runtime.py" in config
     assert "action_plan_confirm_execute" in config
     assert "telegram_text_export_confirmed" in config
+    assert "contact_add" in config
+    assert "contact_list" in config
+    assert "message_plan_confirm_schedule" in config
+    assert "message_plan_cancel_confirmed" in config
+    assert "monitor_add_github_releases" in config
+    assert "monitor_list" in config
+    assert "monitor_disable" in config
     assert "action_plan_execute" not in config
     assert "command_allowlist:" not in config
     assert "TELEGRAM_BOT_TOKEN:" not in config.split("mcp_servers:", 1)[1]
+    assert "mcp_jarhert_native_message_plan_confirm_schedule" in contact_skill
+    assert "mcp_jarhert_native_monitor_add_github_releases" in monitor_skill
+    assert "native_tools/cli.py" not in contact_skill
+    assert "native_tools/cli.py" not in monitor_skill
