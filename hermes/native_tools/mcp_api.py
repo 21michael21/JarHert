@@ -10,6 +10,7 @@ from .action_plans import ActionPlan, ActionPlanStore, execute_plan
 from .capabilities import CapabilityPolicyStore
 from .contacts import ContactStore, MessagePlan
 from .monitors import Monitor, MonitorRegistry
+from .memory_consolidation import MemoryConsolidator
 from .personal_os import PersonalOSStore
 from .personal_crm import PersonalCRMStore
 from .personal_productivity import PersonalProductivityStore, local_day_bounds
@@ -138,6 +139,14 @@ class NativeToolsAPI:
             limit=limit,
         )
         return {"items": [_value_payload(item) for item in items]}
+
+    def memory_consolidate(self) -> dict[str, Any]:
+        self._capabilities().require("memory.write")
+        return self._memory_consolidator().consolidate()
+
+    def memory_consolidation_list(self) -> dict[str, Any]:
+        self._capabilities().require("memory.read")
+        return {"items": [_value_payload(item) for item in self._memory_consolidator().list_snapshots()]}
 
     def project_context_upsert(self, **payload: Any) -> dict[str, Any]:
         self._capabilities().require("project.write")
@@ -421,6 +430,9 @@ class NativeToolsAPI:
 
     def _monitors(self) -> MonitorRegistry:
         return MonitorRegistry(self.database_path)
+
+    def _memory_consolidator(self) -> MemoryConsolidator:
+        return MemoryConsolidator(self.database_path)
 
     def _personal_os(self) -> PersonalOSStore:
         return PersonalOSStore(self.database_path)

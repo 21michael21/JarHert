@@ -26,6 +26,20 @@ requests such as `find notes about OAuth` or `what did I promise Ilya`.
    ask one short question.
 6. Keep original text and an edit history. Never rewrite a user's note silently.
 
+## Night consolidation
+
+One script-only cron builds project-scoped snapshots from explicit memory
+blocks, open commitments, and CRM agreements. It excludes ordinary notes and
+raw chat, compares a hash first, and uses no model:
+
+```bash
+hermes cron create "15 3 * * *" --name "Memory consolidation" \
+  --script consolidate_memory.py --no-agent --deliver local
+```
+
+Use `mcp_jarhert_native_memory_consolidation_list` for compact context. The
+snapshot is derived data; original facts remain untouched.
+
 ## Guardrails
 
 - Do not save passwords, API keys, recovery codes, or private keys as memory.

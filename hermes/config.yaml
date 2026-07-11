@@ -57,6 +57,7 @@ mcp_servers:
         - monitor_disable
         - memory_block_upsert
         - memory_block_list
+        - memory_consolidation_list
         - project_context_upsert
         - project_context_list
         - project_context_resolve

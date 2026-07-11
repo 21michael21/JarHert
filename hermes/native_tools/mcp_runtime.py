@@ -268,6 +268,12 @@ def memory_block_list(
 
 
 @mcp.tool()
+def memory_consolidation_list() -> dict[str, object]:
+    """Read compact snapshots built only from explicitly confirmed facts."""
+    return api.memory_consolidation_list()
+
+
+@mcp.tool()
 async def project_context_upsert(
     key: str,
     name: str,
