@@ -68,6 +68,8 @@ CAPABILITIES = {
     "personal.read": CapabilityRule("low", ALL_MODES),
     "skill.feedback": CapabilityRule("low", ALL_MODES),
     "skill.list": CapabilityRule("low", ALL_MODES),
+    "subscription.read": CapabilityRule("low", ALL_MODES),
+    "subscription.write": CapabilityRule("low", ALL_MODES),
     "project.read": CapabilityRule("low", ALL_MODES),
     "project.write": CapabilityRule("medium", ALL_MODES),
     "telegram.export": CapabilityRule("high", ALL_MODES),

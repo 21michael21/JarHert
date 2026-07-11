@@ -496,6 +496,58 @@ def personal_weekly_review(
 
 
 @mcp.tool()
+def subscription_create(
+    name: str,
+    amount: str,
+    currency: str,
+    cadence: Literal["weekly", "monthly", "yearly"],
+    next_charge_at: str,
+    idempotency_key: str,
+    category: str | None = None,
+) -> dict[str, object]:
+    """Save one recurring payment and schedule its next charge reminder."""
+    return api.subscription_create(
+        name=name,
+        amount=amount,
+        currency=currency,
+        cadence=cadence,
+        next_charge_at=next_charge_at,
+        category=category,
+        idempotency_key=idempotency_key,
+    )
+
+
+@mcp.tool()
+def subscription_list(status: Literal["active", "cancelled"] = "active") -> dict[str, object]:
+    """List subscriptions and monthly totals grouped by currency."""
+    return api.subscription_list(status=status)
+
+
+@mcp.tool()
+def subscription_update(
+    subscription_id: int,
+    amount: str | None = None,
+    cadence: Literal["weekly", "monthly", "yearly"] | None = None,
+    next_charge_at: str | None = None,
+    category: str | None = None,
+) -> dict[str, object]:
+    """Update an existing subscription and move its charge reminder."""
+    return api.subscription_update(
+        subscription_id=subscription_id,
+        amount=amount,
+        cadence=cadence,
+        next_charge_at=next_charge_at,
+        category=category,
+    )
+
+
+@mcp.tool()
+def subscription_cancel(subscription_id: int) -> dict[str, object]:
+    """Cancel a subscription and its pending charge reminder."""
+    return api.subscription_cancel(subscription_id=subscription_id)
+
+
+@mcp.tool()
 async def commitment_complete_confirmed(commitment_id: int, ctx: Context) -> dict[str, object]:
     """Ask once, then mark one open promise as done."""
     if not await _confirm(ctx, f"Отметить обещание #{commitment_id} выполненным?"):

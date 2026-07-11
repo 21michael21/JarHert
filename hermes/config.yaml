@@ -77,6 +77,10 @@ mcp_servers:
         - personal_today
         - personal_daily_brief
         - personal_weekly_review
+        - subscription_create
+        - subscription_list
+        - subscription_update
+        - subscription_cancel
         - work_mode_get
         - work_mode_set
         - telegram_text_export_confirmed

@@ -158,6 +158,41 @@ class PersonalProductivityStore:
                 (_required(source_type, "Source type", limit=40), int(source_id)),
             )
 
+    def sync_source_reminder(
+        self,
+        *,
+        source_type: str,
+        source_id: int,
+        text: str,
+        remind_at: str,
+        idempotency_key: str,
+    ) -> PersonalReminder:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT id FROM personal_reminders WHERE source_type = ? AND source_id = ?",
+                (_required(source_type, "Source type", limit=40), int(source_id)),
+            ).fetchone()
+            if row is not None:
+                connection.execute(
+                    """
+                    UPDATE personal_reminders SET text = ?, remind_at = ?, status = 'active',
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (_required(text, "Reminder text", limit=1000), _utc_timestamp(remind_at), int(row["id"])),
+                )
+                updated = connection.execute(
+                    "SELECT * FROM personal_reminders WHERE id = ?", (int(row["id"]),)
+                ).fetchone()
+                return _reminder_from_row(updated)
+        return self.create_reminder(
+            text=text,
+            remind_at=remind_at,
+            idempotency_key=idempotency_key,
+            source_type=source_type,
+            source_id=source_id,
+        )
+
     def claim_due_reminders(
         self,
         *,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from dataclasses import asdict
 from pathlib import Path
@@ -16,6 +17,7 @@ from .personal_crm import PersonalCRMStore
 from .personal_productivity import PersonalProductivityStore, local_day_bounds
 from .personal_rhythms import PersonalRhythmStore, format_daily_brief
 from .skill_distillation import SkillDistiller
+from .subscriptions import SubscriptionStore, subscription_sync_from_env
 from .task_calendar import TaskCalendarAdapter
 from .telegram_text_export import ExportResult, run_telegram_export
 
@@ -23,6 +25,8 @@ from .telegram_text_export import ExportResult, run_telegram_export
 AdapterFactory = Callable[[], Any]
 Exporter = Callable[..., ExportResult]
 Confirmer = Callable[[str], Awaitable[bool]]
+SubscriptionSync = Callable[[list[dict[str, Any]]], None]
+logger = logging.getLogger(__name__)
 
 
 def personal_os_database_path() -> Path:
@@ -40,10 +44,12 @@ class NativeToolsAPI:
         database_path: str | Path | None = None,
         adapter_factory: AdapterFactory = TaskCalendarAdapter.from_env,
         exporter: Exporter = run_telegram_export,
+        subscription_sync: SubscriptionSync | None = None,
     ) -> None:
         self.database_path = Path(database_path or personal_os_database_path()).expanduser()
         self.adapter_factory = adapter_factory
         self.exporter = exporter
+        self.subscription_sync = subscription_sync if subscription_sync is not None else subscription_sync_from_env()
 
     def integration_health(self) -> dict[str, bool]:
         self._capabilities().require("integration.health")
@@ -398,6 +404,47 @@ class NativeToolsAPI:
         self._capabilities().require("personal.read")
         return self._rhythms().weekly_review(now=now, timezone_name=timezone_name)
 
+    def subscription_create(self, **payload: Any) -> dict[str, Any]:
+        self._capabilities().require("subscription.write")
+        item, created = self._subscriptions().create(**payload)
+        self._productivity().sync_source_reminder(
+            source_type="subscription",
+            source_id=item.id,
+            text=f"Списание {item.name}: {item.amount} {item.currency}",
+            remind_at=item.next_charge_at,
+            idempotency_key=f"subscription:{item.id}:charge",
+        )
+        if created:
+            self._sync_subscriptions()
+        return _value_payload(item)
+
+    def subscription_list(self, *, status: str = "active") -> dict[str, Any]:
+        self._capabilities().require("subscription.read")
+        return {
+            "items": [_value_payload(item) for item in self._subscriptions().list(status=status)],
+            "monthly_totals": self._subscriptions().monthly_totals() if status == "active" else {},
+        }
+
+    def subscription_update(self, *, subscription_id: int, **payload: Any) -> dict[str, Any]:
+        self._capabilities().require("subscription.write")
+        item = self._subscriptions().update(subscription_id, **payload)
+        self._productivity().sync_source_reminder(
+            source_type="subscription",
+            source_id=item.id,
+            text=f"Списание {item.name}: {item.amount} {item.currency}",
+            remind_at=item.next_charge_at,
+            idempotency_key=f"subscription:{item.id}:charge",
+        )
+        self._sync_subscriptions()
+        return _value_payload(item)
+
+    def subscription_cancel(self, *, subscription_id: int) -> dict[str, Any]:
+        self._capabilities().require("subscription.write")
+        item = self._subscriptions().cancel(subscription_id)
+        self._productivity().cancel_source_reminder(source_type="subscription", source_id=item.id)
+        self._sync_subscriptions()
+        return _value_payload(item)
+
     def work_mode_get(self) -> dict[str, Any]:
         return _value_payload(self._capabilities().get_mode())
 
@@ -512,6 +559,18 @@ class NativeToolsAPI:
 
     def _rhythms(self) -> PersonalRhythmStore:
         return PersonalRhythmStore(self.database_path)
+
+    def _subscriptions(self) -> SubscriptionStore:
+        return SubscriptionStore(self.database_path)
+
+    def _sync_subscriptions(self) -> None:
+        if self.subscription_sync is None:
+            return
+        try:
+            rows = [_value_payload(item) for item in self._subscriptions().list()]
+            self.subscription_sync(rows)
+        except Exception:
+            logger.exception("Optional subscription sync failed")
 
     def _capabilities(self) -> CapabilityPolicyStore:
         return CapabilityPolicyStore(self.database_path)
