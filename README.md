@@ -810,6 +810,12 @@ blocked reply, fake provider, отсутствующий credential или timeo
 monitor triggered/no-change и ownership. Текущая duplicate-проверка относится к action queue:
 durable dedup входящих Telegram `update_id` в проекте пока не реализован и этим тестом не заявляется.
 
+Важно: этот legacy system runner использует изолированный `LocalTaskCenter` в
+component cycle. Поэтому он не доказывает нативные внешние Trello/Calendar
+вызовы Hermes на VDS. Для них используй `operator_canary.py` ниже; для входящего
+Telegram и voice нужен отдельный Telethon gateway scenario с явным username
+тестируемого бота.
+
 ### Native operator canary
 
 Для живого Hermes-профиля есть отдельный короткий canary. Он создаёт уникальные
