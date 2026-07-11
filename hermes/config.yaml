@@ -76,6 +76,10 @@ mcp_servers:
         - knowledge_archive_url_confirmed
         - knowledge_search
         - knowledge_list_sources
+        - shopping_add
+        - shopping_list
+        - shopping_mark_bought
+        - shopping_remove
         - skill_feedback
         - skill_candidates
         - memory_block_upsert

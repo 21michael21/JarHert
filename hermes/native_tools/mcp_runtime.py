@@ -59,6 +59,7 @@ ProjectTool = Literal[
     "messages",
     "monitors",
     "knowledge",
+    "shopping",
     "sandbox",
 ]
 
@@ -320,6 +321,46 @@ def knowledge_list_sources(
 ) -> dict[str, object]:
     """List saved knowledge sources and their bounded snapshot counts."""
     return api.knowledge_list_sources(project=project, limit=limit)
+
+
+@mcp.tool()
+def shopping_add(
+    text: str,
+    idempotency_key: str,
+    category: str | None = None,
+    quantity: str | None = None,
+    project: str | None = None,
+) -> dict[str, object]:
+    """Add one needed item to the personal shopping list without creating a duplicate."""
+    return api.shopping_add(
+        text=text,
+        category=category,
+        quantity=quantity,
+        project=project,
+        idempotency_key=idempotency_key,
+    )
+
+
+@mcp.tool()
+def shopping_list(
+    status: Literal["needed", "bought", "cancelled"] = "needed",
+    project: str | None = None,
+    limit: Annotated[int, Field(ge=1, le=200)] = 100,
+) -> dict[str, object]:
+    """List required, bought, or cancelled shopping items."""
+    return api.shopping_list(status=status, project=project, limit=limit)
+
+
+@mcp.tool()
+def shopping_mark_bought(item_id: int) -> dict[str, object]:
+    """Mark a visible shopping item as bought."""
+    return api.shopping_mark_bought(item_id=item_id)
+
+
+@mcp.tool()
+def shopping_remove(item_id: int) -> dict[str, object]:
+    """Soft-remove one shopping item while keeping a minimal history."""
+    return api.shopping_remove(item_id=item_id)
 
 
 @mcp.tool()

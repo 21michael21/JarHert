@@ -10,7 +10,10 @@ from typing import Any
 
 MEMORY_BLOCK_TYPES = frozenset({"note", "profile", "person", "project", "commitment", "preference"})
 PROJECT_TOOL_ALLOWLIST = frozenset(
-    {"tasks", "calendar", "notes", "reminders", "contacts", "messages", "monitors", "knowledge", "sandbox"}
+    {
+        "tasks", "calendar", "notes", "reminders", "contacts", "messages", "monitors", "knowledge", "shopping",
+        "sandbox",
+    }
 )
 
 

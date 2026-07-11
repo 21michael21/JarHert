@@ -20,6 +20,7 @@ from .personal_crm import PersonalCRMStore
 from .personal_productivity import PersonalProductivityStore, local_day_bounds
 from .personal_rhythms import PersonalRhythmStore, format_daily_brief
 from .skill_distillation import SkillDistiller
+from .shopping import ShoppingStore
 from .subscriptions import SubscriptionStore, subscription_sync_from_env
 from .system_status import collect_system_status
 from .task_calendar import TaskCalendarAdapter
@@ -206,6 +207,44 @@ class NativeToolsAPI:
     ) -> dict[str, Any]:
         self._capabilities().require("knowledge.read")
         return {"items": [_value_payload(item) for item in self._knowledge().list_sources(project=project, limit=limit)]}
+
+    def shopping_add(
+        self,
+        *,
+        text: str,
+        idempotency_key: str,
+        category: str | None = None,
+        quantity: str | None = None,
+        project: str | None = None,
+    ) -> dict[str, Any]:
+        self._capabilities().require("shopping.write")
+        return _value_payload(
+            self._shopping().add(
+                text=text,
+                category=category,
+                quantity=quantity,
+                project=project,
+                idempotency_key=idempotency_key,
+            )
+        )
+
+    def shopping_list(
+        self,
+        *,
+        status: str = "needed",
+        project: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        self._capabilities().require("shopping.read")
+        return {"items": [_value_payload(item) for item in self._shopping().list(status=status, project=project, limit=limit)]}
+
+    def shopping_mark_bought(self, *, item_id: int) -> dict[str, Any]:
+        self._capabilities().require("shopping.write")
+        return _value_payload(self._shopping().mark_bought(item_id))
+
+    def shopping_remove(self, *, item_id: int) -> dict[str, Any]:
+        self._capabilities().require("shopping.write")
+        return _value_payload(self._shopping().remove(item_id))
 
     def skill_feedback(
         self,
@@ -630,6 +669,9 @@ class NativeToolsAPI:
 
     def _subscriptions(self) -> SubscriptionStore:
         return SubscriptionStore(self.database_path)
+
+    def _shopping(self) -> ShoppingStore:
+        return ShoppingStore(self.database_path)
 
     def _sync_subscriptions(self) -> None:
         if self.subscription_sync is None:

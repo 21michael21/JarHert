@@ -57,6 +57,8 @@ CAPABILITIES = {
     "monitor.write": CapabilityRule("medium", ALL_MODES),
     "knowledge.read": CapabilityRule("low", ALL_MODES),
     "knowledge.write": CapabilityRule("medium", ALL_MODES),
+    "shopping.read": CapabilityRule("low", ALL_MODES),
+    "shopping.write": CapabilityRule("low", ALL_MODES),
     "memory.read": CapabilityRule("low", ALL_MODES),
     "memory.write": CapabilityRule("low", ALL_MODES),
     "note.save": CapabilityRule("low", ALL_MODES),
