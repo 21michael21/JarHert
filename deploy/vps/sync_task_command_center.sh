@@ -74,6 +74,7 @@ PROFILE_DIR="$(dirname "$PROFILE_ENV")"
 set -a
 . "$PROFILE_ENV"
 set +a
-"$PROFILE_DIR/.venv/bin/python" "$PROFILE_DIR/native_tools/cli.py" integration-health
+"$PROFILE_DIR/.venv/bin/python" "$PROFILE_DIR/native_tools/cli.py" integration-health >/dev/null
+echo "integration_health=ok"
 echo "task_command_center_sync=ok"
 REMOTE_SCRIPT

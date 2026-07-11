@@ -17,5 +17,6 @@ def test_task_command_center_sync_requires_explicit_secret_copy_and_never_uses_g
     assert 'cd "$REMOTE_DIR"' in script
     assert '"$SOURCE_DIR/src/"' in script
     assert '"$SOURCE_DIR/"' not in script
+    assert 'integration-health >/dev/null' in script
     assert "git add" not in script
     assert "git commit" not in script
