@@ -152,9 +152,12 @@ intentional maintenance window, create
 Remove the marker and start the gateway again when the work is finished. The
 timer does not restart a healthy gateway and does not need access to any secret.
 
-The stable profile uses direct `openai-api` with `gpt-5-nano`. Free gateways
-are not in the primary route because their availability and model selection are
-not predictable enough for reminders and external actions.
+The distribution config keeps an API-compatible development fallback. Profile
+sync deliberately preserves the live server's `model` settings, including a
+Codex OAuth subscription profile, so a source update cannot silently switch it
+back to an API key. Free gateways are not an automatic primary route because
+their availability and model selection are not predictable enough for reminders
+and external actions.
 
 Install the lightweight native dependency used for owner-authorized Telegram
 text export:
