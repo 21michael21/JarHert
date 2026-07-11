@@ -22,6 +22,12 @@ AI_IDENTITY_PATTERNS = (
     r"\bя как (?:ии|ai|искусственный интеллект)\b",
     r"\bкак языковая модель\b",
 )
+ROBOTIC_CHAT_PATTERNS = (
+    r"^\s*принял[,.]?\s*(?:обрабатываю|выполняю)\b",
+    r"\bитог пришлю отдельным сообщением\b",
+    r"\bкак могу помочь\??\s*$",
+    r"\bуточняющий вопрос:\s*",
+)
 
 
 @dataclass(frozen=True)
@@ -55,6 +61,11 @@ def assess_communication_style(text: str) -> StyleAssessment:
     if any(re.search(pattern, lowered) for pattern in AI_IDENTITY_PATTERNS):
         score -= 60
         issues.append("ai_identity")
+
+    robotic_hits = sum(bool(re.search(pattern, lowered)) for pattern in ROBOTIC_CHAT_PATTERNS)
+    if robotic_hits:
+        score -= min(70, 35 * robotic_hits)
+        issues.append("robotic_chat")
 
     if clean.count("!") >= 3:
         score -= 35

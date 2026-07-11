@@ -28,6 +28,15 @@ def test_generic_ai_preamble_fails_style_assessment() -> None:
     assert "generic_preamble" in assessment.issues
 
 
+def test_robotic_processing_reply_fails_style_assessment() -> None:
+    assessment = assess_communication_style(
+        "Принял, обрабатываю. Итог пришлю отдельным сообщением. Как могу помочь?"
+    )
+
+    assert assessment.ok is False
+    assert "robotic_chat" in assessment.issues
+
+
 def test_runtime_output_gate_rejects_severe_style_slop() -> None:
     result = check_output(
         "Конечно! С удовольствием помогу. Давайте разберёмся и погрузимся в этот важный вопрос."

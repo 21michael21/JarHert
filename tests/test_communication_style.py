@@ -85,6 +85,16 @@ def test_custom_style_path_is_loaded_and_versioned(tmp_path) -> None:
     assert first.version.startswith("style-")
 
 
+def test_default_style_has_compact_lively_moves_without_impersonation() -> None:
+    guide = load_communication_style(enabled=True)
+
+    assert guide.max_response_chars == 420
+    assert "Проблема не в X, а в Y" in guide.prompt
+    assert "Вот где затык" in guide.prompt
+    assert "Не повторяй один и тот же заход" in guide.prompt
+    assert "не изображай автора" in guide.prompt.lower()
+
+
 def test_profile_declared_response_limit_is_enforced_for_ordinary_answers(tmp_path) -> None:
     style_path = tmp_path / "style.md"
     style_path.write_text(
