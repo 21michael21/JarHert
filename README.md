@@ -45,6 +45,55 @@ The managed source clone on the server is `/home/deploy/jarhert-profile` by
 default. It is pinned to the exact commit pushed to `origin/main`; the upstream
 Hermes Agent clone is never pulled or reset by this command.
 
+### Encrypted backup, rotation and restore proof
+
+`hermes/scripts/backup_profile.py` makes an SQLite-consistent snapshot of the
+Hermes profile state, encrypts it with local GnuPG AES-256, and rotates old
+archives: seven daily, four weekly and three monthly points by default. It backs
+up the profile databases plus configuration and session files needed for
+recovery. Archives are never committed to Git.
+
+Keep the recovery secret outside the profile and outside Git, for example in a
+mode-600 systemd environment file:
+
+```bash
+mkdir -p ~/.config/jarhert
+chmod 700 ~/.config/jarhert
+printf '%s\n' 'HERMES_BACKUP_PASSPHRASE=<store-this-in-your-password-manager>' > ~/.config/jarhert/backup.env
+chmod 600 ~/.config/jarhert/backup.env
+```
+
+Create an archive and immediately prove it can be restored without touching the
+live profile:
+
+```bash
+set -a
+. ~/.config/jarhert/backup.env
+set +a
+python ~/.hermes/profiles/jarhert/scripts/backup_profile.py backup
+python ~/.hermes/profiles/jarhert/scripts/backup_profile.py verify --archive ~/.hermes/backups/jarhert/<archive>.tar.gpg
+```
+
+The encrypted archive directory should also be copied to storage outside the
+VPS. A VPS-local archive protects from a bad deploy; it does not protect from a
+lost server. Do not enable a paid provider snapshot without checking its
+retention and restore policy.
+
+### Gateway watchdog
+
+`hermes/scripts/watchdog.py` checks the user systemd gateway, its main PID,
+disk headroom, memory pressure and zombie children. Zombie processes do not
+consume CPU or RAM themselves, so the watchdog reports them instead of blindly
+killing processes. By default it never restarts a process; explicit
+`--restart-inactive` restarts only the named systemd unit if it is inactive.
+
+```bash
+python ~/.hermes/profiles/jarhert/scripts/watchdog.py
+```
+
+Use its JSON output in a systemd timer or Hermes no-agent cron. The future
+`/status` command will surface the same operational data in Telegram.
+
 The stable profile uses direct `openai-api` with `gpt-5-nano`. Free gateways
 are not in the primary route because their availability and model selection are
 not predictable enough for reminders and external actions.
