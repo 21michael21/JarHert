@@ -69,6 +69,9 @@ PYTHON_SCRIPT
 systemctl --user restart hermes-gateway-jarhert.service
 systemctl --user is-active --quiet hermes-gateway-jarhert.service
 PROFILE_DIR="$(dirname "$PROFILE_ENV")"
+set -a
+. "$PROFILE_ENV"
+set +a
 "$PROFILE_DIR/.venv/bin/python" "$PROFILE_DIR/native_tools/cli.py" integration-health
 echo "task_command_center_sync=ok"
 REMOTE_SCRIPT

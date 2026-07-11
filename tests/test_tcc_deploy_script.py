@@ -13,5 +13,6 @@ def test_task_command_center_sync_requires_explicit_secret_copy_and_never_uses_g
     assert "client_secret.json" in script
     assert "token.json" in script
     assert "--chmod=F600" not in script
+    assert '. "$PROFILE_ENV"' in script
     assert "git add" not in script
     assert "git commit" not in script
