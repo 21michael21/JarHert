@@ -1,24 +1,30 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 from collections.abc import Callable
 from datetime import datetime
 
-from .contacts import ContactStore
+from .contacts import ContactStore, ScheduledMessage
+from .personal_productivity import PersonalProductivityStore
 
 
 TelegramSender = Callable[[int, str], str | None]
+SentHook = Callable[[ScheduledMessage, str | None], None]
+logger = logging.getLogger(__name__)
 
 
 def dispatch_due_messages(
     store: ContactStore,
     sender: TelegramSender,
     *,
-    now: datetime | None = None,
+    now: str | datetime | None = None,
     limit: int = 20,
+    on_sent: SentHook | None = None,
 ) -> dict[str, int]:
-    messages = store.claim_due_messages(now=now, limit=limit)
+    current = datetime.fromisoformat(now.replace("Z", "+00:00")) if isinstance(now, str) else now
+    messages = store.claim_due_messages(now=current, limit=limit)
     counts = {"claimed": len(messages), "sent": 0, "failed": 0}
     for message in messages:
         try:
@@ -28,6 +34,33 @@ def dispatch_due_messages(
             counts["failed"] += 1
             continue
         store.mark_message_sent(message.id, external_id=external_id)
+        if on_sent is not None:
+            try:
+                on_sent(message, external_id)
+            except Exception:
+                logger.exception("Could not append sent Telegram message %s to CRM", message.id)
+        counts["sent"] += 1
+    return counts
+
+
+def dispatch_due_reminders(
+    store: PersonalProductivityStore,
+    sender: TelegramSender,
+    *,
+    chat_id: int,
+    now: str | datetime | None = None,
+    limit: int = 20,
+) -> dict[str, int]:
+    reminders = store.claim_due_reminders(now=now, limit=limit)
+    counts = {"claimed": len(reminders), "sent": 0, "failed": 0}
+    for reminder in reminders:
+        try:
+            sender(int(chat_id), reminder.text)
+        except Exception as error:
+            store.release_failed_reminder(reminder.id, error=str(error) or error.__class__.__name__)
+            counts["failed"] += 1
+            continue
+        store.mark_reminder_delivered(reminder.id, now=now)
         counts["sent"] += 1
     return counts
 

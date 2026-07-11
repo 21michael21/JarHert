@@ -12,13 +12,14 @@ messy inbox, pick priorities, review the day, or prepare the next one.
 
 ## Procedure
 
-1. Resolve the project with `mcp_jarhert_native_project_context_resolve`, then
-   read matching commitments via `mcp_jarhert_native_memory_block_list`.
-2. For `what is today`, combine calendar blocks, due tasks, reminders, and
-   explicitly saved commitments. Do not invent unavailable data.
-3. For `unload my head`, turn each distinct item into a note, reminder, task,
+1. Resolve the project with `mcp_jarhert_native_project_context_resolve` when a
+   project is named.
+2. For `что у меня сегодня`, call `mcp_jarhert_native_personal_today` once.
+   It returns factual sources and the deterministic top three.
+3. For `разгрузи голову`, turn each distinct item into a note, reminder, task,
    or question. Show one compact plan before creating medium-risk items.
-4. Pick at most three priorities. State the trade-off for items left out.
+4. For `выбери три задачи`, start with `top_three`; change the selection only
+   when the user gives an explicit priority or constraint.
 5. For an evening review, report completed work, unfinished commitments,
    blockers, and the smallest useful first step for tomorrow.
 6. Keep the final reply short. Ask one question only if a missing fact changes

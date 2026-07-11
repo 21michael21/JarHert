@@ -35,8 +35,10 @@ the original plan and cannot schedule a duplicate.
 
 ## Delivery
 
-Delivery is handled by one script-only Hermes cron job. It uses no model and
-prints nothing on a healthy tick.
+Delivery is handled by one script-only Hermes cron job. It uses no model,
+delivers due personal reminders too, and appends successfully sent messages to
+the CRM timeline. Set `HERMES_OWNER_TELEGRAM_CHAT_ID` in the Hermes environment;
+the first `ADMIN_TG_USER_IDS` value is used as a fallback.
 
 ```bash
 hermes cron create "* * * * *" \

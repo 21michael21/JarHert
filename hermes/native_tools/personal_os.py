@@ -204,13 +204,24 @@ class PersonalOSStore:
         contact: str | None = None,
         project: str | None = None,
         due_at: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Commitment:
+        clean_key = _optional(idempotency_key, limit=220)
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if clean_key:
+                existing = connection.execute(
+                    "SELECT * FROM commitments WHERE idempotency_key = ?",
+                    (clean_key,),
+                ).fetchone()
+                if existing is not None:
+                    return _commitment_from_row(existing)
             commitment_id = int(
                 connection.execute(
                     """
-                    INSERT INTO commitments(subject, content, contact, project_key, due_at, status)
-                    VALUES (?, ?, ?, ?, ?, 'open')
+                    INSERT INTO commitments(
+                        subject, content, contact, project_key, due_at, status, idempotency_key
+                    ) VALUES (?, ?, ?, ?, ?, 'open', ?)
                     """,
                     (
                         _required(subject, "Commitment subject", limit=200),
@@ -218,6 +229,7 @@ class PersonalOSStore:
                         _optional(contact, limit=160),
                         _optional(project, limit=120),
                         _utc_timestamp(due_at),
+                        clean_key,
                     ),
                 ).lastrowid
             )
@@ -303,11 +315,21 @@ class PersonalOSStore:
                     due_at TEXT,
                     status TEXT NOT NULL DEFAULT 'open',
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    completed_at TEXT
+                    completed_at TEXT,
+                    idempotency_key TEXT
                 );
                 CREATE INDEX IF NOT EXISTS ix_commitments_status_due
                     ON commitments(status, due_at);
                 """
+            )
+            columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(commitments)").fetchall()
+            }
+            if "idempotency_key" not in columns:
+                connection.execute("ALTER TABLE commitments ADD COLUMN idempotency_key TEXT")
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_commitments_idempotency ON commitments(idempotency_key)"
             )
 
     def _connect(self) -> sqlite3.Connection:

@@ -11,7 +11,7 @@ text.
 
 1. Preserve the user's wording. Do not invent deadlines, contacts, or projects.
 2. Map useful items to only these actions: `note.save`, `commitment.create`,
-   `task.create`, and `calendar.create`.
+   `reminder.create`, `task.create`, and `calendar.create`.
 3. Use a commitment when the user promised something to a person. Include
    `contact`, `project`, and timezone-aware `due_at` only when stated.
 4. Use one `mcp_jarhert_native_action_plan_confirm_execute` call for the entire

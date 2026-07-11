@@ -11,6 +11,8 @@ from .capabilities import CapabilityPolicyStore
 from .contacts import ContactStore, MessagePlan
 from .monitors import Monitor, MonitorRegistry
 from .personal_os import PersonalOSStore
+from .personal_crm import PersonalCRMStore
+from .personal_productivity import PersonalProductivityStore, local_day_bounds
 from .task_calendar import TaskCalendarAdapter
 from .telegram_text_export import ExportResult, run_telegram_export
 
@@ -151,7 +153,16 @@ class NativeToolsAPI:
 
     def commitment_create(self, **payload: Any) -> dict[str, Any]:
         self._capabilities().require("commitment.create")
-        return _value_payload(self._personal_os().create_commitment(**payload))
+        commitment = self._personal_os().create_commitment(**payload)
+        if commitment.due_at:
+            self._productivity().create_reminder(
+                text=f"Срок обещания: {commitment.subject} — {commitment.content}",
+                remind_at=commitment.due_at,
+                idempotency_key=f"commitment:{commitment.id}:due",
+                source_type="commitment",
+                source_id=commitment.id,
+            )
+        return _value_payload(commitment)
 
     def commitment_list(
         self,
@@ -172,7 +183,128 @@ class NativeToolsAPI:
 
     def commitment_complete(self, *, commitment_id: int) -> dict[str, Any]:
         self._capabilities().require("commitment.complete")
-        return _value_payload(self._personal_os().complete_commitment(commitment_id))
+        commitment = self._personal_os().complete_commitment(commitment_id)
+        self._productivity().cancel_source_reminder(
+            source_type="commitment",
+            source_id=commitment.id,
+        )
+        return _value_payload(commitment)
+
+    def reminder_create(self, **payload: Any) -> dict[str, Any]:
+        self._capabilities().require("reminder.create")
+        return _value_payload(self._productivity().create_reminder(**payload))
+
+    def reminder_list(self, *, status: str = "active", limit: int = 100) -> dict[str, Any]:
+        self._capabilities().require("reminder.list")
+        items = self._productivity().list_reminders(status=status, limit=limit)
+        return {"items": [_value_payload(item) for item in items]}
+
+    def reminder_reschedule(
+        self,
+        *,
+        reminder_id: int,
+        remind_at: str,
+        recurrence: str | None = "keep",
+    ) -> dict[str, Any]:
+        self._capabilities().require("reminder.write")
+        return _value_payload(
+            self._productivity().reschedule_reminder(
+                reminder_id,
+                remind_at=remind_at,
+                recurrence=recurrence,
+            )
+        )
+
+    def reminder_cancel(self, *, reminder_id: int) -> dict[str, Any]:
+        self._capabilities().require("reminder.write")
+        return _value_payload(self._productivity().cancel_reminder(reminder_id))
+
+    def crm_interaction_log(self, **payload: Any) -> dict[str, Any]:
+        self._capabilities().require("crm.write")
+        interaction = self._crm().log_interaction(**payload)
+        if interaction.next_contact_at:
+            self._productivity().create_reminder(
+                text=f"Написать {interaction.contact}: {interaction.summary}",
+                remind_at=interaction.next_contact_at,
+                idempotency_key=f"crm-interaction:{interaction.id}:followup",
+                source_type="crm_interaction",
+                source_id=interaction.id,
+            )
+        return _value_payload(interaction)
+
+    def crm_timeline(
+        self,
+        *,
+        contact: str | None = None,
+        project: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        self._capabilities().require("crm.read")
+        items = self._crm().list_interactions(
+            contact=contact,
+            project=project,
+            limit=limit,
+        )
+        return {"items": [_value_payload(item) for item in items]}
+
+    def personal_today(
+        self,
+        *,
+        now: str | None = None,
+        timezone_name: str = "Europe/Moscow",
+    ) -> dict[str, Any]:
+        self._capabilities().require("personal.read")
+        start, end = local_day_bounds(now, timezone_name)
+        reminders = self._productivity().reminders_between(start=start, end=end)
+        followups = self._crm().followups_between(start=start, end=end)
+        commitments = [
+            item
+            for item in self._personal_os().list_commitments(status="open")
+            if item.due_at and start <= item.due_at < end
+        ]
+        adapter = self.adapter_factory()
+        errors: dict[str, str] = {}
+        try:
+            tasks = adapter.list_tasks(list_name="Today")
+        except Exception as error:
+            tasks = ""
+            errors["tasks"] = str(error)[:200]
+        try:
+            calendar = adapter.list_calendar_events(when="today")
+        except Exception as error:
+            calendar = ""
+            errors["calendar"] = str(error)[:200]
+        priorities = [
+            *(
+                {"type": "reminder", "id": item.id, "title": item.text, "due_at": item.remind_at}
+                for item in reminders
+            ),
+            *(
+                {"type": "commitment", "id": item.id, "title": item.subject, "due_at": item.due_at}
+                for item in commitments
+            ),
+            *(
+                {
+                    "type": "followup",
+                    "id": item.id,
+                    "title": f"Написать {item.contact}",
+                    "due_at": item.next_contact_at,
+                }
+                for item in followups
+            ),
+        ]
+        priorities.sort(key=lambda item: (str(item["due_at"]), str(item["type"]), int(item["id"])))
+        return {
+            "date_start": start,
+            "timezone": timezone_name,
+            "tasks": tasks,
+            "calendar": calendar,
+            "reminders": [_value_payload(item) for item in reminders],
+            "commitments": [_value_payload(item) for item in commitments],
+            "followups": [_value_payload(item) for item in followups],
+            "top_three": priorities[:3],
+            "integration_errors": errors,
+        }
 
     def work_mode_get(self) -> dict[str, Any]:
         return _value_payload(self._capabilities().get_mode())
@@ -274,11 +406,21 @@ class NativeToolsAPI:
     def _personal_os(self) -> PersonalOSStore:
         return PersonalOSStore(self.database_path)
 
+    def _productivity(self) -> PersonalProductivityStore:
+        return PersonalProductivityStore(self.database_path)
+
+    def _crm(self) -> PersonalCRMStore:
+        return PersonalCRMStore(self.database_path)
+
     def _capabilities(self) -> CapabilityPolicyStore:
         return CapabilityPolicyStore(self.database_path)
 
     def _action_adapter(self) -> "_NativeActionAdapter":
-        return _NativeActionAdapter(self.adapter_factory(), self._personal_os())
+        return _NativeActionAdapter(
+            self.adapter_factory,
+            self._personal_os(),
+            self._productivity(),
+        )
 
 
 def _plan_payload(plan: ActionPlan) -> dict[str, Any]:
@@ -299,12 +441,21 @@ def _plan_preview(plan: ActionPlan) -> str:
 
 
 class _NativeActionAdapter:
-    def __init__(self, task_calendar: Any, personal_os: PersonalOSStore) -> None:
-        self.task_calendar = task_calendar
+    def __init__(
+        self,
+        task_calendar_factory: AdapterFactory,
+        personal_os: PersonalOSStore,
+        productivity: PersonalProductivityStore,
+    ) -> None:
+        self.task_calendar_factory = task_calendar_factory
+        self._task_calendar: Any | None = None
         self.personal_os = personal_os
+        self.productivity = productivity
 
     def __getattr__(self, name: str) -> Any:
-        return getattr(self.task_calendar, name)
+        if self._task_calendar is None:
+            self._task_calendar = self.task_calendar_factory()
+        return getattr(self._task_calendar, name)
 
     def save_note(self, **payload: Any) -> str:
         note = self.personal_os.upsert_memory_block(block_type="note", **payload)
@@ -312,7 +463,19 @@ class _NativeActionAdapter:
 
     def create_commitment(self, **payload: Any) -> str:
         commitment = self.personal_os.create_commitment(**payload)
+        if commitment.due_at:
+            self.productivity.create_reminder(
+                text=f"Срок обещания: {commitment.subject} — {commitment.content}",
+                remind_at=commitment.due_at,
+                idempotency_key=f"commitment:{commitment.id}:due",
+                source_type="commitment",
+                source_id=commitment.id,
+            )
         return f"created commitment\ncommitment_id={commitment.id}"
+
+    def create_reminder(self, **payload: Any) -> str:
+        reminder = self.productivity.create_reminder(**payload)
+        return f"created reminder\nreminder_id={reminder.id}"
 
 
 def _message_plan_payload(plan: MessagePlan) -> dict[str, Any]:

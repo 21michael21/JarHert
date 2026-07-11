@@ -38,6 +38,12 @@ class CommitmentCreatePayload(BaseModel):
     due_at: str | None = None
 
 
+class ReminderCreatePayload(BaseModel):
+    text: str
+    remind_at: str
+    recurrence: Literal["daily", "weekly", "monthly"] | None = None
+
+
 MemoryBlockType = Literal["profile", "person", "project", "commitment", "preference"]
 ProjectTool = Literal["tasks", "calendar", "notes", "reminders", "contacts", "messages", "monitors", "sandbox"]
 
@@ -128,6 +134,11 @@ class CommitmentCreateAction(BaseModel):
     payload: CommitmentCreatePayload
 
 
+class ReminderCreateAction(BaseModel):
+    type: Literal["reminder.create"]
+    payload: ReminderCreatePayload
+
+
 Action = Annotated[
     Union[
         TaskCreateAction,
@@ -139,6 +150,7 @@ Action = Annotated[
         CalendarDeleteAction,
         NoteSaveAction,
         CommitmentCreateAction,
+        ReminderCreateAction,
     ],
     Field(discriminator="type"),
 ]
@@ -308,6 +320,92 @@ def commitment_list(
 
 
 @mcp.tool()
+def reminder_create(
+    text: str,
+    remind_at: str,
+    idempotency_key: str,
+    recurrence: Literal["daily", "weekly", "monthly"] | None = None,
+) -> dict[str, object]:
+    """Create one idempotent reminder from an ISO timestamp with timezone."""
+    return api.reminder_create(
+        text=text,
+        remind_at=remind_at,
+        recurrence=recurrence,
+        idempotency_key=idempotency_key,
+    )
+
+
+@mcp.tool()
+def reminder_list(
+    status: Literal["active", "sent", "cancelled"] = "active",
+    limit: Annotated[int, Field(ge=1, le=200)] = 100,
+) -> dict[str, object]:
+    """List reminders so natural requests can refer to a real reminder id."""
+    return api.reminder_list(status=status, limit=limit)
+
+
+@mcp.tool()
+def reminder_reschedule(
+    reminder_id: int,
+    remind_at: str,
+    recurrence: Literal["keep", "none", "daily", "weekly", "monthly"] = "keep",
+) -> dict[str, object]:
+    """Move an existing reminder and optionally change or clear its recurrence."""
+    return api.reminder_reschedule(
+        reminder_id=reminder_id,
+        remind_at=remind_at,
+        recurrence=recurrence,
+    )
+
+
+@mcp.tool()
+def reminder_cancel(reminder_id: int) -> dict[str, object]:
+    """Cancel one active reminder by its owner-visible id."""
+    return api.reminder_cancel(reminder_id=reminder_id)
+
+
+@mcp.tool()
+def crm_interaction_log(
+    contact: str,
+    kind: Literal["message", "call", "meeting", "agreement", "note"],
+    summary: str,
+    idempotency_key: str,
+    project: str | None = None,
+    occurred_at: str | None = None,
+    next_contact_at: str | None = None,
+) -> dict[str, object]:
+    """Record a confirmed contact interaction and optional next follow-up date."""
+    return api.crm_interaction_log(
+        contact=contact,
+        kind=kind,
+        summary=summary,
+        project=project,
+        occurred_at=occurred_at,
+        next_contact_at=next_contact_at,
+        idempotency_key=idempotency_key,
+    )
+
+
+@mcp.tool()
+def crm_timeline(
+    contact: str | None = None,
+    project: str | None = None,
+    limit: Annotated[int, Field(ge=1, le=200)] = 100,
+) -> dict[str, object]:
+    """Read the factual contact timeline without exposing unrelated people."""
+    return api.crm_timeline(contact=contact, project=project, limit=limit)
+
+
+@mcp.tool()
+def personal_today(
+    now: str | None = None,
+    timezone_name: str = "Europe/Moscow",
+) -> dict[str, object]:
+    """Collect today's tasks, calendar, reminders, promises, follow-ups, and top three."""
+    return api.personal_today(now=now, timezone_name=timezone_name)
+
+
+@mcp.tool()
 async def commitment_complete_confirmed(commitment_id: int, ctx: Context) -> dict[str, object]:
     """Ask once, then mark one open promise as done."""
     if not await _confirm(ctx, f"Отметить обещание #{commitment_id} выполненным?"):
@@ -331,7 +429,7 @@ def work_mode_set(mode: Literal["fast", "think", "code"]) -> dict[str, object]:
 async def action_plan_confirm_execute(
     actions: list[Action], idempotency_key: str, ctx: Context
 ) -> dict[str, object]:
-    """Create one notes/promises/Trello/Calendar plan, ask once, then execute it."""
+    """Create one notes/promises/reminders/Trello/Calendar plan and confirm it once."""
     payload = [action.model_dump(exclude_none=True) for action in actions]
     return await api.action_plan_confirm_execute(
         actions=payload,

@@ -62,6 +62,13 @@ mcp_servers:
         - project_context_resolve
         - commitment_list
         - commitment_complete_confirmed
+        - reminder_create
+        - reminder_list
+        - reminder_reschedule
+        - reminder_cancel
+        - crm_interaction_log
+        - crm_timeline
+        - personal_today
         - work_mode_get
         - work_mode_set
         - telegram_text_export_confirmed

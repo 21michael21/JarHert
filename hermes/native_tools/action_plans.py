@@ -15,6 +15,7 @@ class ActionPlanError(RuntimeError):
 ACTION_SCHEMAS: dict[str, tuple[str, ...]] = {
     "note.save": ("subject", "content"),
     "commitment.create": ("subject", "content"),
+    "reminder.create": ("text", "remind_at"),
     "task.create": ("title",),
     "task.move": ("title", "target_list"),
     "task.done": ("title",),
@@ -72,12 +73,15 @@ class ActionPlanStore:
                 ).lastrowid
             )
             for position, item in enumerate(normalized):
+                payload = dict(item["payload"])
+                if item["type"] in {"commitment.create", "reminder.create"}:
+                    payload.setdefault("idempotency_key", f"{key}:action:{position}")
                 connection.execute(
                     """
                     INSERT INTO plan_actions(plan_id, position, action_type, payload_json, status)
                     VALUES (?, ?, ?, ?, 'pending')
                     """,
-                    (plan_id, position, item["type"], _json(item["payload"])),
+                    (plan_id, position, item["type"], _json(payload)),
                 )
             connection.commit()
             return self._get(connection, plan_id)
@@ -220,6 +224,7 @@ def _execute_action(adapter: Any, action_type: str, payload: dict[str, Any]) -> 
     handlers = {
         "note.save": "save_note",
         "commitment.create": "create_commitment",
+        "reminder.create": "create_reminder",
         "task.create": "create_task",
         "task.move": "move_task",
         "task.done": "complete_task",

@@ -81,6 +81,7 @@ def test_one_inbox_plan_saves_note_commitment_task_and_meeting_once(tmp_path: Pa
     assert len(commitments) == 1
     assert commitments[0]["subject"] == "Ответить Илье"
     assert commitments[0]["due_at"] == "2030-01-05T09:00:00+00:00"
+    assert api.reminder_list()["items"][0]["source_id"] == commitments[0]["id"]
 
 
 def test_commitment_can_be_completed_and_no_longer_appears_open(tmp_path: Path) -> None:
