@@ -73,6 +73,9 @@ mcp_servers:
         - monitor_digest
         - monitor_digest_mark_delivered
         - monitor_disable
+        - knowledge_archive_url_confirmed
+        - knowledge_search
+        - knowledge_list_sources
         - skill_feedback
         - skill_candidates
         - memory_block_upsert

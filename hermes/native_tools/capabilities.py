@@ -55,6 +55,8 @@ CAPABILITIES = {
     "message.cancel": CapabilityRule("medium", ALL_MODES),
     "monitor.list": CapabilityRule("low", ALL_MODES),
     "monitor.write": CapabilityRule("medium", ALL_MODES),
+    "knowledge.read": CapabilityRule("low", ALL_MODES),
+    "knowledge.write": CapabilityRule("medium", ALL_MODES),
     "memory.read": CapabilityRule("low", ALL_MODES),
     "memory.write": CapabilityRule("low", ALL_MODES),
     "note.save": CapabilityRule("low", ALL_MODES),

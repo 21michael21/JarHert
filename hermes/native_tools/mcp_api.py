@@ -11,6 +11,8 @@ from .action_plans import ActionPlan, ActionPlanStore, execute_plan
 from .capabilities import CapabilityPolicyStore
 from .coding_queue import RemoteCodingQueueClient
 from .contacts import ContactStore, MessagePlan
+from .knowledge_archive import FetchBytes as KnowledgeFetchBytes
+from .knowledge_archive import KnowledgeArchive
 from .monitors import Monitor, MonitorRegistry
 from .memory_consolidation import MemoryConsolidator
 from .personal_os import PersonalOSStore
@@ -48,6 +50,7 @@ class NativeToolsAPI:
         exporter: Exporter = run_telegram_export,
         subscription_sync: SubscriptionSync | None = None,
         coding_queue_factory: AdapterFactory = RemoteCodingQueueClient.from_env,
+        knowledge_fetcher: KnowledgeFetchBytes | None = None,
     ) -> None:
         self.database_path = Path(database_path or personal_os_database_path()).expanduser()
         self.adapter_factory = adapter_factory
@@ -55,6 +58,7 @@ class NativeToolsAPI:
         self.exporter = exporter
         self.subscription_sync = subscription_sync if subscription_sync is not None else subscription_sync_from_env()
         self.coding_queue_factory = coding_queue_factory
+        self.knowledge_fetcher = knowledge_fetcher
 
     def integration_health(self) -> dict[str, bool]:
         self._capabilities().require("integration.health")
@@ -179,6 +183,29 @@ class NativeToolsAPI:
         self._capabilities().require("monitor.write")
         self._monitors().mark_digest_delivered(item_ids)
         return {"delivered": len(set(int(item_id) for item_id in item_ids))}
+
+    def knowledge_archive_url(self, *, url: str, project: str | None = None) -> dict[str, Any]:
+        self._capabilities().require("knowledge.write")
+        return self._knowledge().archive_url(url, project=project)
+
+    def knowledge_search(
+        self,
+        *,
+        query: str,
+        project: str | None = None,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        self._capabilities().require("knowledge.read")
+        return {"items": self._knowledge().search(query, project=project, limit=limit)}
+
+    def knowledge_list_sources(
+        self,
+        *,
+        project: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        self._capabilities().require("knowledge.read")
+        return {"items": [_value_payload(item) for item in self._knowledge().list_sources(project=project, limit=limit)]}
 
     def skill_feedback(
         self,
@@ -579,6 +606,9 @@ class NativeToolsAPI:
 
     def _monitors(self) -> MonitorRegistry:
         return MonitorRegistry(self.database_path)
+
+    def _knowledge(self) -> KnowledgeArchive:
+        return KnowledgeArchive(self.database_path, fetcher=self.knowledge_fetcher)
 
     def _skills(self) -> SkillDistiller:
         return SkillDistiller(self.database_path)

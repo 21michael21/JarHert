@@ -50,7 +50,17 @@ class SkillStep(BaseModel):
 
 
 MemoryBlockType = Literal["profile", "person", "project", "commitment", "preference"]
-ProjectTool = Literal["tasks", "calendar", "notes", "reminders", "contacts", "messages", "monitors", "sandbox"]
+ProjectTool = Literal[
+    "tasks",
+    "calendar",
+    "notes",
+    "reminders",
+    "contacts",
+    "messages",
+    "monitors",
+    "knowledge",
+    "sandbox",
+]
 
 
 class TaskCreatePayload(BaseModel):
@@ -279,6 +289,37 @@ def monitor_digest() -> dict[str, object]:
 def monitor_digest_mark_delivered(item_ids: list[int]) -> dict[str, int]:
     """Acknowledge digest items only after composing their Telegram summary."""
     return api.monitor_digest_mark_delivered(item_ids=item_ids)
+
+
+@mcp.tool()
+async def knowledge_archive_url_confirmed(
+    url: str,
+    ctx: Context,
+    project: str | None = None,
+) -> dict[str, object]:
+    """Archive one explicit public HTTPS page after one confirmation; never crawl a site."""
+    if not await _confirm(ctx, f"Сохранить страницу в личную базу знаний?\n{url}"):
+        return {"status": "unchanged", "url": url}
+    return api.knowledge_archive_url(url=url, project=project)
+
+
+@mcp.tool()
+def knowledge_search(
+    query: str,
+    project: str | None = None,
+    limit: Annotated[int, Field(ge=1, le=50)] = 10,
+) -> dict[str, object]:
+    """Search the latest saved versions of explicitly archived pages with SQLite FTS."""
+    return api.knowledge_search(query=query, project=project, limit=limit)
+
+
+@mcp.tool()
+def knowledge_list_sources(
+    project: str | None = None,
+    limit: Annotated[int, Field(ge=1, le=200)] = 100,
+) -> dict[str, object]:
+    """List saved knowledge sources and their bounded snapshot counts."""
+    return api.knowledge_list_sources(project=project, limit=limit)
 
 
 @mcp.tool()

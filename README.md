@@ -221,6 +221,18 @@ hermes cron create "* * * * *" \
 Delivery requires the Hermes Telegram gateway to be configured and running.
 Contact resolution is exact and alias-based; a similar name is never guessed.
 
+### Личный архив ссылок
+
+Попроси Hermes сохранить явно присланную публичную ссылку, а позже спроси по
+содержимому: `сохрани эту страницу в Hub_ML` или `найди в сохранённом про OAuth`.
+Профиль берёт одну HTTPS-страницу, очищает HTML до текста, сохраняет её в
+локальной SQLite-базе и ищет по ней через FTS. Это не краулер: он не ходит по
+ссылкам, не использует cookies/логин и не принимает внутренние адреса.
+
+Для каждого URL сохраняются только изменившиеся версии, максимум 20 снимков.
+Идентичная страница не занимает ещё одну копию. Внешние сайты не вызываются
+сами по себе: архивирование требует одного подтверждения в Telegram.
+
 ### Native diff-first monitors
 
 The first monitor source is GitHub Releases. The first successful check stores
