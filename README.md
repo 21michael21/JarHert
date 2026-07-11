@@ -810,6 +810,23 @@ blocked reply, fake provider, отсутствующий credential или timeo
 monitor triggered/no-change и ownership. Текущая duplicate-проверка относится к action queue:
 durable dedup входящих Telegram `update_id` в проекте пока не реализован и этим тестом не заявляется.
 
+### Native operator canary
+
+Для живого Hermes-профиля есть отдельный короткий canary. Он создаёт уникальные
+временные Trello-задачу, Calendar-событие и reminder, посылает одно служебное
+сообщение владельцу в Telegram, затем удаляет все три временные сущности даже
+при ошибке delivery. Он не проверяет входящий Telegram update, LLM или STT и не
+выдаёт себя за полный gateway E2E:
+
+```bash
+HERMES_HOME=~/.hermes/profiles/jarhert \
+~/.hermes/profiles/jarhert/.venv/bin/python \
+  ~/.hermes/profiles/jarhert/scripts/operator_canary.py --allow-external
+```
+
+Запускай его только для owner chat: флаг `--allow-external` обязателен именно
+потому, что canary делает краткоживущие внешние изменения.
+
 ### Legacy component smoke
 
 Скрипт `scripts/live_e2e.py` проверяет цепочку:
