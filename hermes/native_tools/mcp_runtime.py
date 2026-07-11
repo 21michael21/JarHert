@@ -233,9 +233,46 @@ async def monitor_add_github_releases(
 
 
 @mcp.tool()
+async def monitor_add_source(
+    name: str,
+    source_type: Literal["rss", "json_api", "allowed_url"],
+    url: str,
+    allowed_hosts: Annotated[list[str], Field(min_length=1, max_length=20)],
+    condition: str,
+    ctx: Context,
+    quiet_hours: str | None = None,
+    timezone_name: str = "Europe/Moscow",
+) -> dict[str, object]:
+    """Add one HTTPS source whose host is explicitly allowlisted."""
+    if not await _confirm(ctx, f"Добавить monitor {name}: {url}?"):
+        return {"status": "unchanged"}
+    return api.monitor_add_source(
+        name=name,
+        source_type=source_type,
+        url=url,
+        allowed_hosts=allowed_hosts,
+        condition=condition,
+        quiet_hours=quiet_hours,
+        timezone_name=timezone_name,
+    )
+
+
+@mcp.tool()
 def monitor_list() -> dict[str, object]:
     """List configured proactive monitors."""
     return api.monitor_list()
+
+
+@mcp.tool()
+def monitor_digest() -> dict[str, object]:
+    """Read deferred quiet-hours and over-budget monitor changes."""
+    return api.monitor_digest()
+
+
+@mcp.tool()
+def monitor_digest_mark_delivered(item_ids: list[int]) -> dict[str, int]:
+    """Acknowledge digest items only after composing their Telegram summary."""
+    return api.monitor_digest_mark_delivered(item_ids=item_ids)
 
 
 @mcp.tool()

@@ -114,6 +114,34 @@ class NativeToolsAPI:
             )
         )
 
+    def monitor_add_source(
+        self,
+        *,
+        name: str,
+        source_type: str,
+        url: str,
+        allowed_hosts: list[str],
+        condition: str,
+        quiet_hours: str | None = None,
+        timezone_name: str = "Europe/Moscow",
+    ) -> dict[str, Any]:
+        self._capabilities().require("monitor.write")
+        source_config: dict[str, Any] = {
+            "url": url,
+            "allowed_hosts": allowed_hosts,
+            "timezone": timezone_name,
+        }
+        if quiet_hours:
+            source_config["quiet_hours"] = quiet_hours
+        return _monitor_payload(
+            self._monitors().add(
+                name=name,
+                source_type=source_type,
+                source_config=source_config,
+                condition=condition,
+            )
+        )
+
     def monitor_list(self) -> dict[str, Any]:
         self._capabilities().require("monitor.list")
         return {"items": [_monitor_payload(item) for item in self._monitors().list()]}
@@ -121,6 +149,15 @@ class NativeToolsAPI:
     def monitor_disable(self, *, monitor_id: int) -> dict[str, Any]:
         self._capabilities().require("monitor.write")
         return _monitor_payload(self._monitors().disable(monitor_id))
+
+    def monitor_digest(self) -> dict[str, Any]:
+        self._capabilities().require("monitor.list")
+        return self._monitors().build_digest()
+
+    def monitor_digest_mark_delivered(self, *, item_ids: list[int]) -> dict[str, int]:
+        self._capabilities().require("monitor.write")
+        self._monitors().mark_digest_delivered(item_ids)
+        return {"delivered": len(set(int(item_id) for item_id in item_ids))}
 
     def skill_feedback(
         self,

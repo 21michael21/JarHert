@@ -11,13 +11,20 @@ involved.
 
 ## Create and manage
 
-Only `github_releases` is allowlisted in this version.
+Allowlisted source types are `github_releases`, `rss`, `json_api`, and
+`allowed_url`. URL sources require HTTPS and an explicit hostname allowlist;
+private literal IPs, credentials in URLs, oversized responses, scripts, and
+styles are rejected.
 
 Call `mcp_jarhert_native_monitor_add_github_releases` with the monitor name,
 owner, repository, and condition. Use `mcp_jarhert_native_monitor_list` to list
 monitors and `mcp_jarhert_native_monitor_disable` to disable one.
 
 `remove` disables the monitor and keeps its state for audit.
+
+For URL sources call `mcp_jarhert_native_monitor_add_source`. Add quiet hours as
+`HH:MM-HH:MM`; changes during that interval and changes over the daily model
+budget go to one digest instead of waking the model immediately.
 
 ## Check workflow
 
@@ -46,3 +53,14 @@ hermes cron create "every 30m" \
 
 Do not create one cron per check tick. Never replace the deterministic hash and
 diff with a scheduled prompt that always calls the model.
+
+Create one digest cron. Read item IDs from its output, write one compact
+summary, then call `mcp_jarhert_native_monitor_digest_mark_delivered` once:
+
+```bash
+hermes cron create "0 8 * * *" \
+  --name "Monitor digest" \
+  --script check_monitor_digest.py \
+  --skill event-monitors \
+  --deliver origin
+```

@@ -53,7 +53,10 @@ mcp_servers:
         - message_plan_confirm_schedule
         - message_plan_cancel_confirmed
         - monitor_add_github_releases
+        - monitor_add_source
         - monitor_list
+        - monitor_digest
+        - monitor_digest_mark_delivered
         - monitor_disable
         - skill_feedback
         - skill_candidates

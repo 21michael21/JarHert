@@ -16,7 +16,9 @@ from native_tools.monitors import MonitorRegistry, MonitorRunner
 
 def main() -> int:
     path = database_path()
-    changes = MonitorRunner(MonitorRegistry(path), EventStore(path)).run_once()
+    changes = MonitorRunner(MonitorRegistry(path), EventStore(path)).run_once(
+        daily_emit_limit=int(os.getenv("MONITOR_DAILY_LLM_BUDGET", "10")),
+    )
     if changes:
         print(json.dumps({"changes": changes}, ensure_ascii=False, separators=(",", ":")))
     return 0
