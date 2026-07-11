@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from hermes.native_tools.coding_jobs import NativeCodingJobStore
+from hermes.native_tools.coding_jobs import NativeCodingJobStore, dispatch_completed_coding_jobs
 from hermes.native_tools.mcp_api import NativeToolsAPI
 
 
@@ -69,3 +69,31 @@ def test_native_api_queues_code_only_in_code_mode_and_lists_results(tmp_path, mo
     queued = api.coding_job_enqueue(mode="coding", prompt="Добавь тест", idempotency_key="telegram:102:coding")
     assert queued["status"] == "queued"
     assert api.coding_job_list()["items"] == [queued]
+
+
+def test_completed_native_job_is_claimed_once_for_telegram_delivery(tmp_path) -> None:
+    store = NativeCodingJobStore(tmp_path / "personal-os.sqlite3")
+    job = store.enqueue(tg_user_id=566055009, mode="research", prompt="Итог", idempotency_key="telegram:103")
+    store.claim_next(worker_id="mac")
+    store.complete(job.id, worker_id="mac", result_text="Короткий итог")
+
+    delivery = store.claim_completed_for_delivery(worker_id="dispatcher")
+
+    assert delivery.id == job.id
+    assert store.claim_completed_for_delivery(worker_id="another") is None
+    assert store.mark_delivery_sent(job.id, worker_id="dispatcher").delivery_status == "delivered"
+
+
+def test_completed_native_job_is_delivered_once_with_a_short_result(tmp_path) -> None:
+    store = NativeCodingJobStore(tmp_path / "personal-os.sqlite3")
+    job = store.enqueue(tg_user_id=566055009, mode="coding", prompt="Задача", idempotency_key="telegram:104")
+    store.claim_next(worker_id="mac")
+    store.complete(job.id, worker_id="mac", result_text="Готово: тесты прошли")
+    sent: list[tuple[int, str]] = []
+
+    result = dispatch_completed_coding_jobs(store, lambda chat_id, text: sent.append((chat_id, text)) or "telegram:1")
+    replay = dispatch_completed_coding_jobs(store, lambda chat_id, text: sent.append((chat_id, text)) or "telegram:2")
+
+    assert result == {"claimed": 1, "sent": 1, "failed": 0}
+    assert replay == {"claimed": 0, "sent": 0, "failed": 0}
+    assert sent == [(566055009, "Готово: тесты прошли")]

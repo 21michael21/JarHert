@@ -5,7 +5,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 _MODES = frozenset({"coding", "research"})
@@ -27,6 +27,8 @@ class NativeCodingJob:
     heartbeat_at: str | None
     result_text: str | None
     last_error: str | None
+    delivery_status: str
+    delivery_attempts: int
     created_at: str
     updated_at: str
 
@@ -147,6 +149,52 @@ class NativeCodingJobStore:
             ).fetchall()
         return [_from_row(row) for row in rows]
 
+    def claim_completed_for_delivery(
+        self,
+        *,
+        worker_id: str,
+        now: datetime | None = None,
+        lease_seconds: int = 120,
+    ) -> NativeCodingJob | None:
+        current = _utc_now(now)
+        worker = _required(worker_id, "Worker id", 100)
+        lease_until = (datetime.fromisoformat(current) + timedelta(seconds=max(1, min(int(lease_seconds), 3600)))).isoformat()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                UPDATE native_coding_jobs SET delivery_status = 'pending', delivery_lease_until = NULL
+                WHERE delivery_status = 'delivering' AND delivery_lease_until <= ?
+                """,
+                (current,),
+            )
+            row = connection.execute(
+                """
+                SELECT * FROM native_coding_jobs
+                WHERE status IN ('succeeded', 'failed') AND delivery_status = 'pending'
+                ORDER BY id LIMIT 1
+                """
+            ).fetchone()
+            if row is None:
+                return None
+            connection.execute(
+                """
+                UPDATE native_coding_jobs
+                SET delivery_status = 'delivering', delivery_worker_id = ?, delivery_lease_until = ?,
+                    delivery_attempts = delivery_attempts + 1, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND delivery_status = 'pending'
+                """,
+                (worker, lease_until, int(row["id"])),
+            )
+            claimed = connection.execute("SELECT * FROM native_coding_jobs WHERE id = ?", (int(row["id"]),)).fetchone()
+        return _from_row(claimed)
+
+    def mark_delivery_sent(self, job_id: int, *, worker_id: str) -> NativeCodingJob:
+        return self._finish_delivery(job_id, worker_id=worker_id, delivered=True)
+
+    def release_delivery(self, job_id: int, *, worker_id: str) -> NativeCodingJob:
+        return self._finish_delivery(job_id, worker_id=worker_id, delivered=False)
+
     def _finish(
         self,
         job_id: int,
@@ -194,6 +242,10 @@ class NativeCodingJobStore:
                     heartbeat_at TEXT,
                     result_text TEXT,
                     last_error TEXT,
+                    delivery_status TEXT NOT NULL DEFAULT 'pending',
+                    delivery_attempts INTEGER NOT NULL DEFAULT 0,
+                    delivery_worker_id TEXT,
+                    delivery_lease_until TEXT,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(tg_user_id, idempotency_key)
@@ -204,6 +256,10 @@ class NativeCodingJobStore:
                     ON native_coding_jobs(tg_user_id, id DESC);
                 """
             )
+            _add_column(connection, "delivery_status", "TEXT NOT NULL DEFAULT 'pending'")
+            _add_column(connection, "delivery_attempts", "INTEGER NOT NULL DEFAULT 0")
+            _add_column(connection, "delivery_worker_id", "TEXT")
+            _add_column(connection, "delivery_lease_until", "TEXT")
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path, timeout=10, isolation_level=None)
@@ -211,6 +267,22 @@ class NativeCodingJobStore:
         connection.execute("PRAGMA busy_timeout = 10000")
         connection.execute("PRAGMA journal_mode = WAL")
         return connection
+
+    def _finish_delivery(self, job_id: int, *, worker_id: str, delivered: bool) -> NativeCodingJob:
+        with self._connect() as connection:
+            result = connection.execute(
+                """
+                UPDATE native_coding_jobs
+                SET delivery_status = ?, delivery_worker_id = NULL, delivery_lease_until = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND delivery_status = 'delivering' AND delivery_worker_id = ?
+                """,
+                ("delivered" if delivered else "pending", int(job_id), _required(worker_id, "Worker id", 100)),
+            )
+            if result.rowcount != 1:
+                raise PermissionError("Coding delivery lease lost or belongs to another worker.")
+            row = connection.execute("SELECT * FROM native_coding_jobs WHERE id = ?", (int(job_id),)).fetchone()
+        return _from_row(row)
 
 
 def _from_row(row: sqlite3.Row) -> NativeCodingJob:
@@ -228,9 +300,36 @@ def _from_row(row: sqlite3.Row) -> NativeCodingJob:
         heartbeat_at=str(row["heartbeat_at"]) if row["heartbeat_at"] else None,
         result_text=str(row["result_text"]) if row["result_text"] else None,
         last_error=str(row["last_error"]) if row["last_error"] else None,
+        delivery_status=str(row["delivery_status"]),
+        delivery_attempts=int(row["delivery_attempts"]),
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
     )
+
+
+def dispatch_completed_coding_jobs(
+    store: NativeCodingJobStore,
+    sender: Callable[[int, str], str | None],
+    *,
+    worker_id: str = "coding-result-dispatcher",
+    limit: int = 20,
+) -> dict[str, int]:
+    counts = {"claimed": 0, "sent": 0, "failed": 0}
+    for _ in range(max(1, min(int(limit), 100))):
+        job = store.claim_completed_for_delivery(worker_id=worker_id)
+        if job is None:
+            break
+        counts["claimed"] += 1
+        text = job.result_text if job.status == "succeeded" else f"Задача #{job.id} не выполнилась. Попробуй ещё раз."
+        try:
+            sender(job.tg_user_id, text or f"Задача #{job.id} завершилась без текста.")
+        except Exception:
+            store.release_delivery(job.id, worker_id=worker_id)
+            counts["failed"] += 1
+            continue
+        store.mark_delivery_sent(job.id, worker_id=worker_id)
+        counts["sent"] += 1
+    return counts
 
 
 def _utc_now(value: datetime | None) -> str:
@@ -271,3 +370,9 @@ def _required(value: str, label: str, limit: int) -> str:
 
 def _optional(value: str | None, limit: int) -> str | None:
     return _required(value, "Value", limit) if value is not None and str(value).strip() else None
+
+
+def _add_column(connection: sqlite3.Connection, name: str, definition: str) -> None:
+    columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(native_coding_jobs)")}
+    if name not in columns:
+        connection.execute(f"ALTER TABLE native_coding_jobs ADD COLUMN {name} {definition}")
