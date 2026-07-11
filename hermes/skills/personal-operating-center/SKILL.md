@@ -32,9 +32,9 @@ use no model:
 
 ```bash
 hermes cron create "0 8 * * *" --name "Daily Brief" \
-  --script dispatch_personal_summary.py --no-agent --deliver local -- --kind daily
+  --script dispatch_daily_brief.py --no-agent --deliver local
 hermes cron create "0 18 * * 0" --name "Weekly Review" \
-  --script dispatch_personal_summary.py --no-agent --deliver local -- --kind weekly
+  --script dispatch_weekly_review.py --no-agent --deliver local
 ```
 
 ## Guardrails

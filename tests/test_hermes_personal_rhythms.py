@@ -135,4 +135,5 @@ def test_hermes_profile_exposes_daily_and_weekly_rhythms() -> None:
 
     assert "- personal_daily_brief" in config
     assert "- personal_weekly_review" in config
-    assert "dispatch_personal_summary.py" in skill
+    assert "dispatch_daily_brief.py" in skill
+    assert "dispatch_weekly_review.py" in skill
