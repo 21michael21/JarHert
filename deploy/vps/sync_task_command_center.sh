@@ -38,6 +38,7 @@ python3 -m venv "$REMOTE_DIR/.venv"
 "$REMOTE_DIR/.venv/bin/python" -m pip install --disable-pip-version-check -q -r "$REMOTE_DIR/requirements.txt"
 chmod 700 "$REMOTE_DIR"
 chmod 600 "$REMOTE_DIR/.env" "$REMOTE_DIR/client_secret.json" "$REMOTE_DIR/token.json"
+cd "$REMOTE_DIR"
 
 python3 - "$PROFILE_ENV" "$REMOTE_DIR" <<'PYTHON_SCRIPT'
 from pathlib import Path
