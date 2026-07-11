@@ -25,6 +25,23 @@ class FakeAdapter:
         return f"created {payload['title']}\ntrello_card_id=abc123"
 
 
+def test_native_api_reuses_task_calendar_adapter(tmp_path: Path) -> None:
+    created: list[FakeAdapter] = []
+
+    def factory() -> FakeAdapter:
+        adapter = FakeAdapter()
+        created.append(adapter)
+        return adapter
+
+    api = NativeToolsAPI(database_path=tmp_path / "personal.sqlite3", adapter_factory=factory)
+
+    api.integration_health()
+    api.task_list(list_name="Today")
+    api.calendar_list(when="today")
+
+    assert len(created) == 1
+
+
 def test_native_api_plan_round_trip_and_health_redaction(tmp_path: Path) -> None:
     api = NativeToolsAPI(database_path=tmp_path / "personal.sqlite3", adapter_factory=FakeAdapter)
     previews: list[str] = []

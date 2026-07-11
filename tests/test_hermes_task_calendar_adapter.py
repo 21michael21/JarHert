@@ -91,6 +91,54 @@ def test_health_checks_both_integrations(tmp_path) -> None:
     assert len(calls) == 2
 
 
+def test_health_check_is_cached_for_same_adapter(tmp_path) -> None:
+    calls = []
+    adapter = make_adapter(tmp_path, calls)
+
+    first = adapter.health_check()
+    second = adapter.health_check()
+
+    assert second == first
+    assert len(calls) == 2
+
+
+def test_batch_uses_one_task_command_center_process(tmp_path) -> None:
+    root = tmp_path / "task-command-center"
+    root.mkdir()
+    calls = []
+
+    def runner(argv, *, cwd, timeout, **_kwargs):
+        calls.append((argv, cwd, timeout))
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout='[{"ok":true,"result":"task ok"},{"ok":true,"result":"calendar ok"}]',
+            stderr="",
+        )
+
+    adapter = TaskCalendarAdapter(root=root, runner=runner)
+    results = adapter.execute_batch(
+        [
+            {"type": "task.create", "payload": {"title": "Задача", "list_name": "Today"}},
+            {
+                "type": "calendar.create",
+                "payload": {
+                    "title": "Созвон",
+                    "start": "2030-01-02T12:00:00+03:00",
+                    "end": "2030-01-02T12:30:00+03:00",
+                },
+            },
+        ]
+    )
+
+    assert results == [
+        {"ok": True, "result": "task ok"},
+        {"ok": True, "result": "calendar ok"},
+    ]
+    assert len(calls) == 1
+    assert "-c" in calls[0][0]
+
+
 def test_failed_command_returns_bounded_friendly_error(tmp_path) -> None:
     root = tmp_path / "tcc"
     root.mkdir()

@@ -23,6 +23,6 @@ Call `mcp_jarhert_native_action_plan_confirm_execute` once with the full
 `actions` array and an idempotency key derived from the Telegram message ID.
 
 The native tool owns the compact preview, the single Telegram confirmation,
-idempotent execution and cancellation. Do not call `clarify`, approve, execute
-or cancel separately. Summarize succeeded and failed actions in one final
-message.
+idempotent execution, one batch connection to Task Command Center, and
+cancellation. Do not call `clarify`, approve, execute or cancel separately.
+Summarize succeeded and failed actions in one final message.

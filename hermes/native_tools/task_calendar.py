@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -33,7 +34,10 @@ class TaskCalendarAdapter:
     root: Path
     python_executable: str = ".venv/bin/python"
     timeout_seconds: float = 45
+    health_cache_seconds: float = 30
     runner: Runner = subprocess.run
+    _health_cache_value: TaskCalendarHealth | None = field(default=None, init=False, compare=False, repr=False)
+    _health_cache_at: float = field(default=0, init=False, compare=False, repr=False)
 
     @classmethod
     def from_env(cls) -> "TaskCalendarAdapter":
@@ -44,7 +48,27 @@ class TaskCalendarAdapter:
             root=Path(root).expanduser(),
             python_executable=os.getenv("TASK_COMMAND_CENTER_PYTHON", ".venv/bin/python"),
             timeout_seconds=float(os.getenv("TASK_COMMAND_CENTER_TIMEOUT_SECONDS", "45")),
+            health_cache_seconds=float(os.getenv("TASK_COMMAND_CENTER_HEALTH_CACHE_SECONDS", "30")),
         )
+
+    def execute_batch(self, actions: list[dict[str, object]]) -> list[dict[str, object]]:
+        if not actions or len(actions) > 20:
+            raise TaskCalendarError("Batch должен содержать от 1 до 20 действий.")
+        allowed = {
+            "task.create", "task.move", "task.done", "task.delete",
+            "calendar.create", "calendar.move", "calendar.delete",
+        }
+        for item in actions:
+            if str(item.get("type") or "") not in allowed or not isinstance(item.get("payload"), dict):
+                raise TaskCalendarError("Batch содержит недопустимое действие.")
+        output = self._run_python(_BATCH_SCRIPT, {"actions": actions}, max_output_chars=16_000)
+        try:
+            results = json.loads(output)
+        except json.JSONDecodeError as error:
+            raise TaskCalendarError("Task Command Center вернул некорректный batch JSON.") from error
+        if not isinstance(results, list) or not all(isinstance(item, dict) for item in results):
+            raise TaskCalendarError("Task Command Center вернул некорректный batch result.")
+        return results
 
     def create_task(
         self,
@@ -121,13 +145,26 @@ class TaskCalendarAdapter:
     def delete_calendar_event(self, *, title: str) -> str:
         return self._run_python(_CALENDAR_DELETE_SCRIPT, {"title": _required(title, "title")})
 
-    def health_check(self) -> TaskCalendarHealth:
+    def health_check(self, *, force: bool = False) -> TaskCalendarHealth:
+        now = time.monotonic()
+        if (
+            not force
+            and self._health_cache_value is not None
+            and now - self._health_cache_at < max(0, self.health_cache_seconds)
+        ):
+            return self._health_cache_value
         if not self.root.exists():
             detail = f"Task Command Center не найден: {self.root}"
-            return TaskCalendarHealth(False, detail, False, detail)
+            result = TaskCalendarHealth(False, detail, False, detail)
+            object.__setattr__(self, "_health_cache_value", result)
+            object.__setattr__(self, "_health_cache_at", now)
+            return result
         trello_ok, trello_detail = self._probe([*self._base_args(), "list", "--list", "Today"])
         calendar_ok, calendar_detail = self._probe([str(self._python_path()), "-c", _CALENDAR_HEALTH_SCRIPT])
-        return TaskCalendarHealth(trello_ok, trello_detail, calendar_ok, calendar_detail)
+        result = TaskCalendarHealth(trello_ok, trello_detail, calendar_ok, calendar_detail)
+        object.__setattr__(self, "_health_cache_value", result)
+        object.__setattr__(self, "_health_cache_at", now)
+        return result
 
     def _base_args(self) -> list[str]:
         return [str(self._python_path()), "taskctl.py"]
@@ -136,10 +173,19 @@ class TaskCalendarAdapter:
         value = Path(self.python_executable)
         return value if value.is_absolute() else self.root / value
 
-    def _run_python(self, script: str, payload: dict[str, str]) -> str:
-        return self._run([str(self._python_path()), "-c", script, json.dumps(payload, ensure_ascii=False)])
+    def _run_python(
+        self,
+        script: str,
+        payload: dict[str, object],
+        *,
+        max_output_chars: int = 3000,
+    ) -> str:
+        return self._run(
+            [str(self._python_path()), "-c", script, json.dumps(payload, ensure_ascii=False)],
+            max_output_chars=max_output_chars,
+        )
 
-    def _run(self, argv: list[str]) -> str:
+    def _run(self, argv: list[str], *, max_output_chars: int = 3000) -> str:
         if not self.root.exists():
             raise TaskCalendarError(f"Task Command Center не найден: {self.root}")
         try:
@@ -160,7 +206,7 @@ class TaskCalendarAdapter:
         if result.returncode != 0:
             detail = (result.stderr or output or f"exit={result.returncode}").strip()
             raise TaskCalendarError(_bounded(detail, 500))
-        return _bounded(output or "Готово.", 3000)
+        return _bounded(output or "Готово.", max_output_chars)
 
     def _probe(self, argv: list[str]) -> tuple[bool, str]:
         try:
@@ -263,4 +309,96 @@ payload = json.loads(sys.argv[1]); config = load_config(Path('.')); calendar = G
 event = calendar.delete_event_by_title(payload['title'])
 print(format_event(event)); print(f"calendar_event_id={event.get('id')}")
 if event.get('htmlLink'): print(event.get('htmlLink'))
+""".strip()
+
+
+_BATCH_SCRIPT = """
+import json, sys
+from pathlib import Path
+from src.config import load_config
+from src.date_parser import parse_date, parse_datetime
+from src.google_calendar_client import GoogleCalendarClient
+from src.models import CalendarEventInput, TaskCardInput
+from src.trello_client import TrelloClient
+
+payload = json.loads(sys.argv[1])
+config = load_config(Path('.'))
+trello = None
+calendar = None
+
+def get_trello():
+    global trello
+    if trello is None:
+        trello = TrelloClient(config, Path('.'))
+    return trello
+
+def get_calendar():
+    global calendar
+    if calendar is None:
+        calendar = GoogleCalendarClient(config, Path('.'))
+        if not config.mock:
+            service = calendar.authenticate()
+            calendar.authenticate = lambda: service
+    return calendar
+
+def task_result(card):
+    parts = [f"trello_card_id={card.get('id')}"]
+    if card.get('shortUrl') or card.get('url'):
+        parts.append(str(card.get('shortUrl') or card.get('url')))
+    return "\\n".join(parts)
+
+def calendar_result(event):
+    parts = [f"calendar_event_id={event.get('id')}"]
+    if event.get('htmlLink'):
+        parts.append(str(event.get('htmlLink')))
+    return "\\n".join(parts)
+
+results = []
+for action in payload['actions']:
+    kind = action['type']; data = action['payload']
+    try:
+        if kind == 'task.create':
+            card = get_trello().create_card(TaskCardInput(
+                title=data['title'], project=data.get('project'), priority=data.get('priority'),
+                list_name=data.get('list_name') or 'Inbox', due=parse_date(data.get('due')),
+                description=data.get('description') or '', criteria=[],
+            ))
+            result = task_result(card)
+        elif kind == 'task.move':
+            client = get_trello(); result = task_result(client.move_card(client.find_card_by_name(data['title']), data['target_list']))
+        elif kind == 'task.done':
+            client = get_trello(); card = client.find_card_by_name(data['title'])
+            client.add_comment(card, f"Done summary: {data.get('summary') or 'Готово.'}")
+            result = task_result(client.move_card(card, 'Done'))
+        elif kind == 'task.delete':
+            client = get_trello(); card = client.find_card_by_name(data['title']); client.delete_card(card)
+            result = task_result(card)
+        elif kind == 'calendar.create':
+            event = get_calendar().create_event(CalendarEventInput(
+                title=data['title'], start=parse_datetime(data['start'], config.timezone),
+                end=parse_datetime(data['end'], config.timezone), reminder_minutes=data.get('reminder_minutes'),
+                description=data.get('description') or '',
+            ))
+            result = calendar_result(event)
+        elif kind == 'calendar.move':
+            client = get_calendar(); event = client.find_event_by_title(data['title']); event_id = str(event['id'])
+            body = client.build_event_body(CalendarEventInput(
+                title=str(event.get('summary') or data['title']), start=parse_datetime(data['start'], config.timezone),
+                end=parse_datetime(data['end'], config.timezone), reminder_minutes=None,
+                description=str(event.get('description') or ''),
+            ))
+            if config.mock:
+                store = client._load_store(); moved = next(item for item in store['events'] if str(item.get('id')) == event_id)
+                moved.update(body); moved['id'] = event_id; moved['htmlLink'] = event.get('htmlLink'); client._save_store(store)
+            else:
+                moved = client.authenticate().events().update(calendarId=config.google_calendar_id, eventId=event_id, body=body).execute()
+            result = calendar_result(moved)
+        elif kind == 'calendar.delete':
+            result = calendar_result(get_calendar().delete_event_by_title(data['title']))
+        else:
+            raise ValueError(f"Unsupported action: {kind}")
+        results.append({'ok': True, 'result': result})
+    except Exception as error:
+        results.append({'ok': False, 'error': str(error)[:500] or type(error).__name__})
+print(json.dumps(results, ensure_ascii=False, separators=(',', ':')))
 """.strip()

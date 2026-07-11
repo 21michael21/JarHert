@@ -107,3 +107,37 @@ def test_cancelled_plan_cannot_be_approved(tmp_path) -> None:
 
     with pytest.raises(ActionPlanError, match="cancelled"):
         store.approve(plan.id)
+
+
+def test_external_actions_use_one_batch_and_keep_per_action_results(tmp_path) -> None:
+    store = ActionPlanStore(tmp_path / "plans.sqlite3")
+    plan = store.create(
+        [
+            {"type": "task.create", "payload": {"title": "Задача"}},
+            {
+                "type": "calendar.create",
+                "payload": {"title": "Созвон", "start": "2030-01-02 12:00", "end": "2030-01-02 12:30"},
+            },
+        ],
+        idempotency_key="batch-plan",
+    )
+    store.approve(plan.id)
+
+    class BatchAdapter:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def execute_batch(self, actions):
+            self.calls += 1
+            assert [item["type"] for item in actions] == ["task.create", "calendar.create"]
+            return [
+                {"ok": True, "result": "trello_card_id=task-1"},
+                {"ok": False, "error": "Calendar timeout"},
+            ]
+
+    adapter = BatchAdapter()
+    result = execute_plan(store, plan.id, adapter)
+
+    assert adapter.calls == 1
+    assert [item.status for item in result.actions] == ["succeeded", "failed"]
+    assert result.status == "partial"

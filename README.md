@@ -291,7 +291,13 @@ TASK_COMMAND_CENTER_ENABLED=true
 TASK_COMMAND_CENTER_DIR=/opt/task-command-center
 TASK_COMMAND_CENTER_PYTHON=.venv/bin/python
 TASK_COMMAND_CENTER_TIMEOUT_SECONDS=45
+TASK_COMMAND_CENTER_HEALTH_CACHE_SECONDS=30
 ```
+
+Внутри одного Hermes MCP-процесса health-check кэшируется на этот TTL. Изменения
+Trello и Calendar из одного подтверждённого плана выполняются одним batch-процессом:
+клиенты создаются один раз, а Google OAuth service переиспользуется до завершения
+плана. Отдельные действия по-прежнему получают собственный success/error результат.
 
 Проверка соседнего проекта:
 

@@ -48,12 +48,13 @@ class NativeToolsAPI:
     ) -> None:
         self.database_path = Path(database_path or personal_os_database_path()).expanduser()
         self.adapter_factory = adapter_factory
+        self._task_calendar_adapter: Any | None = None
         self.exporter = exporter
         self.subscription_sync = subscription_sync if subscription_sync is not None else subscription_sync_from_env()
 
     def integration_health(self) -> dict[str, bool]:
         self._capabilities().require("integration.health")
-        health = self.adapter_factory().health_check()
+        health = self._task_calendar().health_check()
         return {
             "ok": bool(health.ok),
             "trello_ok": bool(health.trello_ok),
@@ -62,11 +63,11 @@ class NativeToolsAPI:
 
     def task_list(self, *, list_name: str | None = None) -> dict[str, str]:
         self._capabilities().require("task.list")
-        return {"items": self.adapter_factory().list_tasks(list_name=list_name)}
+        return {"items": self._task_calendar().list_tasks(list_name=list_name)}
 
     def calendar_list(self, *, when: str = "today") -> dict[str, str]:
         self._capabilities().require("calendar.list")
-        return {"items": self.adapter_factory().list_calendar_events(when=when)}
+        return {"items": self._task_calendar().list_calendar_events(when=when)}
 
     def contact_add(self, *, name: str, telegram_chat_id: int, aliases: list[str]) -> dict[str, Any]:
         self._capabilities().require("contact.write")
@@ -342,7 +343,7 @@ class NativeToolsAPI:
             for item in self._personal_os().list_commitments(status="open")
             if item.due_at and start <= item.due_at < end
         ]
-        adapter = self.adapter_factory()
+        adapter = self._task_calendar()
         errors: dict[str, str] = {}
         try:
             tasks = adapter.list_tasks(list_name="Today")
@@ -577,10 +578,15 @@ class NativeToolsAPI:
 
     def _action_adapter(self) -> "_NativeActionAdapter":
         return _NativeActionAdapter(
-            self.adapter_factory,
+            self._task_calendar,
             self._personal_os(),
             self._productivity(),
         )
+
+    def _task_calendar(self) -> Any:
+        if self._task_calendar_adapter is None:
+            self._task_calendar_adapter = self.adapter_factory()
+        return self._task_calendar_adapter
 
 
 def _plan_payload(plan: ActionPlan) -> dict[str, Any]:
@@ -616,6 +622,31 @@ class _NativeActionAdapter:
         if self._task_calendar is None:
             self._task_calendar = self.task_calendar_factory()
         return getattr(self._task_calendar, name)
+
+    def execute_batch(self, actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if self._task_calendar is None:
+            self._task_calendar = self.task_calendar_factory()
+        handler = getattr(self._task_calendar, "execute_batch", None)
+        if callable(handler):
+            return handler(actions)
+        handlers = {
+            "task.create": "create_task",
+            "task.move": "move_task",
+            "task.done": "complete_task",
+            "task.delete": "delete_task",
+            "calendar.create": "create_calendar_event",
+            "calendar.move": "move_calendar_event",
+            "calendar.delete": "delete_calendar_event",
+        }
+        results: list[dict[str, Any]] = []
+        for action in actions:
+            try:
+                result = getattr(self._task_calendar, handlers[str(action["type"])])(**action["payload"])
+            except Exception as error:
+                results.append({"ok": False, "error": str(error) or type(error).__name__})
+            else:
+                results.append({"ok": True, "result": str(result)})
+        return results
 
     def save_note(self, **payload: Any) -> str:
         note = self.personal_os.upsert_memory_block(block_type="note", **payload)

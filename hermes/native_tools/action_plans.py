@@ -24,6 +24,7 @@ ACTION_SCHEMAS: dict[str, tuple[str, ...]] = {
     "calendar.move": ("title", "start", "end"),
     "calendar.delete": ("title",),
 }
+EXTERNAL_ACTIONS = frozenset(action for action in ACTION_SCHEMAS if action.startswith(("task.", "calendar.")))
 
 
 @dataclass(frozen=True)
@@ -207,8 +208,42 @@ def execute_plan(store: ActionPlanStore, plan_id: int, adapter: Any) -> ActionPl
         return plan
     if plan.status != "approved":
         raise ActionPlanError("Plan должен быть подтверждён перед выполнением.")
-    for action in plan.actions:
+    actions = list(plan.actions)
+    index = 0
+    while index < len(actions):
+        action = actions[index]
         if action.status != "pending":
+            index += 1
+            continue
+        batch_handler = getattr(adapter, "execute_batch", None)
+        if action.action_type in EXTERNAL_ACTIONS and callable(batch_handler):
+            batch = [action]
+            cursor = index + 1
+            while (
+                cursor < len(actions)
+                and actions[cursor].status == "pending"
+                and actions[cursor].action_type in EXTERNAL_ACTIONS
+            ):
+                batch.append(actions[cursor])
+                cursor += 1
+            for item in batch:
+                store.mark_running(item.id)
+            try:
+                results = batch_handler(
+                    [{"type": item.action_type, "payload": item.payload} for item in batch]
+                )
+                if len(results) != len(batch):
+                    raise RuntimeError("Batch adapter вернул неверное число результатов.")
+            except Exception as error:
+                for item in batch:
+                    store.mark_failed(item.id, str(error) or type(error).__name__)
+            else:
+                for item, result in zip(batch, results, strict=True):
+                    if result.get("ok"):
+                        store.mark_succeeded(item.id, str(result.get("result") or "Готово."))
+                    else:
+                        store.mark_failed(item.id, str(result.get("error") or "Batch action failed"))
+            index = cursor
             continue
         store.mark_running(action.id)
         try:
@@ -217,6 +252,7 @@ def execute_plan(store: ActionPlanStore, plan_id: int, adapter: Any) -> ActionPl
             store.mark_failed(action.id, str(error) or type(error).__name__)
         else:
             store.mark_succeeded(action.id, result)
+        index += 1
     return store.finish(plan_id)
 
 
