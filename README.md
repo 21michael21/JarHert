@@ -272,6 +272,23 @@ TELEGRAM_FAST_ACK_SECONDS=0.6
 
 `TELEGRAM_BLOCKING_MAX_CONCURRENCY` ограничивает суммарное число LLM, STT и Task Command Center вызовов. Сообщения одного пользователя выполняются по порядку, а разные пользователи не блокируют друг друга. Если работа не укладывается в `TELEGRAM_FAST_ACK_SECONDS`, бот быстро отправляет «Принял» и доставляет итог через outbox.
 
+## Remote coding runner
+
+VDS хранит только `coding_jobs`. Код выполняет отдельный Mac/runner через уже
+настроенный Hermes Docker sandbox; host shell, Docker socket VDS и секреты в job
+не передаются.
+
+На VDS задай `JARHERT_BACKEND_URL` и длинный случайный
+`ASSISTANT_SERVICE_TOKEN`. На Mac используй те же значения и запусти:
+
+```bash
+.venv/bin/python scripts/coding_runner.py --worker-id mac-main
+```
+
+Для одной локальной итерации добавь `--once`. Runner атомарно забирает lease,
+посылает heartbeat и возвращает bounded result. При падении Mac просроченная
+job снова станет доступна другому runner.
+
 ## Trello и Google Calendar через Task Command Center
 
 AI Brooch может использовать уже настроенный соседний проект:

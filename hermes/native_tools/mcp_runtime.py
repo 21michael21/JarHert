@@ -568,6 +568,27 @@ def work_mode_set(mode: Literal["fast", "think", "code"]) -> dict[str, object]:
 
 
 @mcp.tool()
+async def coding_job_enqueue_confirmed(
+    mode: Literal["coding", "research"],
+    prompt: str,
+    idempotency_key: str,
+    ctx: Context,
+    repository_url: str | None = None,
+    source_urls: list[str] | None = None,
+) -> dict[str, object]:
+    """Preview once, then queue work for an isolated remote runner."""
+    if not await _confirm(ctx, f"Поставить {mode} job в изолированную очередь?\n{prompt[:300]}"):
+        return {"status": "unchanged"}
+    return api.coding_job_enqueue(
+        mode=mode,
+        prompt=prompt,
+        repository_url=repository_url,
+        source_urls=source_urls or [],
+        idempotency_key=idempotency_key,
+    )
+
+
+@mcp.tool()
 async def action_plan_confirm_execute(
     actions: list[Action], idempotency_key: str, ctx: Context
 ) -> dict[str, object]:

@@ -36,6 +36,9 @@ mcp_servers:
       TASK_COMMAND_CENTER_DIR: "${TASK_COMMAND_CENTER_DIR}"
       TASK_COMMAND_CENTER_PYTHON: "${TASK_COMMAND_CENTER_PYTHON}"
       TASK_COMMAND_CENTER_HEALTH_CACHE_SECONDS: "${TASK_COMMAND_CENTER_HEALTH_CACHE_SECONDS}"
+      JARHERT_BACKEND_URL: "${JARHERT_BACKEND_URL}"
+      ASSISTANT_SERVICE_TOKEN: "${ASSISTANT_SERVICE_TOKEN}"
+      HERMES_OWNER_TELEGRAM_CHAT_ID: "${HERMES_OWNER_TELEGRAM_CHAT_ID}"
       TELEGRAM_API_ID: "${TELEGRAM_API_ID}"
       TELEGRAM_API_HASH: "${TELEGRAM_API_HASH}"
       TELEGRAM_USER_SESSION: "${TELEGRAM_USER_SESSION}"
@@ -84,6 +87,7 @@ mcp_servers:
         - subscription_cancel
         - work_mode_get
         - work_mode_set
+        - coding_job_enqueue_confirmed
         - telegram_text_export_confirmed
       resources: false
       prompts: false

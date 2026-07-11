@@ -9,6 +9,7 @@ from typing import Any, Awaitable, Callable
 
 from .action_plans import ActionPlan, ActionPlanStore, execute_plan
 from .capabilities import CapabilityPolicyStore
+from .coding_queue import RemoteCodingQueueClient
 from .contacts import ContactStore, MessagePlan
 from .monitors import Monitor, MonitorRegistry
 from .memory_consolidation import MemoryConsolidator
@@ -45,12 +46,14 @@ class NativeToolsAPI:
         adapter_factory: AdapterFactory = TaskCalendarAdapter.from_env,
         exporter: Exporter = run_telegram_export,
         subscription_sync: SubscriptionSync | None = None,
+        coding_queue_factory: AdapterFactory = RemoteCodingQueueClient.from_env,
     ) -> None:
         self.database_path = Path(database_path or personal_os_database_path()).expanduser()
         self.adapter_factory = adapter_factory
         self._task_calendar_adapter: Any | None = None
         self.exporter = exporter
         self.subscription_sync = subscription_sync if subscription_sync is not None else subscription_sync_from_env()
+        self.coding_queue_factory = coding_queue_factory
 
     def integration_health(self) -> dict[str, bool]:
         self._capabilities().require("integration.health")
@@ -451,6 +454,29 @@ class NativeToolsAPI:
 
     def work_mode_set(self, *, mode: str) -> dict[str, Any]:
         return _value_payload(self._capabilities().set_mode(mode))
+
+    def coding_job_enqueue(
+        self,
+        *,
+        mode: str,
+        prompt: str,
+        idempotency_key: str,
+        repository_url: str | None = None,
+        source_urls: list[str] | None = None,
+    ) -> dict[str, Any]:
+        capability = "sandbox.run" if mode == "coding" else "research.run"
+        self._capabilities().require(capability)
+        tg_user_id = int(os.getenv("HERMES_OWNER_TELEGRAM_CHAT_ID", "0") or 0)
+        if tg_user_id <= 0:
+            raise RuntimeError("HERMES_OWNER_TELEGRAM_CHAT_ID is required")
+        return self.coding_queue_factory().enqueue(
+            tg_user_id=tg_user_id,
+            mode=mode,
+            prompt=prompt,
+            repository_url=repository_url,
+            source_urls=list(source_urls or []),
+            idempotency_key=idempotency_key,
+        )
 
     def capability_decision(self, *, capability: str) -> dict[str, Any]:
         return _value_payload(self._capabilities().decide(capability))
