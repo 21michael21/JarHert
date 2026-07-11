@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+from pathlib import Path
+
 from hermes.native_tools.sandbox_worker import SandboxResult
 from scripts.coding_runner import run_once
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class QueueClient:
@@ -39,3 +46,16 @@ def test_remote_runner_claims_sandbox_job_and_returns_result() -> None:
     assert worked is True
     assert client.completed == [(9, "mac-a", "tests passed")]
     assert client.failed == []
+
+
+def test_remote_runner_script_starts_from_repository_checkout() -> None:
+    result = subprocess.run(
+        [sys.executable, "scripts/coding_runner.py", "--help"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "remote queue" in result.stdout

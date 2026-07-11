@@ -3,8 +3,21 @@ from __future__ import annotations
 import argparse
 import os
 import socket
+import sys
 import threading
 import time
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:  # pragma: no cover - production dependency.
+    load_dotenv = None
+
+if load_dotenv is not None:
+    load_dotenv(PROJECT_ROOT / ".env")
 
 from hermes.native_tools.coding_queue import RemoteCodingQueueClient
 from hermes.native_tools.sandbox_worker import SandboxTask, SandboxedHermesWorker
