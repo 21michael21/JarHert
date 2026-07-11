@@ -1,0 +1,8 @@
+[Unit]
+Description=JarHert Hermes gateway watchdog
+After=network-online.target hermes-gateway-jarhert.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/.hermes/profiles/jarhert
+ExecStart=%h/.hermes/profiles/jarhert/.venv/bin/python %h/.hermes/profiles/jarhert/scripts/watchdog.py --min-disk-free-gib 5 --max-memory-percent 90

@@ -116,6 +116,15 @@ python ~/.hermes/profiles/jarhert/scripts/watchdog.py
 Use its JSON output in a systemd timer or Hermes no-agent cron. The future
 `/status` command will surface the same operational data in Telegram.
 
+Install the user-level timer after profile sync:
+
+```bash
+JARHERT_VPS=deploy@your-vps-host deploy/vps/install_watchdog_timer.sh
+```
+
+It runs every five minutes and keeps its result in the user journal. The timer
+does not restart a healthy gateway and does not need access to any secret.
+
 The stable profile uses direct `openai-api` with `gpt-5-nano`. Free gateways
 are not in the primary route because their availability and model selection are
 not predictable enough for reminders and external actions.
