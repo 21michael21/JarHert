@@ -93,3 +93,23 @@ class EventStore:
                 for value in [record.meta.get(metric)]
                 if isinstance(value, int)
             ]
+
+    def recent_failures(self, user_id: int, *, limit: int = 3) -> list[str]:
+        with self.session_factory() as db:
+            records = db.scalars(
+                select(Event)
+                .where(Event.user_id == user_id)
+                .order_by(Event.created_at.desc(), Event.id.desc())
+                .limit(100)
+            ).all()
+        failures: list[str] = []
+        for record in records:
+            blocked = (record.meta or {}).get("blocked_reason") if isinstance(record.meta, dict) else None
+            if not (record.type.endswith(("failed", "error")) or blocked):
+                continue
+            label = f"{record.type}:{blocked}" if blocked else record.type
+            if label not in failures:
+                failures.append(label)
+            if len(failures) >= limit:
+                break
+        return failures

@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from assistant.action_executor import ActionExecutor
 from assistant.action_queue import AgentAction
 from assistant.agent_jobs import AgentJobStore, InMemoryAgentJobStore, build_agent_plan
-from assistant.admin_status_service import build_admin_status_text
+from assistant.admin_status_service import build_admin_status_text, build_user_status_text
 from assistant.ai_answer_service import answer_with_ai
 from assistant.command_handlers import (
     fields_payload,
@@ -78,6 +78,7 @@ class AssistantPipeline:
         events=None,
         monitor_jobs=None,
         worker_leases=None,
+        coding_jobs=None,
         communication_style: CommunicationStyleGuide | None = None,
     ) -> None:
         self.hermes = hermes
@@ -106,6 +107,7 @@ class AssistantPipeline:
         self.events = events
         self.monitor_jobs = monitor_jobs
         self.worker_leases = worker_leases
+        self.coding_jobs = coding_jobs
         self.communication_style = communication_style or load_communication_style(enabled=True)
         self.natural_actions = NaturalActionService(
             action_executor=self.action_executor,
@@ -229,10 +231,21 @@ class AssistantPipeline:
         if parsed.intent == Intent.HELP:
             return AssistantReply(text=help_text(), intent=parsed.intent)
         if parsed.intent == Intent.STATUS:
-            if getattr(self.limits, "is_unlimited", lambda: False)():
-                return AssistantReply(text="AI включён. Лимит запросов отключён.", intent=parsed.intent)
-            remaining = self.limits.remaining_for_user(user.user_id)
-            return AssistantReply(text=f"AI включён. Осталось запросов сегодня: {remaining}.", intent=parsed.intent)
+            return AssistantReply(
+                text=build_user_status_text(
+                    user=user,
+                    limits=self.limits,
+                    provider_health=self.provider_health,
+                    delivery_outbox=self.delivery_outbox,
+                    task_center=self.task_center,
+                    agent_jobs=self.agent_jobs,
+                    action_queue=self.action_queue,
+                    coding_jobs=self.coding_jobs,
+                    events=self.events,
+                    worker_leases=self.worker_leases,
+                ),
+                intent=parsed.intent,
+            )
         if parsed.intent == Intent.ADMIN_STATUS:
             if not user.is_admin:
                 return AssistantReply(

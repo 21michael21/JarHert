@@ -114,6 +114,16 @@ class SqlCodingJobStore:
             db.commit()
             return result.rowcount == 1
 
+    def list_for_user(self, user_id: int, *, limit: int = 20) -> list[CodingJob]:
+        with self.session_factory() as db:
+            records = db.scalars(
+                select(CodingJobRecord)
+                .where(CodingJobRecord.user_id == user_id)
+                .order_by(CodingJobRecord.created_at.desc(), CodingJobRecord.id.desc())
+                .limit(limit)
+            ).all()
+            return [_from_record(record) for record in records]
+
     def complete(self, job_id: int, *, worker_id: str, result_text: str) -> CodingJob:
         return self._finish(job_id, worker_id=worker_id, status="succeeded", result_text=result_text)
 
@@ -163,6 +173,7 @@ def _from_record(record: CodingJobRecord) -> CodingJob:
         idempotency_key=record.idempotency_key,
         worker_id=record.worker_id,
         lease_until=_aware(record.lease_until),
+        heartbeat_at=_aware(record.heartbeat_at),
         result_text=record.result_text,
         last_error=record.last_error,
         created_at=_aware(record.created_at),

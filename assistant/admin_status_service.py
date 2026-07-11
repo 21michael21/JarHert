@@ -28,6 +28,81 @@ def build_admin_status_text(
     return "\n".join(lines)
 
 
+def build_user_status_text(
+    *,
+    user: UserContext,
+    limits: DailyLimitStore,
+    provider_health,
+    delivery_outbox,
+    task_center,
+    agent_jobs,
+    action_queue,
+    coding_jobs=None,
+    events=None,
+    worker_leases=None,
+) -> str:
+    unlimited = getattr(limits, "is_unlimited", lambda: False)()
+    ai_line = (
+        "AI: включён, без дневного лимита"
+        if unlimited
+        else f"AI: включён, осталось {limits.remaining_for_user(user.user_id)}"
+    )
+    lines = ["JarHert status", ai_line, _provider_summary(provider_health)]
+    lines.append(_integration_summary(task_center))
+    lines.append(_worker_summary(worker_leases, coding_jobs, user.user_id))
+    jobs = agent_jobs.list_for_user(user.user_id, limit=100) if agent_jobs is not None else []
+    actions = action_queue.list_for_user(user.user_id, limit=500) if action_queue is not None else []
+    coding = coding_jobs.list_for_user(user.user_id, limit=100) if coding_jobs is not None else []
+    lines.append(f"Моя очередь: jobs={len(jobs)}, actions={len(actions)}, coding={len(coding)}")
+    if delivery_outbox is not None and hasattr(delivery_outbox, "stats"):
+        stats = delivery_outbox.stats()
+        lines.append(f"Delivery: queued={stats.get('queued', 0)}, failed={stats.get('failed', 0)}")
+    if events is not None and hasattr(events, "recent_metric_values"):
+        values = events.recent_metric_values("action_started", "queue_lag_ms")
+        if values:
+            lines.append(f"Queue lag p95: {_percentile(values, 95)}ms")
+    if events is not None and hasattr(events, "recent_failures"):
+        failures = events.recent_failures(user.user_id, limit=3)
+        lines.append("Последние ошибки: " + (", ".join(failures) if failures else "нет"))
+    return "\n".join(lines)
+
+
+def _provider_summary(provider_health) -> str:
+    items = provider_health.list_all() if provider_health is not None else []
+    ready = [item for item in items if not item.in_cooldown()]
+    if ready:
+        item = min(ready, key=lambda value: value.latency_ms if value.latency_ms is not None else 10**9)
+        latency = f", {item.latency_ms}ms" if item.latency_ms is not None else ""
+        return f"AI provider: ready ({item.name}/{item.model}{latency})"
+    return "AI provider: not measured" if not items else "AI provider: degraded"
+
+
+def _integration_summary(task_center) -> str:
+    if task_center is None or not hasattr(task_center, "health_check"):
+        return "Trello: off; Calendar OAuth: off"
+    try:
+        health = task_center.health_check()
+    except Exception:
+        return "Trello: error; Calendar OAuth: error"
+    return f"Trello: {'ok' if health.trello_ok else 'error'}; Calendar OAuth: {'ok' if health.calendar_ok else 'error'}"
+
+
+def _worker_summary(worker_leases, coding_jobs, user_id: int) -> str:
+    values: list[str] = []
+    if worker_leases is not None and hasattr(worker_leases, "list_all"):
+        values.extend(
+            f"{item.worker_name}={item.status}{'(error)' if item.last_error else ''}"
+            for item in worker_leases.list_all()
+        )
+    if coding_jobs is not None and hasattr(coding_jobs, "list_for_user"):
+        values.extend(
+            f"coding:{item.worker_id}=running"
+            for item in coding_jobs.list_for_user(user_id, limit=20)
+            if item.status == "running" and item.worker_id
+        )
+    return "Workers: " + (", ".join(values) if values else "нет данных")
+
+
 def provider_health_lines(provider_health) -> list[str]:
     if provider_health is None:
         return []

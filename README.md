@@ -300,6 +300,10 @@ job снова станет доступна другому runner.
 production DB. Полный серверный backup/restore остаётся отдельным обязательным
 операционным процессом.
 
+Команда `/status` показывает безопасную сводку: AI provider, Trello/Calendar
+OAuth, heartbeat workers, собственные очереди, delivery, queue lag и последние
+типы ошибок. Сырые ответы провайдеров, тексты задач и секреты не выводятся.
+
 ## Trello и Google Calendar через Task Command Center
 
 AI Brooch может использовать уже настроенный соседний проект:

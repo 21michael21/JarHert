@@ -22,6 +22,7 @@ from backend.stores import (
     SqlActionQueueStore,
     SqlAutomationLeaseStore,
     SqlContactBookStore,
+    SqlCodingJobStore,
     SqlConversationStore,
     SqlDailyLimitStore,
     SqlDeliveryOutboxStore,
@@ -130,6 +131,7 @@ def build_pipeline() -> AssistantPipeline:
         events=event_store,
         monitor_jobs=SqlMonitorJobStore(session_factory),
         worker_leases=SqlAutomationLeaseStore(session_factory),
+        coding_jobs=SqlCodingJobStore(session_factory),
         communication_style=load_communication_style(
             enabled=settings.ai_style_enabled,
             path=settings.ai_style_prompt_path,

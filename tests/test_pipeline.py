@@ -80,7 +80,57 @@ def test_status_says_unlimited_when_ai_limit_disabled() -> None:
 
     reply = pipeline.handle_text(user(), "/status")
 
-    assert reply.text == "AI включён. Лимит запросов отключён."
+    assert "JarHert status" in reply.text
+    assert "AI: включён, без дневного лимита" in reply.text
+
+
+def test_status_shows_provider_integrations_workers_queues_and_failures() -> None:
+    from assistant.action_queue import InMemoryActionQueueStore
+    from assistant.action_schema import ActionType
+    from assistant.agent_jobs import InMemoryAgentJobStore
+    from assistant.automation_runtime import WorkerLease
+
+    health = InMemoryProviderHealthStore()
+    health.record_success("openai", "gpt-5-nano", latency_ms=120)
+    outbox = InMemoryDeliveryOutboxStore()
+    outbox.enqueue(user_id=1, chat_id=1001, text="queued")
+    jobs = InMemoryAgentJobStore()
+    job = jobs.create(1, "длинный план", ["step"])
+    actions = InMemoryActionQueueStore()
+    actions.enqueue(user_id=1, job_id=job.id, action_type=ActionType.IDEA_SAVE, payload={"text": "x"})
+
+    class Workers:
+        def list_all(self):
+            return [WorkerLease(worker_name="actions", status="idle", last_error="old timeout")]
+
+    class Events:
+        def recent_metric_values(self, event_type, metric):
+            return [40] if (event_type, metric) == ("action_started", "queue_lag_ms") else []
+
+        def recent_failures(self, user_id, limit=3):
+            return ["tool_failed"]
+
+    pipeline = AssistantPipeline(
+        FakeHermesClient(),
+        DailyLimitStore(),
+        provider_health=health,
+        delivery_outbox=outbox,
+        task_center=FakeTaskCenterHealth(),
+        worker_leases=Workers(),
+        events=Events(),
+        agent_jobs=jobs,
+        action_queue=actions,
+    )
+
+    reply = pipeline.handle_text(user(), "/status")
+
+    assert "AI provider: ready (openai/gpt-5-nano, 120ms)" in reply.text
+    assert "Trello: ok; Calendar OAuth: ok" in reply.text
+    assert "Workers: actions=idle(error)" in reply.text
+    assert "Моя очередь: jobs=1, actions=1" in reply.text
+    assert "Delivery: queued=1" in reply.text
+    assert "Queue lag p95: 40ms" in reply.text
+    assert "Последние ошибки: tool_failed" in reply.text
 
 
 def test_pipeline_rejects_bad_hermes_output() -> None:
