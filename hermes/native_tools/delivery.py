@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import shlex
 import subprocess
 from collections.abc import Callable
 from datetime import datetime
@@ -66,13 +68,21 @@ def dispatch_due_reminders(
 
 
 class HermesTelegramSender:
-    def __init__(self, command: str = "hermes", *, timeout_seconds: float = 20) -> None:
-        self.command = command
+    def __init__(
+        self,
+        command: str | list[str] | tuple[str, ...] | None = None,
+        *,
+        timeout_seconds: float = 20,
+        runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    ) -> None:
+        configured = command if command is not None else os.getenv("HERMES_NATIVE_SEND_COMMAND", "hermes")
+        self.command = _command_argv(configured)
         self.timeout_seconds = timeout_seconds
+        self.runner = runner
 
     def __call__(self, chat_id: int, text: str) -> str | None:
-        result = subprocess.run(
-            [self.command, "send", "--json", "--to", f"telegram:{chat_id}", text],
+        result = self.runner(
+            [*self.command, "send", "--json", "--to", f"telegram:{chat_id}", text],
             capture_output=True,
             check=False,
             text=True,
@@ -89,3 +99,10 @@ class HermesTelegramSender:
             if payload.get(key) is not None:
                 return f"telegram:{payload[key]}"
         return None
+
+
+def _command_argv(value: str | list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    command = tuple(shlex.split(value) if isinstance(value, str) else value)
+    if not command or not all(part.strip() for part in command):
+        raise ValueError("HERMES_NATIVE_SEND_COMMAND must contain a command.")
+    return command

@@ -4,6 +4,9 @@ import argparse
 from pathlib import Path
 
 
+MANAGED_NATIVE_ENV_KEYS = ("HERMES_NATIVE_SEND_COMMAND",)
+
+
 def merge_native_tool_allowlist(source: Path, target: Path) -> list[str]:
     """Merge the versioned native-tool allowlist without changing live choices."""
     source_lines = source.read_text(encoding="utf-8").splitlines(keepends=True)
@@ -28,6 +31,10 @@ def merge_profile_config(source: Path, target: Path) -> list[str]:
         merged = [f"tool:{tool}" for tool in merge_native_tool_allowlist(source, target)]
     except ValueError:
         merged = []
+    try:
+        merged.extend(f"env:{key}" for key in merge_native_env(source, target, MANAGED_NATIVE_ENV_KEYS))
+    except ValueError:
+        pass
     source_lines = source.read_text(encoding="utf-8").splitlines(keepends=True)
     target_lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
     stt_block = _top_level_block(source_lines, "stt")
@@ -36,6 +43,25 @@ def merge_profile_config(source: Path, target: Path) -> list[str]:
         target.write_text("".join(target_lines) + separator + "".join(stt_block), encoding="utf-8")
         merged.append("stt")
     return merged
+
+
+def merge_native_env(source: Path, target: Path, keys: tuple[str, ...]) -> list[str]:
+    """Add only explicitly managed native environment pass-through keys."""
+    source_lines = source.read_text(encoding="utf-8").splitlines(keepends=True)
+    target_lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
+    source_values, _, _ = _native_env_block(source_lines)
+    target_values, insertion_index, item_prefix = _native_env_block(target_lines)
+    missing = [key for key in keys if key in source_values and key not in target_values]
+    if missing:
+        additions = []
+        for key in missing:
+            source_line = source_values[key]
+            additions.append(
+                source_line if source_line.startswith(item_prefix) else f"{item_prefix}{source_line.lstrip()}"
+            )
+        target_lines[insertion_index:insertion_index] = additions
+        target.write_text("".join(target_lines), encoding="utf-8")
+    return missing
 
 
 def _native_tool_block(lines: list[str]) -> tuple[list[str], int, str]:
@@ -72,6 +98,36 @@ def _native_tool_block(lines: list[str]) -> tuple[list[str], int, str]:
     if in_include:
         return values, len(lines), item_prefix
     raise ValueError("jarhert_native MCP tool include block was not found")
+
+
+def _native_env_block(lines: list[str]) -> tuple[dict[str, str], int, str]:
+    in_server = False
+    in_env = False
+    values: dict[str, str] = {}
+    item_prefix = "      "
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if line.startswith("  jarhert_native:"):
+            in_server = True
+            continue
+        if in_server and line.startswith("  ") and not line.startswith("    ") and stripped:
+            break
+        if in_server and line.startswith("    env:"):
+            in_env = True
+            continue
+        if in_env:
+            indent = len(line) - len(line.lstrip())
+            if stripped and indent <= 4:
+                return values, index, item_prefix
+            if not stripped:
+                continue
+            key, separator, _value = line.strip().partition(":")
+            if separator:
+                item_prefix = line[:indent]
+                values[key] = line
+    if in_env:
+        return values, len(lines), item_prefix
+    raise ValueError("jarhert_native MCP env block was not found")
 
 
 def _top_level_block(lines: list[str], key: str) -> list[str] | None:

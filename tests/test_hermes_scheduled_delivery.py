@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
+import subprocess
 from datetime import datetime, timezone
 
 from hermes.native_tools.contacts import ContactStore
-from hermes.native_tools.delivery import dispatch_due_messages
+from hermes.native_tools.delivery import HermesTelegramSender, dispatch_due_messages
 
 
 def test_dispatch_sends_due_message_to_resolved_contact(tmp_path) -> None:
@@ -25,3 +27,30 @@ def test_dispatch_sends_due_message_to_resolved_contact(tmp_path) -> None:
     assert result == {"claimed": 1, "sent": 1, "failed": 0}
     assert sent == [(123, "Пора созвониться")]
     assert store.get_message(plan.messages[0].id).status == "sent"
+
+
+def test_hermes_sender_uses_configured_structured_cli_command() -> None:
+    calls: list[list[str]] = []
+
+    def runner(arguments, **_kwargs):
+        calls.append(arguments)
+        return subprocess.CompletedProcess(arguments, 0, stdout=json.dumps({"message_id": 42}), stderr="")
+
+    sender = HermesTelegramSender(
+        command="/opt/hermes/venv/bin/python -m hermes_cli.main",
+        runner=runner,
+    )
+
+    assert sender(566055009, "Проверка") == "telegram:42"
+    assert calls == [
+        [
+            "/opt/hermes/venv/bin/python",
+            "-m",
+            "hermes_cli.main",
+            "send",
+            "--json",
+            "--to",
+            "telegram:566055009",
+            "Проверка",
+        ]
+    ]

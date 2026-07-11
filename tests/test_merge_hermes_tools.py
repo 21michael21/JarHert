@@ -24,6 +24,27 @@ def test_merge_adds_only_missing_native_tools_and_keeps_live_model(tmp_path: Pat
     assert updated.count("- system_status") == 1
 
 
+def test_merge_adds_only_managed_native_send_env_without_touching_live_model(tmp_path: Path) -> None:
+    source = tmp_path / "source.yaml"
+    target = tmp_path / "target.yaml"
+    source.write_text(
+        "model:\n  provider: openai-api\nmcp_servers:\n  jarhert_native:\n    env:\n"
+        "      HERMES_NATIVE_SEND_COMMAND: \"${HERMES_NATIVE_SEND_COMMAND}\"\n"
+        "    tools:\n      include:\n        - integration_health\n",
+        encoding="utf-8",
+    )
+    target.write_text(
+        "model:\n  provider: openai-codex\n  default: gpt-5.4-mini\nmcp_servers:\n  jarhert_native:\n"
+        "    env:\n      HERMES_HOME: \"${HERMES_HOME}\"\n    tools:\n      include:\n        - integration_health\n",
+        encoding="utf-8",
+    )
+
+    assert merge_profile_config(source, target) == ["env:HERMES_NATIVE_SEND_COMMAND"]
+    updated = target.read_text(encoding="utf-8")
+    assert "provider: openai-codex" in updated
+    assert "HERMES_NATIVE_SEND_COMMAND: \"${HERMES_NATIVE_SEND_COMMAND}\"" in updated
+
+
 def test_merge_is_idempotent(tmp_path: Path) -> None:
     source = tmp_path / "source.yaml"
     target = tmp_path / "target.yaml"

@@ -92,6 +92,10 @@ else
 fi
 
 HERMES_HOME="$PROFILE_DIR" "$HERMES_PYTHON" "$PROFILE_DIR/scripts/bootstrap_native_deps.py"
+if ! grep -q '^HERMES_NATIVE_SEND_COMMAND=' "$PROFILE_DIR/.env"; then
+  printf 'HERMES_NATIVE_SEND_COMMAND=%q\n' "$HERMES_PYTHON -m hermes_cli.main" >> "$PROFILE_DIR/.env"
+  chmod 600 "$PROFILE_DIR/.env"
+fi
 mkdir -p "$PROFILE_DIR/state"
 printf '{"jarhert_commit":"%s","synced_at":"%s"}\n' "$COMMIT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PROFILE_DIR/state/jarhert-profile-revision.json"
 systemctl --user restart hermes-gateway-jarhert.service
