@@ -13,6 +13,8 @@ class ActionPlanError(RuntimeError):
 
 
 ACTION_SCHEMAS: dict[str, tuple[str, ...]] = {
+    "note.save": ("subject", "content"),
+    "commitment.create": ("subject", "content"),
     "task.create": ("title",),
     "task.move": ("title", "target_list"),
     "task.done": ("title",),
@@ -216,6 +218,8 @@ def execute_plan(store: ActionPlanStore, plan_id: int, adapter: Any) -> ActionPl
 
 def _execute_action(adapter: Any, action_type: str, payload: dict[str, Any]) -> str:
     handlers = {
+        "note.save": "save_note",
+        "commitment.create": "create_commitment",
         "task.create": "create_task",
         "task.move": "move_task",
         "task.done": "complete_task",

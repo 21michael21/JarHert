@@ -24,6 +24,20 @@ class ScheduledMessagePayload(BaseModel):
     send_at: str
 
 
+class NoteSavePayload(BaseModel):
+    subject: str
+    content: str
+    project: str | None = None
+
+
+class CommitmentCreatePayload(BaseModel):
+    subject: str
+    content: str
+    contact: str | None = None
+    project: str | None = None
+    due_at: str | None = None
+
+
 MemoryBlockType = Literal["profile", "person", "project", "commitment", "preference"]
 ProjectTool = Literal["tasks", "calendar", "notes", "reminders", "contacts", "messages", "monitors", "sandbox"]
 
@@ -104,6 +118,16 @@ class CalendarDeleteAction(BaseModel):
     payload: CalendarDeletePayload
 
 
+class NoteSaveAction(BaseModel):
+    type: Literal["note.save"]
+    payload: NoteSavePayload
+
+
+class CommitmentCreateAction(BaseModel):
+    type: Literal["commitment.create"]
+    payload: CommitmentCreatePayload
+
+
 Action = Annotated[
     Union[
         TaskCreateAction,
@@ -113,6 +137,8 @@ Action = Annotated[
         CalendarCreateAction,
         CalendarMoveAction,
         CalendarDeleteAction,
+        NoteSaveAction,
+        CommitmentCreateAction,
     ],
     Field(discriminator="type"),
 ]
@@ -271,6 +297,25 @@ def project_context_resolve(text: str) -> dict[str, object] | None:
 
 
 @mcp.tool()
+def commitment_list(
+    contact: str | None = None,
+    project: str | None = None,
+    status: Literal["open", "done", "cancelled"] = "open",
+    limit: Annotated[int, Field(ge=1, le=200)] = 100,
+) -> dict[str, object]:
+    """List promises filtered by contact, project, and status."""
+    return api.commitment_list(contact=contact, project=project, status=status, limit=limit)
+
+
+@mcp.tool()
+async def commitment_complete_confirmed(commitment_id: int, ctx: Context) -> dict[str, object]:
+    """Ask once, then mark one open promise as done."""
+    if not await _confirm(ctx, f"Отметить обещание #{commitment_id} выполненным?"):
+        return {"status": "unchanged", "commitment_id": commitment_id}
+    return api.commitment_complete(commitment_id=commitment_id)
+
+
+@mcp.tool()
 def work_mode_get() -> dict[str, object]:
     """Return the active fast, think, or code policy mode and its deadline."""
     return api.work_mode_get()
@@ -286,7 +331,7 @@ def work_mode_set(mode: Literal["fast", "think", "code"]) -> dict[str, object]:
 async def action_plan_confirm_execute(
     actions: list[Action], idempotency_key: str, ctx: Context
 ) -> dict[str, object]:
-    """Create one exact Trello/Calendar plan, ask once, then execute it atomically."""
+    """Create one notes/promises/Trello/Calendar plan, ask once, then execute it."""
     payload = [action.model_dump(exclude_none=True) for action in actions]
     return await api.action_plan_confirm_execute(
         actions=payload,

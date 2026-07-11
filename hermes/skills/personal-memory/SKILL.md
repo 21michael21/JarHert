@@ -18,10 +18,13 @@ requests such as `find notes about OAuth` or `what did I promise Ilya`.
 2. Use `mcp_jarhert_native_memory_block_list` with a type/project filter before
    answering personal-memory questions. Return only the matching block group.
 3. Search by words first. Return short excerpts and dates, never a giant dump.
-4. When editing or deleting a pronoun reference such as `change it`, resolve
+4. For promises, call `mcp_jarhert_native_commitment_list` with the named contact
+   or project. Mark one done only through
+   `mcp_jarhert_native_commitment_complete_confirmed`.
+5. When editing or deleting a pronoun reference such as `change it`, resolve
    it against the latest matching note. If there are two plausible matches,
    ask one short question.
-5. Keep original text and an edit history. Never rewrite a user's note silently.
+6. Keep original text and an edit history. Never rewrite a user's note silently.
 
 ## Guardrails
 

@@ -149,6 +149,31 @@ class NativeToolsAPI:
         project = self._personal_os().resolve_project(text)
         return _value_payload(project) if project else None
 
+    def commitment_create(self, **payload: Any) -> dict[str, Any]:
+        self._capabilities().require("commitment.create")
+        return _value_payload(self._personal_os().create_commitment(**payload))
+
+    def commitment_list(
+        self,
+        *,
+        contact: str | None = None,
+        project: str | None = None,
+        status: str = "open",
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        self._capabilities().require("commitment.list")
+        items = self._personal_os().list_commitments(
+            contact=contact,
+            project=project,
+            status=status,
+            limit=limit,
+        )
+        return {"items": [_value_payload(item) for item in items]}
+
+    def commitment_complete(self, *, commitment_id: int) -> dict[str, Any]:
+        self._capabilities().require("commitment.complete")
+        return _value_payload(self._personal_os().complete_commitment(commitment_id))
+
     def work_mode_get(self) -> dict[str, Any]:
         return _value_payload(self._capabilities().get_mode())
 
@@ -173,7 +198,7 @@ class NativeToolsAPI:
         store = self._plans()
         if store.get(plan_id).status == "draft":
             store.approve(plan_id)
-        return _plan_payload(execute_plan(store, plan_id, self.adapter_factory()))
+        return _plan_payload(execute_plan(store, plan_id, self._action_adapter()))
 
     def action_plan_cancel(self, *, plan_id: int) -> dict[str, Any]:
         return _plan_payload(self._plans().cancel(plan_id))
@@ -195,7 +220,7 @@ class NativeToolsAPI:
             if not await confirmer(_plan_preview(plan)):
                 return _plan_payload(store.cancel(plan.id))
             store.approve(plan.id)
-        return _plan_payload(execute_plan(store, plan.id, self.adapter_factory()))
+        return _plan_payload(execute_plan(store, plan.id, self._action_adapter()))
 
     def telegram_text_export(
         self,
@@ -252,6 +277,9 @@ class NativeToolsAPI:
     def _capabilities(self) -> CapabilityPolicyStore:
         return CapabilityPolicyStore(self.database_path)
 
+    def _action_adapter(self) -> "_NativeActionAdapter":
+        return _NativeActionAdapter(self.adapter_factory(), self._personal_os())
+
 
 def _plan_payload(plan: ActionPlan) -> dict[str, Any]:
     return {
@@ -265,9 +293,26 @@ def _plan_payload(plan: ActionPlan) -> dict[str, Any]:
 def _plan_preview(plan: ActionPlan) -> str:
     rows = []
     for action in plan.actions:
-        title = str(action.payload.get("title") or "без названия")
+        title = str(action.payload.get("title") or action.payload.get("subject") or "без названия")
         rows.append(f"{action.position + 1}. {action.action_type}: {title}")
     return "\n".join(rows)
+
+
+class _NativeActionAdapter:
+    def __init__(self, task_calendar: Any, personal_os: PersonalOSStore) -> None:
+        self.task_calendar = task_calendar
+        self.personal_os = personal_os
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.task_calendar, name)
+
+    def save_note(self, **payload: Any) -> str:
+        note = self.personal_os.upsert_memory_block(block_type="note", **payload)
+        return f"saved note\nnote_id={note.id}"
+
+    def create_commitment(self, **payload: Any) -> str:
+        commitment = self.personal_os.create_commitment(**payload)
+        return f"created commitment\ncommitment_id={commitment.id}"
 
 
 def _message_plan_payload(plan: MessagePlan) -> dict[str, Any]:

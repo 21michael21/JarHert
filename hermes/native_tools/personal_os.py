@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 
-MEMORY_BLOCK_TYPES = frozenset({"profile", "person", "project", "commitment", "preference"})
+MEMORY_BLOCK_TYPES = frozenset({"note", "profile", "person", "project", "commitment", "preference"})
 PROJECT_TOOL_ALLOWLIST = frozenset(
     {"tasks", "calendar", "notes", "reminders", "contacts", "messages", "monitors", "sandbox"}
 )
@@ -38,6 +38,19 @@ class ProjectContext:
     context_note: str | None
     enabled: bool
     updated_at: str
+
+
+@dataclass(frozen=True)
+class Commitment:
+    id: int
+    subject: str
+    content: str
+    contact: str | None
+    project: str | None
+    due_at: str | None
+    status: str
+    created_at: str
+    completed_at: str | None
 
 
 class PersonalOSStore:
@@ -183,6 +196,73 @@ class PersonalOSStore:
             raise ValueError("Фраза совпала с несколькими проектами одинаково точно.")
         return matches[0][1]
 
+    def create_commitment(
+        self,
+        *,
+        subject: str,
+        content: str,
+        contact: str | None = None,
+        project: str | None = None,
+        due_at: str | None = None,
+    ) -> Commitment:
+        with self._connect() as connection:
+            commitment_id = int(
+                connection.execute(
+                    """
+                    INSERT INTO commitments(subject, content, contact, project_key, due_at, status)
+                    VALUES (?, ?, ?, ?, ?, 'open')
+                    """,
+                    (
+                        _required(subject, "Commitment subject", limit=200),
+                        _required(content, "Commitment content", limit=2000),
+                        _optional(contact, limit=160),
+                        _optional(project, limit=120),
+                        _utc_timestamp(due_at),
+                    ),
+                ).lastrowid
+            )
+            row = connection.execute("SELECT * FROM commitments WHERE id = ?", (commitment_id,)).fetchone()
+        return _commitment_from_row(row)
+
+    def list_commitments(
+        self,
+        *,
+        contact: str | None = None,
+        project: str | None = None,
+        status: str = "open",
+        limit: int = 100,
+    ) -> list[Commitment]:
+        clauses = ["status = ?"]
+        values: list[Any] = [_allowed(status, frozenset({"open", "done", "cancelled"}), "Status")]
+        if contact:
+            clauses.append("contact = ? COLLATE NOCASE")
+            values.append(_required(contact, "Contact", limit=160))
+        if project:
+            clauses.append("project_key = ? COLLATE NOCASE")
+            values.append(_required(project, "Project", limit=120))
+        values.append(max(1, min(int(limit), 200)))
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM commitments WHERE {' AND '.join(clauses)} "
+                "ORDER BY due_at IS NULL, due_at, id LIMIT ?",
+                values,
+            ).fetchall()
+        return [_commitment_from_row(row) for row in rows]
+
+    def complete_commitment(self, commitment_id: int) -> Commitment:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE commitments SET status = 'done', completed_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status = 'open'
+                """,
+                (int(commitment_id),),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Открытое обещание не найдено.")
+            row = connection.execute("SELECT * FROM commitments WHERE id = ?", (int(commitment_id),)).fetchone()
+        return _commitment_from_row(row)
+
     def _initialize(self) -> None:
         with self._connect() as connection:
             connection.executescript(
@@ -214,6 +294,19 @@ class PersonalOSStore:
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
+                CREATE TABLE IF NOT EXISTS commitments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subject TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    contact TEXT,
+                    project_key TEXT,
+                    due_at TEXT,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    completed_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS ix_commitments_status_due
+                    ON commitments(status, due_at);
                 """
             )
 
@@ -250,6 +343,20 @@ def _project_from_row(row: sqlite3.Row) -> ProjectContext:
         context_note=str(row["context_note"]) if row["context_note"] else None,
         enabled=bool(row["enabled"]),
         updated_at=str(row["updated_at"]),
+    )
+
+
+def _commitment_from_row(row: sqlite3.Row) -> Commitment:
+    return Commitment(
+        id=int(row["id"]),
+        subject=str(row["subject"]),
+        content=str(row["content"]),
+        contact=str(row["contact"]) if row["contact"] else None,
+        project=str(row["project_key"]) if row["project_key"] else None,
+        due_at=str(row["due_at"]) if row["due_at"] else None,
+        status=str(row["status"]),
+        created_at=str(row["created_at"]),
+        completed_at=str(row["completed_at"]) if row["completed_at"] else None,
     )
 
 
@@ -293,3 +400,15 @@ def _normalize(value: str) -> str:
 
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _utc_timestamp(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError("Deadline должен быть ISO timestamp с timezone.") from error
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("Deadline должен содержать timezone.")
+    return parsed.astimezone(timezone.utc).isoformat()

@@ -60,6 +60,8 @@ mcp_servers:
         - project_context_upsert
         - project_context_list
         - project_context_resolve
+        - commitment_list
+        - commitment_complete_confirmed
         - work_mode_get
         - work_mode_set
         - telegram_text_export_confirmed
