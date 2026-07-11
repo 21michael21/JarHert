@@ -4,13 +4,16 @@ import argparse
 import asyncio
 import json
 import os
+import sqlite3
+import tempfile
 import time
 import urllib.request
 import uuid
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 
 @dataclass
@@ -40,6 +43,25 @@ def bot_identity(token: str) -> tuple[str, int]:
     if not payload.get("ok") or not username or not bot_id:
         raise RuntimeError("Telegram getMe failed")
     return username, bot_id
+
+
+def telethon_session_file(session: str) -> Path:
+    """Return the SQLite file Telethon uses for a configured session name."""
+    path = Path(session).expanduser()
+    return path if path.suffix == ".session" else path.with_suffix(".session")
+
+
+@contextmanager
+def isolated_telethon_session(session: str) -> Iterator[str]:
+    """Give a live check its own SQLite snapshot instead of locking the gateway session."""
+    source = telethon_session_file(session)
+    if not source.is_file():
+        raise RuntimeError(f"Telethon session file is missing: {source}")
+    with tempfile.TemporaryDirectory(prefix="jarhert-live-e2e-") as directory:
+        destination = Path(directory) / source.name
+        with sqlite3.connect(f"file:{source}?mode=ro", uri=True) as reader, sqlite3.connect(destination) as writer:
+            reader.backup(writer)
+        yield str(destination)
 
 
 async def wait_message(client, entity, *, after_id: int, predicate: Callable[[Any], bool], timeout: int):
@@ -147,73 +169,73 @@ async def run(args, steps: list[Step]) -> None:
     username, bot_id = bot_identity(token)
     api_id = int(os.environ["TELEGRAM_API_ID"])
     api_hash = os.environ["TELEGRAM_API_HASH"]
-    session = os.environ["TELEGRAM_USER_SESSION"]
-    client = TelegramClient(session, api_id, api_hash)
-    await client.connect()
-    if not await client.is_user_authorized():
-        raise RuntimeError("MTProto session is not authorized")
-    entity = await client.get_entity(f"@{username}")
-    run_id = uuid.uuid4().hex[:8]
-    task_title = f"JarHert E2E {run_id}"
-    event_title = f"JarHert Calendar E2E {run_id}"
-    try:
-        reply, latency = await send_plain(
-            client,
-            entity,
-            f"Ответь ровно: JarHert E2E ping {run_id}",
-            args.timeout,
-            marker=run_id,
-        )
-        steps.append(Step("llm_reply", True, latency, int(reply.id)))
+    with isolated_telethon_session(os.environ["TELEGRAM_USER_SESSION"]) as session:
+        client = TelegramClient(session, api_id, api_hash)
+        await client.connect()
+        if not await client.is_user_authorized():
+            raise RuntimeError("MTProto session is not authorized")
+        entity = await client.get_entity(f"@{username}")
+        run_id = uuid.uuid4().hex[:8]
+        task_title = f"JarHert E2E {run_id}"
+        event_title = f"JarHert Calendar E2E {run_id}"
+        try:
+            reply, latency = await send_plain(
+                client,
+                entity,
+                f"Ответь ровно: JarHert E2E ping {run_id}",
+                args.timeout,
+                marker=run_id,
+            )
+            steps.append(Step("llm_reply", True, latency, int(reply.id)))
 
-        reply, latency = await send_confirmed(
-            client,
-            entity,
-            f"Создай в Trello задачу «{task_title}» в списке Today",
-            args.timeout,
-            marker=run_id,
-        )
-        steps.append(Step("trello_create", True, latency, int(reply.id)))
-        reply, latency = await send_confirmed(
-            client,
-            entity,
-            f"Удали из Trello задачу «{task_title}»",
-            args.timeout,
-            marker=run_id,
-        )
-        steps.append(Step("trello_delete", True, latency, int(reply.id)))
+            reply, latency = await send_confirmed(
+                client,
+                entity,
+                f"Создай в Trello задачу «{task_title}» в списке Today",
+                args.timeout,
+                marker=run_id,
+            )
+            steps.append(Step("trello_create", True, latency, int(reply.id)))
+            reply, latency = await send_confirmed(
+                client,
+                entity,
+                f"Удали из Trello задачу «{task_title}»",
+                args.timeout,
+                marker=run_id,
+            )
+            steps.append(Step("trello_delete", True, latency, int(reply.id)))
 
-        reply, latency = await send_confirmed(
-            client,
-            entity,
-            f"Создай в Google Calendar событие «{event_title}» на 2030-01-02 с 12:00 до 12:15 по Москве",
-            args.timeout,
-            marker=run_id,
-        )
-        steps.append(Step("calendar_create", True, latency, int(reply.id)))
-        reply, latency = await send_confirmed(
-            client,
-            entity,
-            f"Удали из Google Calendar событие «{event_title}»",
-            args.timeout,
-            marker=run_id,
-        )
-        steps.append(Step("calendar_delete", True, latency, int(reply.id)))
+            reply, latency = await send_confirmed(
+                client,
+                entity,
+                f"Создай в Google Calendar событие «{event_title}» на 2030-01-02 с 12:00 до 12:15 по Москве",
+                args.timeout,
+                marker=run_id,
+            )
+            steps.append(Step("calendar_create", True, latency, int(reply.id)))
+            reply, latency = await send_confirmed(
+                client,
+                entity,
+                f"Удали из Google Calendar событие «{event_title}»",
+                args.timeout,
+                marker=run_id,
+            )
+            steps.append(Step("calendar_delete", True, latency, int(reply.id)))
 
-        reply, latency = await send_confirmed(
-            client,
-            entity,
-            f"Экспортируй текст из Telegram peer {bot_id} в TXT, максимум 20 сообщений. Проверка {run_id}",
-            args.timeout,
-            approval_text="Экспортировать",
-            marker=str(bot_id),
-        )
-        filename = str(getattr(reply.file, "name", "") or "") if reply.file else ""
-        if not filename.lower().endswith(".txt"):
-            raise RuntimeError("Telegram export did not return TXT document")
-        steps.append(Step("chat_export", True, latency, int(reply.id), detail="txt_document"))
-    finally:
-        await client.disconnect()
+            reply, latency = await send_confirmed(
+                client,
+                entity,
+                f"Экспортируй текст из Telegram peer {bot_id} в TXT, максимум 20 сообщений. Проверка {run_id}",
+                args.timeout,
+                approval_text="Экспортировать",
+                marker=str(bot_id),
+            )
+            filename = str(getattr(reply.file, "name", "") or "") if reply.file else ""
+            if not filename.lower().endswith(".txt"):
+                raise RuntimeError("Telegram export did not return TXT document")
+            steps.append(Step("chat_export", True, latency, int(reply.id), detail="txt_document"))
+        finally:
+            await client.disconnect()
 
 
 def main() -> int:

@@ -1,6 +1,8 @@
 from dataclasses import dataclass
+from pathlib import Path
+import sqlite3
 
-from scripts.live_hermes_e2e import approval_button
+from scripts.live_hermes_e2e import approval_button, isolated_telethon_session, telethon_session_file
 
 
 @dataclass
@@ -31,3 +33,18 @@ def test_approval_button_supports_native_mcp_elicitation() -> None:
     )
 
     assert approval_button(message, "Выполнить") == "Approve Once"
+
+
+def test_isolated_telethon_session_uses_a_disposable_sqlite_snapshot(tmp_path) -> None:
+    source = tmp_path / "owner.session"
+    with sqlite3.connect(source) as connection:
+        connection.execute("CREATE TABLE sessions (value TEXT)")
+        connection.execute("INSERT INTO sessions VALUES ('authorized')")
+
+    assert telethon_session_file(str(tmp_path / "owner")) == source
+    with isolated_telethon_session(str(tmp_path / "owner")) as snapshot:
+        assert snapshot != str(source)
+        with sqlite3.connect(snapshot) as connection:
+            assert connection.execute("SELECT value FROM sessions").fetchone()[0] == "authorized"
+
+    assert not Path(snapshot).exists()
