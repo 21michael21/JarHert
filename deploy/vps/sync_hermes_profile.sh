@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Synchronize only versioned JarHert Hermes profile assets. Runtime state,
+# credentials, databases, sessions, logs, and the live provider config stay on the server.
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REMOTE="${JARHERT_VPS:?set JARHERT_VPS=deploy@your-vps-host}"
+REMOTE_SOURCE_DIR="${JARHERT_REMOTE_SOURCE_DIR:-/home/deploy/jarhert-profile}"
+PROFILE_DIR="${HERMES_PROFILE_DIR:-/home/deploy/.hermes/profiles/jarhert}"
+HERMES_PYTHON="${HERMES_PYTHON:-/home/deploy/.hermes/hermes-agent/venv/bin/python}"
+GIT_URL="${JARHERT_GIT_URL:-https://github.com/21michael21/JarHert.git}"
+SYNC_CONFIG="${SYNC_PROFILE_CONFIG:-0}"
+
+cd "$ROOT"
+if [[ -n "$(git status --porcelain)" ]]; then
+  echo "Refusing to deploy from a dirty Git worktree." >&2
+  exit 2
+fi
+
+git fetch origin main
+LOCAL_COMMIT="$(git rev-parse HEAD)"
+REMOTE_MAIN="$(git rev-parse origin/main)"
+if [[ "$LOCAL_COMMIT" != "$REMOTE_MAIN" ]]; then
+  echo "Local HEAD must equal origin/main before profile sync." >&2
+  exit 2
+fi
+
+ssh "$REMOTE" bash -s -- "$GIT_URL" "$LOCAL_COMMIT" "$REMOTE_SOURCE_DIR" "$PROFILE_DIR" "$HERMES_PYTHON" "$SYNC_CONFIG" <<'REMOTE_SCRIPT'
+set -Eeuo pipefail
+
+GIT_URL="$1"
+COMMIT="$2"
+SOURCE_DIR="$3"
+PROFILE_DIR="$4"
+HERMES_PYTHON="$5"
+SYNC_CONFIG="$6"
+
+[[ -d "$PROFILE_DIR" ]] || { echo "Hermes profile is missing: $PROFILE_DIR" >&2; exit 2; }
+[[ -x "$HERMES_PYTHON" ]] || { echo "Hermes Python is missing: $HERMES_PYTHON" >&2; exit 2; }
+
+if [[ ! -d "$SOURCE_DIR/.git" ]]; then
+  git clone "$GIT_URL" "$SOURCE_DIR"
+fi
+git -C "$SOURCE_DIR" diff --quiet || {
+  echo "Managed JarHert source is dirty: $SOURCE_DIR" >&2
+  exit 2
+}
+git -C "$SOURCE_DIR" fetch --prune origin
+git -C "$SOURCE_DIR" cat-file -e "${COMMIT}^{commit}"
+git -C "$SOURCE_DIR" checkout --detach "$COMMIT"
+
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+ROLLBACK_DIR="$PROFILE_DIR/backups/profile-sync-$STAMP"
+mkdir -p "$ROLLBACK_DIR"
+for item in SOUL.md AGENTS.md config.yaml distribution.yaml requirements-native.txt skills native_tools scripts; do
+  if [[ -e "$PROFILE_DIR/$item" ]]; then
+    cp -a "$PROFILE_DIR/$item" "$ROLLBACK_DIR/"
+  fi
+done
+
+rollback() {
+  local status="$?"
+  if [[ "$status" -ne 0 ]]; then
+    echo "Profile sync failed; restoring versioned profile assets." >&2
+    for item in SOUL.md AGENTS.md config.yaml distribution.yaml requirements-native.txt skills native_tools scripts; do
+      if [[ -e "$ROLLBACK_DIR/$item" ]]; then
+        rm -rf "$PROFILE_DIR/$item"
+        cp -a "$ROLLBACK_DIR/$item" "$PROFILE_DIR/"
+      fi
+    done
+    systemctl --user restart hermes-gateway-jarhert.service || true
+  fi
+  exit "$status"
+}
+trap rollback ERR
+
+for item in SOUL.md AGENTS.md distribution.yaml requirements-native.txt; do
+  cp -a "$SOURCE_DIR/hermes/$item" "$PROFILE_DIR/$item"
+done
+rsync -a "$SOURCE_DIR/hermes/skills/" "$PROFILE_DIR/skills/"
+rsync -a "$SOURCE_DIR/hermes/native_tools/" "$PROFILE_DIR/native_tools/"
+rsync -a "$SOURCE_DIR/hermes/scripts/" "$PROFILE_DIR/scripts/"
+
+if [[ "$SYNC_CONFIG" == "1" ]]; then
+  cp -a "$SOURCE_DIR/hermes/config.yaml" "$PROFILE_DIR/config.yaml"
+else
+  echo "Preserved live config.yaml (set SYNC_PROFILE_CONFIG=1 to update it explicitly)."
+fi
+
+HERMES_HOME="$PROFILE_DIR" "$HERMES_PYTHON" "$PROFILE_DIR/scripts/bootstrap_native_deps.py"
+mkdir -p "$PROFILE_DIR/state"
+printf '{"jarhert_commit":"%s","synced_at":"%s"}\n' "$COMMIT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PROFILE_DIR/state/jarhert-profile-revision.json"
+systemctl --user restart hermes-gateway-jarhert.service
+systemctl --user is-active --quiet hermes-gateway-jarhert.service
+"$HERMES_PYTHON" -m hermes_cli.main --profile jarhert skills list >/dev/null
+echo "profile_sync=ok commit=$COMMIT rollback=$ROLLBACK_DIR"
+REMOTE_SCRIPT

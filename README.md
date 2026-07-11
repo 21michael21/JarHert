@@ -23,6 +23,28 @@ jarhert skills list
 keeps API keys, Telegram token, memories, sessions and runtime databases in the
 local profile and never takes them from git.
 
+### Safe profile sync on VPS
+
+The profile is a runtime, not a checkout: its `.env`, `auth.json`, SQLite
+databases, Telegram session, cron state, logs and user-created skills must stay
+on the server. Update only versioned profile assets from a clean, pushed
+JarHert `main`:
+
+```bash
+JARHERT_VPS=deploy@your-vps-host deploy/vps/sync_hermes_profile.sh
+```
+
+The script creates a profile-asset rollback copy, updates `SOUL.md`, `AGENTS.md`,
+skills, native tools and scripts, installs missing native dependencies, restarts
+the one Hermes gateway and verifies that it is active. It deliberately preserves
+the live `config.yaml` because it may contain an intentionally selected provider
+such as Codex OAuth. Set `SYNC_PROFILE_CONFIG=1` only when you have reviewed the
+provider change and want to replace that file too.
+
+The managed source clone on the server is `/home/deploy/jarhert-profile` by
+default. It is pinned to the exact commit pushed to `origin/main`; the upstream
+Hermes Agent clone is never pulled or reset by this command.
+
 The stable profile uses direct `openai-api` with `gpt-5-nano`. Free gateways
 are not in the primary route because their availability and model selection are
 not predictable enough for reminders and external actions.
