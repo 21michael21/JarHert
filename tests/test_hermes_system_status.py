@@ -30,12 +30,16 @@ def test_system_status_reports_operational_facts_without_personal_content(tmp_pa
     backup = tmp_path / "backups"
     backup.mkdir()
     (backup / "jarhert-profile-20260711T120000Z.tar.gpg").write_bytes(b"encrypted")
+    backup_secret = tmp_path / "backup.env"
+    backup_secret.write_text("HERMES_BACKUP_PASSPHRASE=<redacted>\n", encoding="utf-8")
+    backup_secret.chmod(0o600)
     meminfo = tmp_path / "meminfo"
     meminfo.write_text("MemTotal: 1000 kB\nMemAvailable: 250 kB\n", encoding="utf-8")
 
     status = collect_system_status(
         profile_home=profile,
         backup_dir=backup,
+        backup_secret_path=backup_secret,
         command_runner=_runner,
         meminfo_path=meminfo,
         now=ticker.stat().st_mtime + 20,
@@ -47,7 +51,27 @@ def test_system_status_reports_operational_facts_without_personal_content(tmp_pa
     assert status["cron"]["jobs"] == 2
     assert status["cron"]["last_success_age_seconds"] == 20
     assert status["backup"]["archives"] == 1
+    assert status["backup"]["configured"] is True
+    assert status["backup"]["secret_file_mode"] == "0600"
     assert status["profile"]["revision"] == "0123456789ab"
+
+
+def test_system_status_marks_backup_unconfigured_without_reading_a_secret(tmp_path: Path) -> None:
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text("MemTotal: 1000 kB\nMemAvailable: 500 kB\n", encoding="utf-8")
+
+    status = collect_system_status(
+        profile_home=profile,
+        backup_dir=tmp_path / "missing-backups",
+        backup_secret_path=tmp_path / "missing-backup.env",
+        command_runner=_runner,
+        meminfo_path=meminfo,
+    )
+
+    assert status["backup"]["configured"] is False
+    assert status["backup"]["secret_file_mode"] is None
 
 
 def test_profile_exposes_status_only_through_native_mcp() -> None:

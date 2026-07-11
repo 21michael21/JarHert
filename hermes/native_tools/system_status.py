@@ -19,6 +19,7 @@ def collect_system_status(
     profile_home: str | Path,
     unit: str = "hermes-gateway-jarhert.service",
     backup_dir: str | Path | None = None,
+    backup_secret_path: str | Path | None = None,
     command_runner: CommandRunner = subprocess.run,
     meminfo_path: str | Path = "/proc/meminfo",
     now: float | None = None,
@@ -32,6 +33,7 @@ def collect_system_status(
     total_memory, available_memory = parse_meminfo(Path(meminfo_path).read_text(encoding="utf-8"))
     disk = shutil.disk_usage(profile)
     archives = _backup_archives(backup_dir or profile.parent.parent / "backups" / "jarhert")
+    backup_secret = Path(backup_secret_path or Path.home() / ".config" / "jarhert" / "backup.env").expanduser()
     ticker = profile / "cron" / "ticker_last_success"
     return {
         "gateway": {"active": active, "main_pid": main_pid},
@@ -47,6 +49,8 @@ def collect_system_status(
         "backup": {
             "archives": len(archives),
             "latest_age_seconds": _age_seconds(archives[0], current) if archives else None,
+            "configured": _is_private_backup_secret(backup_secret),
+            "secret_file_mode": _file_mode(backup_secret),
         },
         "profile": {"revision": _profile_revision(profile / "state" / "jarhert-profile-revision.json")},
     }
@@ -74,6 +78,17 @@ def _backup_archives(root: str | Path) -> list[Path]:
         key=lambda item: item.stat().st_mtime,
         reverse=True,
     )
+
+
+def _file_mode(path: Path) -> str | None:
+    try:
+        return f"{path.stat().st_mode & 0o777:04o}" if path.is_file() else None
+    except OSError:
+        return None
+
+
+def _is_private_backup_secret(path: Path) -> bool:
+    return _file_mode(path) == "0600"
 
 
 def _cron_job_count(path: Path) -> int:
