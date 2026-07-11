@@ -80,6 +80,12 @@ mcp_servers:
         - shopping_list
         - shopping_mark_bought
         - shopping_remove
+        - trip_create
+        - trip_list
+        - trip_details
+        - trip_add_item
+        - trip_item_complete
+        - trip_cancel_confirmed
         - skill_feedback
         - skill_candidates
         - memory_block_upsert

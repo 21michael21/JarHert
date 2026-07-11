@@ -25,6 +25,7 @@ from .subscriptions import SubscriptionStore, subscription_sync_from_env
 from .system_status import collect_system_status
 from .task_calendar import TaskCalendarAdapter
 from .telegram_text_export import ExportResult, run_telegram_export
+from .trips import TripStore
 
 
 AdapterFactory = Callable[[], Any]
@@ -245,6 +246,80 @@ class NativeToolsAPI:
     def shopping_remove(self, *, item_id: int) -> dict[str, Any]:
         self._capabilities().require("shopping.write")
         return _value_payload(self._shopping().remove(item_id))
+
+    def trip_create(
+        self,
+        *,
+        name: str,
+        destination: str,
+        idempotency_key: str,
+        starts_at: str | None = None,
+        ends_at: str | None = None,
+    ) -> dict[str, Any]:
+        self._capabilities().require("trip.write")
+        return _value_payload(
+            self._trips().create(
+                name=name,
+                destination=destination,
+                starts_at=starts_at,
+                ends_at=ends_at,
+                idempotency_key=idempotency_key,
+            )
+        )
+
+    def trip_list(self, *, status: str = "active", limit: int = 100) -> dict[str, Any]:
+        self._capabilities().require("trip.read")
+        return {"items": [_value_payload(item) for item in self._trips().list(status=status, limit=limit)]}
+
+    def trip_details(self, *, trip_id: int) -> dict[str, Any]:
+        self._capabilities().require("trip.read")
+        return {
+            "trip": _value_payload(self._trips().get(trip_id)),
+            "items": [_value_payload(item) for item in self._trips().list_items(trip_id)],
+        }
+
+    def trip_add_item(
+        self,
+        *,
+        trip_id: int,
+        kind: str,
+        title: str,
+        idempotency_key: str,
+        details: str | None = None,
+        due_at: str | None = None,
+    ) -> dict[str, Any]:
+        self._capabilities().require("trip.write")
+        item = self._trips().add_item(
+            trip_id=trip_id,
+            kind=kind,
+            title=title,
+            details=details,
+            due_at=due_at,
+            idempotency_key=idempotency_key,
+        )
+        if item.due_at:
+            self._productivity().sync_source_reminder(
+                source_type="trip_item",
+                source_id=item.id,
+                text=f"Поездка: {item.title}",
+                remind_at=item.due_at,
+                idempotency_key=f"trip-item:{item.id}:due",
+            )
+        return _value_payload(item)
+
+    def trip_item_complete(self, *, item_id: int) -> dict[str, Any]:
+        self._capabilities().require("trip.write")
+        item = self._trips().complete_item(item_id)
+        self._productivity().cancel_source_reminder(source_type="trip_item", source_id=item.id)
+        return _value_payload(item)
+
+    def trip_cancel(self, *, trip_id: int) -> dict[str, Any]:
+        self._capabilities().require("trip.cancel")
+        item_ids = [item.id for item in self._trips().list_items(trip_id)]
+        trip = self._trips().cancel(trip_id)
+        for item_id in item_ids:
+            self._productivity().cancel_source_reminder(source_type="trip_item", source_id=item_id)
+        return _value_payload(trip)
 
     def skill_feedback(
         self,
@@ -672,6 +747,9 @@ class NativeToolsAPI:
 
     def _shopping(self) -> ShoppingStore:
         return ShoppingStore(self.database_path)
+
+    def _trips(self) -> TripStore:
+        return TripStore(self.database_path)
 
     def _sync_subscriptions(self) -> None:
         if self.subscription_sync is None:

@@ -60,6 +60,7 @@ ProjectTool = Literal[
     "monitors",
     "knowledge",
     "shopping",
+    "trips",
     "sandbox",
 ]
 
@@ -361,6 +362,73 @@ def shopping_mark_bought(item_id: int) -> dict[str, object]:
 def shopping_remove(item_id: int) -> dict[str, object]:
     """Soft-remove one shopping item while keeping a minimal history."""
     return api.shopping_remove(item_id=item_id)
+
+
+@mcp.tool()
+def trip_create(
+    name: str,
+    destination: str,
+    idempotency_key: str,
+    starts_at: str | None = None,
+    ends_at: str | None = None,
+) -> dict[str, object]:
+    """Create one factual trip workspace with optional timezone-aware dates."""
+    return api.trip_create(
+        name=name,
+        destination=destination,
+        starts_at=starts_at,
+        ends_at=ends_at,
+        idempotency_key=idempotency_key,
+    )
+
+
+@mcp.tool()
+def trip_list(
+    status: Literal["active", "completed", "cancelled"] = "active",
+    limit: Annotated[int, Field(ge=1, le=200)] = 100,
+) -> dict[str, object]:
+    """List trip workspaces without exposing unrelated personal data."""
+    return api.trip_list(status=status, limit=limit)
+
+
+@mcp.tool()
+def trip_details(trip_id: int) -> dict[str, object]:
+    """Read routes, bookings, documents, and checklist entries for one trip."""
+    return api.trip_details(trip_id=trip_id)
+
+
+@mcp.tool()
+def trip_add_item(
+    trip_id: int,
+    kind: Literal["route", "booking", "document", "checklist"],
+    title: str,
+    idempotency_key: str,
+    details: str | None = None,
+    due_at: str | None = None,
+) -> dict[str, object]:
+    """Add one route, booking, document, or checklist entry; a due date becomes a Telegram reminder."""
+    return api.trip_add_item(
+        trip_id=trip_id,
+        kind=kind,
+        title=title,
+        details=details,
+        due_at=due_at,
+        idempotency_key=idempotency_key,
+    )
+
+
+@mcp.tool()
+def trip_item_complete(item_id: int) -> dict[str, object]:
+    """Mark one trip item done and cancel only its linked reminder."""
+    return api.trip_item_complete(item_id=item_id)
+
+
+@mcp.tool()
+async def trip_cancel_confirmed(trip_id: int, ctx: Context) -> dict[str, object]:
+    """Cancel one trip and its pending linked reminders after a single confirmation."""
+    if not await _confirm(ctx, f"Отменить поездку #{trip_id} и её незавершённые напоминания?"):
+        return {"status": "unchanged", "trip_id": trip_id}
+    return api.trip_cancel(trip_id=trip_id)
 
 
 @mcp.tool()
