@@ -42,6 +42,12 @@ versioned native MCP tools into its allowlist. Set `SYNC_PROFILE_CONFIG=0` to
 skip even that merge, or `SYNC_PROFILE_CONFIG=1` only when you have reviewed the
 provider change and want to replace the full `config.yaml`.
 
+During every sync, broad host-level toolsets are disabled for Telegram:
+terminal, file access, browser automation, code execution, computer use,
+delegation and built-in cron. Telegram keeps the native JarHert MCP tools,
+skills, memory and web search. Task and Calendar mutations therefore go through
+the single approval-plan path; coding stays in the separate sandbox runner.
+
 The managed source clone on the server is `/home/deploy/jarhert-profile` by
 default. It is pinned to the exact commit pushed to `origin/main`; the upstream
 Hermes Agent clone is never pulled or reset by this command.
