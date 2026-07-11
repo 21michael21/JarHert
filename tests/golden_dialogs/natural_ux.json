@@ -170,7 +170,7 @@
   {
     "id": "reply_status_quality",
     "text": "/status",
-    "expected_reply_contains": ["AI включён", "Осталось запросов сегодня"],
+    "expected_reply_contains": ["JarHert status", "AI:"],
     "max_reply_chars": 200
   },
   {
