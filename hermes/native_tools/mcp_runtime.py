@@ -306,6 +306,18 @@ async def knowledge_archive_url_confirmed(
 
 
 @mcp.tool()
+async def knowledge_archive_urls_confirmed(
+    urls: Annotated[list[str], Field(min_length=1, max_length=20)],
+    ctx: Context,
+    project: str | None = None,
+) -> dict[str, object]:
+    """Archive up to twenty explicitly supplied HTTPS pages after one confirmation; never crawl a site."""
+    if not await _confirm(ctx, f"Сохранить {len(urls)} страниц в личную базу знаний?"):
+        return {"status": "unchanged", "count": len(urls)}
+    return api.knowledge_archive_urls(urls=urls, project=project)
+
+
+@mcp.tool()
 def knowledge_search(
     query: str,
     project: str | None = None,

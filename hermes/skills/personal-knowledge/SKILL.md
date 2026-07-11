@@ -10,6 +10,9 @@ asks to save it for later, or asks to find material in their saved links.
 
 1. For a new page, call `mcp_jarhert_native_knowledge_archive_url_confirmed`.
    Say exactly what will be saved and use its single confirmation.
+   For several explicitly supplied links use
+   `mcp_jarhert_native_knowledge_archive_urls_confirmed` once for the whole
+   list, maximum twenty pages.
 2. Never crawl a site, follow a list of links, use a login, upload cookies, or
    archive a URL that the user did not explicitly provide.
 3. The archive accepts a public HTTPS HTML/text page only. Do not claim a page

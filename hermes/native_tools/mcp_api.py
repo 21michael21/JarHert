@@ -188,6 +188,20 @@ class NativeToolsAPI:
         self._capabilities().require("knowledge.write")
         return self._knowledge().archive_url(url, project=project)
 
+    def knowledge_archive_urls(self, *, urls: list[str], project: str | None = None) -> dict[str, Any]:
+        self._capabilities().require("knowledge.write")
+        if not urls or len(urls) > 20:
+            raise ValueError("Для архива укажи от 1 до 20 явных URL.")
+        items: list[dict[str, Any]] = []
+        errors: list[dict[str, str]] = []
+        archive = self._knowledge()
+        for url in urls:
+            try:
+                items.append(archive.archive_url(str(url), project=project))
+            except (OSError, ValueError) as error:
+                errors.append({"url": str(url), "error": type(error).__name__})
+        return {"items": items, "errors": errors}
+
     def knowledge_search(
         self,
         *,

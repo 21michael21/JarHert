@@ -88,12 +88,32 @@ def test_knowledge_archive_is_exposed_as_low_read_and_confirmed_write(tmp_path) 
     ]
 
 
+def test_archive_explicit_url_batch_keeps_successes_and_reports_failures(tmp_path) -> None:
+    def fetch(url: str, _headers: dict[str, str], _timeout: float) -> bytes:
+        if url.endswith("bad"):
+            raise ValueError("not readable")
+        return f"<title>{url}</title><p>Saved page.</p>".encode()
+
+    api = NativeToolsAPI(database_path=tmp_path / "personal-os.sqlite3", knowledge_fetcher=fetch)
+    result = api.knowledge_archive_urls(
+        urls=["https://docs.example.test/one", "https://docs.example.test/bad", "https://docs.example.test/two"],
+        project="Hub_ML",
+    )
+
+    assert [item["url"] for item in result["items"]] == [
+        "https://docs.example.test/one",
+        "https://docs.example.test/two",
+    ]
+    assert result["errors"] == [{"url": "https://docs.example.test/bad", "error": "ValueError"}]
+
+
 def test_knowledge_tools_are_in_the_profile_and_skill_guides_one_page_only() -> None:
     root = Path(__file__).resolve().parents[1]
     config = (root / "hermes" / "config.yaml").read_text(encoding="utf-8")
     skill = (root / "hermes" / "skills" / "personal-knowledge" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "- knowledge_archive_url_confirmed" in config
+    assert "- knowledge_archive_urls_confirmed" in config
     assert "- knowledge_search" in config
     assert "- knowledge_list_sources" in config
     assert "never crawl" in skill.casefold()

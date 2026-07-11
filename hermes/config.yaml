@@ -74,6 +74,7 @@ mcp_servers:
         - monitor_digest_mark_delivered
         - monitor_disable
         - knowledge_archive_url_confirmed
+        - knowledge_archive_urls_confirmed
         - knowledge_search
         - knowledge_list_sources
         - shopping_add
