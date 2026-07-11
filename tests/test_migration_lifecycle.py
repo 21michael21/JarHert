@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from multiprocessing import get_context
 
 import pytest
@@ -62,7 +63,39 @@ def test_versioned_database_upgrades_from_previous_revision(tmp_path) -> None:
 
     assert current_revision(database_url) == head_revision()
     columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("agent_actions")}
-    assert {"result_text", "depends_on_action_id", "compensation_for_action_id", "compensation_status"} <= columns
+    assert {
+        "result_text",
+        "depends_on_action_id",
+        "depends_on_action_ids",
+        "compensation_for_action_id",
+        "compensation_status",
+    } <= columns
+
+
+def test_multi_dependency_upgrade_preserves_legacy_single_dependency(tmp_path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'legacy_dependency.sqlite3'}"
+    config = alembic_config(database_url)
+    command.upgrade(config, "0018_coding_jobs")
+    engine = create_engine(database_url)
+    with engine.begin() as connection:
+        connection.exec_driver_sql("INSERT INTO users(tg_user_id) VALUES (9001)")
+        connection.exec_driver_sql(
+            "INSERT INTO agent_actions(user_id, type, payload, status) VALUES (1, 'idea.save', '{}', 'queued')"
+        )
+        connection.exec_driver_sql(
+            """
+            INSERT INTO agent_actions(user_id, type, payload, status, depends_on_action_id)
+            VALUES (1, 'task.create', '{}', 'queued', 1)
+            """
+        )
+
+    run_migrations(database_url)
+
+    with engine.connect() as connection:
+        stored = connection.exec_driver_sql(
+            "SELECT depends_on_action_ids FROM agent_actions WHERE id = 2"
+        ).scalar_one()
+    assert json.loads(stored) == [1]
 
 
 def test_one_revision_rollback_and_reupgrade_are_reproducible(tmp_path) -> None:
@@ -71,13 +104,14 @@ def test_one_revision_rollback_and_reupgrade_are_reproducible(tmp_path) -> None:
     run_migrations(database_url)
 
     command.downgrade(config, "-1")
-    assert current_revision(database_url) == "0017_recurring_reminders"
+    assert current_revision(database_url) == "0018_coding_jobs"
     downgraded_columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("agent_actions")}
     assert {"depends_on_action_id", "compensation_for_action_id", "compensation_status"} <= downgraded_columns
+    assert "depends_on_action_ids" not in downgraded_columns
     downgraded_health_columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("provider_health")}
     assert {"quality_score", "quality_sample_count"} <= downgraded_health_columns
     downgraded_tables = set(inspect(create_engine(database_url)).get_table_names())
-    assert "coding_jobs" not in downgraded_tables
+    assert "coding_jobs" in downgraded_tables
     assert {"provider_budget_daily", "provider_budget_entries"} <= downgraded_tables
     assert {"notes", "note_history"} <= downgraded_tables
     assert {"contacts", "contact_aliases"} <= downgraded_tables
@@ -95,7 +129,12 @@ def test_one_revision_rollback_and_reupgrade_are_reproducible(tmp_path) -> None:
 
     assert current_revision(database_url) == head_revision()
     upgraded_columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("agent_actions")}
-    assert {"depends_on_action_id", "compensation_for_action_id", "compensation_status"} <= upgraded_columns
+    assert {
+        "depends_on_action_id",
+        "depends_on_action_ids",
+        "compensation_for_action_id",
+        "compensation_status",
+    } <= upgraded_columns
     upgraded_health_columns = {column["name"] for column in inspect(create_engine(database_url)).get_columns("provider_health")}
     assert {"quality_score", "quality_sample_count"} <= upgraded_health_columns
     upgraded_tables = set(inspect(create_engine(database_url)).get_table_names())

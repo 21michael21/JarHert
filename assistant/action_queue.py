@@ -30,6 +30,7 @@ class AgentAction:
     job_id: int | None = None
     trace_id: str = ""
     depends_on_action_id: int | None = None
+    depends_on_action_ids: tuple[int, ...] = ()
     compensation_for_action_id: int | None = None
     compensation_status: str = "none"
     result_meta: dict[str, str] = field(default_factory=dict)
@@ -58,6 +59,7 @@ class InMemoryActionQueueStore:
         job_id: int | None = None,
         trace_id: str = "",
         depends_on_action_id: int | None = None,
+        depends_on_action_ids: tuple[int, ...] | list[int] | None = None,
         compensation_for_action_id: int | None = None,
         compensation_status: str = "none",
         idempotency_key: str | None = None,
@@ -67,13 +69,15 @@ class InMemoryActionQueueStore:
             existing = self._find_by_idempotency(user_id, idempotency_key)
             if existing is not None:
                 return existing
+        dependency_ids = _normalize_dependency_ids(depends_on_action_id, depends_on_action_ids)
         now = datetime.now(timezone.utc)
         item = AgentAction(
             id=self._next_id,
             user_id=user_id,
             job_id=job_id,
             trace_id=trace_id,
-            depends_on_action_id=depends_on_action_id,
+            depends_on_action_id=dependency_ids[0] if dependency_ids else None,
+            depends_on_action_ids=dependency_ids,
             compensation_for_action_id=compensation_for_action_id,
             compensation_status=compensation_status,
             type=action_type,
@@ -311,7 +315,7 @@ class InMemoryActionQueueStore:
     def block_dependents(self, action_id: int, reason: str) -> list[AgentAction]:
         blocked: list[AgentAction] = []
         for item in sorted(self._items, key=lambda value: (value.created_at, value.id)):
-            if item.depends_on_action_id != action_id:
+            if action_id not in _dependency_ids(item):
                 continue
             if item.status not in {ActionStatus.QUEUED, ActionStatus.NEEDS_CONFIRMATION}:
                 continue
@@ -368,20 +372,27 @@ class InMemoryActionQueueStore:
         return None
 
     def _dependency_error(self, item: AgentAction) -> str | None:
-        if item.depends_on_action_id is None:
+        dependency_ids = _dependency_ids(item)
+        if not dependency_ids:
             return None
-        dependency = self._find(item.depends_on_action_id)
-        if dependency is None:
-            return f"Dependency action #{item.depends_on_action_id} is missing."
-        if dependency.status == ActionStatus.SUCCEEDED:
-            return None
-        if dependency.status in {ActionStatus.FAILED, ActionStatus.BLOCKED, ActionStatus.CANCELLED}:
-            return f"Dependency action #{dependency.id} is {dependency.status.value}."
-        return ""
+        waiting = False
+        for dependency_id in dependency_ids:
+            dependency = self._find(dependency_id)
+            if dependency is None:
+                return f"Dependency action #{dependency_id} is missing."
+            if dependency.status in {ActionStatus.FAILED, ActionStatus.BLOCKED, ActionStatus.CANCELLED}:
+                return f"Dependency action #{dependency.id} is {dependency.status.value}."
+            if dependency.status != ActionStatus.SUCCEEDED:
+                waiting = True
+        if waiting:
+            return ""
+        return None
 
     def _unblock_dependents_after_success(self, action_id: int) -> None:
         for item in list(self._items):
-            if item.depends_on_action_id != action_id or item.status != ActionStatus.BLOCKED:
+            if action_id not in _dependency_ids(item) or item.status != ActionStatus.BLOCKED:
+                continue
+            if self._dependency_error(item) is not None:
                 continue
             self._replace(
                 replace(
@@ -416,3 +427,19 @@ def _assert_action_owner(item: AgentAction, worker_id: str | None) -> None:
 
 def _has_external_result_ids(meta: dict[str, str]) -> bool:
     return any(key.endswith("_id") or key.endswith("_url") for key in meta)
+
+
+def _normalize_dependency_ids(
+    depends_on_action_id: int | None,
+    depends_on_action_ids: tuple[int, ...] | list[int] | None,
+) -> tuple[int, ...]:
+    values = [int(value) for value in (depends_on_action_ids or ())]
+    if depends_on_action_id is not None:
+        values.insert(0, int(depends_on_action_id))
+    return tuple(dict.fromkeys(values))
+
+
+def _dependency_ids(item: AgentAction) -> tuple[int, ...]:
+    if item.depends_on_action_ids:
+        return item.depends_on_action_ids
+    return (item.depends_on_action_id,) if item.depends_on_action_id is not None else ()

@@ -32,6 +32,7 @@ class TraceAction:
     result_meta: dict[str, str]
     last_error: str | None
     created_at: datetime
+    depends_on_action_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,10 @@ class SqlTraceStore:
                     status=record.status,
                     attempts=record.attempts,
                     depends_on_action_id=record.depends_on_action_id,
+                    depends_on_action_ids=tuple(
+                        record.depends_on_action_ids
+                        or (() if record.depends_on_action_id is None else (record.depends_on_action_id,))
+                    ),
                     compensation_status=record.compensation_status or "none",
                     result_meta=dict(record.result_meta or {}),
                     last_error=record.last_error,

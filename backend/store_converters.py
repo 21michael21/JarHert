@@ -131,6 +131,7 @@ def agent_action_from_record(record: AgentActionRecord) -> AgentAction:
         attempts=record.attempts,
         trace_id=record.trace_id or "",
         depends_on_action_id=record.depends_on_action_id,
+        depends_on_action_ids=tuple(record.depends_on_action_ids or (() if record.depends_on_action_id is None else (record.depends_on_action_id,))),
         compensation_for_action_id=record.compensation_for_action_id,
         compensation_status=record.compensation_status or "none",
         result_meta=dict(record.result_meta or {}),

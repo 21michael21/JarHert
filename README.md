@@ -1400,7 +1400,7 @@ WantedBy=timers.target
 
 Поддержано:
 
-- `dependencies` через `depends_on_action_id`;
+- `dependencies` через совместимое `depends_on_action_id` и полный список родителей для join-node;
 - checkpoints из `succeeded` actions с `result_meta/result_text`;
 - `pause/resume/cancel` на уровне job;
 - partial results из уже завершённых шагов;

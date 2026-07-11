@@ -258,6 +258,7 @@ class AgentActionRecord(Base):
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     trace_id: Mapped[str | None] = mapped_column(String(40))
     depends_on_action_id: Mapped[int | None] = mapped_column(Integer)
+    depends_on_action_ids: Mapped[list[int]] = mapped_column(JSON, nullable=False, default=list, server_default=text("'[]'"))
     compensation_for_action_id: Mapped[int | None] = mapped_column(Integer)
     compensation_status: Mapped[str] = mapped_column(String(30), nullable=False, default="none")
     result_meta: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict, server_default=text("'{}'"))

@@ -117,6 +117,7 @@ class SqlActionQueueStore:
         job_id: int | None = None,
         trace_id: str = "",
         depends_on_action_id: int | None = None,
+        depends_on_action_ids: tuple[int, ...] | list[int] | None = None,
         compensation_for_action_id: int | None = None,
         compensation_status: str = "none",
         idempotency_key: str | None = None,
@@ -132,6 +133,7 @@ class SqlActionQueueStore:
                 )
                 if existing is not None:
                     return agent_action_from_record(existing)
+            dependency_ids = _normalize_dependency_ids(depends_on_action_id, depends_on_action_ids)
             record = AgentActionRecord(
                 user_id=user_id,
                 job_id=job_id,
@@ -139,7 +141,8 @@ class SqlActionQueueStore:
                 payload=dict(payload),
                 status=status.value,
                 trace_id=trace_id or None,
-                depends_on_action_id=depends_on_action_id,
+                depends_on_action_id=dependency_ids[0] if dependency_ids else None,
+                depends_on_action_ids=list(dependency_ids),
                 compensation_for_action_id=compensation_for_action_id,
                 compensation_status=compensation_status,
                 idempotency_key=idempotency_key,
@@ -812,29 +815,33 @@ def _require_owned_update(
 
 
 def _dependency_error(db: Session, record: AgentActionRecord) -> str | None:
-    if record.depends_on_action_id is None:
+    dependency_ids = _record_dependency_ids(record)
+    if not dependency_ids:
         return None
-    dependency = db.get(AgentActionRecord, record.depends_on_action_id)
-    if dependency is None:
-        return f"Dependency action #{record.depends_on_action_id} is missing."
-    if dependency.status == ActionStatus.SUCCEEDED.value:
-        return None
-    if dependency.status in {ActionStatus.FAILED.value, ActionStatus.BLOCKED.value, ActionStatus.CANCELLED.value}:
-        return f"Dependency action #{dependency.id} is {dependency.status}."
-    return ""
+    waiting = False
+    for dependency_id in dependency_ids:
+        dependency = db.get(AgentActionRecord, dependency_id)
+        if dependency is None:
+            return f"Dependency action #{dependency_id} is missing."
+        if dependency.status in {ActionStatus.FAILED.value, ActionStatus.BLOCKED.value, ActionStatus.CANCELLED.value}:
+            return f"Dependency action #{dependency.id} is {dependency.status}."
+        if dependency.status != ActionStatus.SUCCEEDED.value:
+            waiting = True
+    return "" if waiting else None
 
 
 def _block_dependents(db: Session, action_id: int, reason: str) -> list[AgentActionRecord]:
     records = db.scalars(
         select(AgentActionRecord)
         .where(
-            AgentActionRecord.depends_on_action_id == action_id,
             AgentActionRecord.status.in_([ActionStatus.QUEUED.value, ActionStatus.NEEDS_CONFIRMATION.value]),
         )
         .order_by(AgentActionRecord.created_at.asc(), AgentActionRecord.id.asc())
     ).all()
     blocked: list[AgentActionRecord] = []
     for record in records:
+        if action_id not in _record_dependency_ids(record):
+            continue
         record.status = ActionStatus.BLOCKED.value
         record.last_error = truncate_error(reason)
         blocked.append(record)
@@ -845,13 +852,33 @@ def _block_dependents(db: Session, action_id: int, reason: str) -> list[AgentAct
 def _unblock_dependents_after_success(db: Session, action_id: int) -> None:
     records = db.scalars(
         select(AgentActionRecord).where(
-            AgentActionRecord.depends_on_action_id == action_id,
             AgentActionRecord.status == ActionStatus.BLOCKED.value,
         )
     ).all()
     for record in records:
+        if action_id not in _record_dependency_ids(record):
+            continue
+        if _dependency_error(db, record) is not None:
+            continue
         record.status = ActionStatus.QUEUED.value
         record.last_error = None
+
+
+def _normalize_dependency_ids(
+    depends_on_action_id: int | None,
+    depends_on_action_ids: tuple[int, ...] | list[int] | None,
+) -> tuple[int, ...]:
+    values = [int(value) for value in (depends_on_action_ids or ())]
+    if depends_on_action_id is not None:
+        values.insert(0, int(depends_on_action_id))
+    return tuple(dict.fromkeys(values))
+
+
+def _record_dependency_ids(record: AgentActionRecord) -> tuple[int, ...]:
+    values = tuple(int(value) for value in (record.depends_on_action_ids or ()))
+    if values:
+        return values
+    return (int(record.depends_on_action_id),) if record.depends_on_action_id is not None else ()
 
 
 def _has_external_result_ids(meta: dict[str, str]) -> bool:

@@ -41,14 +41,14 @@ class PlannerDag:
         )
         action_by_key: dict[str, AgentAction] = {}
         for node in nodes:
-            dependency_id = action_by_key[node.depends_on[-1]].id if node.depends_on else None
+            dependency_ids = tuple(action_by_key[key].id for key in node.depends_on)
             action_by_key[node.key] = self.actions.enqueue(
                 user_id=user_id,
                 job_id=job.id,
                 action_type=node.action_type,
                 payload=node.payload,
                 trace_id=trace_id,
-                depends_on_action_id=dependency_id,
+                depends_on_action_ids=dependency_ids,
                 idempotency_key=f"{idempotency_key}:{node.key}" if idempotency_key else None,
             )
         return job
