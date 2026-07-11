@@ -180,8 +180,12 @@ async def message_plan_cancel_confirmed(plan_id: int, ctx: Context) -> dict[str,
 
 
 @mcp.tool()
-def monitor_add_github_releases(name: str, owner: str, repo: str, condition: str) -> dict[str, object]:
+async def monitor_add_github_releases(
+    name: str, owner: str, repo: str, condition: str, ctx: Context
+) -> dict[str, object]:
     """Add one diff-first GitHub latest-release monitor."""
+    if not await _confirm(ctx, f"Добавить monitor {owner}/{repo}: {condition}?"):
+        return {"status": "unchanged"}
     return api.monitor_add_github_releases(name=name, owner=owner, repo=repo, condition=condition)
 
 
@@ -192,8 +196,10 @@ def monitor_list() -> dict[str, object]:
 
 
 @mcp.tool()
-def monitor_disable(monitor_id: int) -> dict[str, object]:
+async def monitor_disable(monitor_id: int, ctx: Context) -> dict[str, object]:
     """Disable one proactive monitor while preserving its audit state."""
+    if not await _confirm(ctx, f"Отключить monitor #{monitor_id}?"):
+        return {"status": "unchanged", "monitor_id": monitor_id}
     return api.monitor_disable(monitor_id=monitor_id)
 
 
@@ -224,9 +230,10 @@ def memory_block_list(
 
 
 @mcp.tool()
-def project_context_upsert(
+async def project_context_upsert(
     key: str,
     name: str,
+    ctx: Context,
     aliases: list[str] | None = None,
     trello_board: str | None = None,
     trello_list: str | None = None,
@@ -236,6 +243,8 @@ def project_context_upsert(
     context_note: str | None = None,
 ) -> dict[str, object]:
     """Create or update one project context after an explicit user request."""
+    if not await _confirm(ctx, f"Сохранить настройки проекта {name}?"):
+        return {"status": "unchanged", "key": key}
     return api.project_context_upsert(
         key=key,
         name=name,
@@ -259,6 +268,18 @@ def project_context_list() -> dict[str, object]:
 def project_context_resolve(text: str) -> dict[str, object] | None:
     """Resolve one project from exact configured aliases in the user's text."""
     return api.project_context_resolve(text=text)
+
+
+@mcp.tool()
+def work_mode_get() -> dict[str, object]:
+    """Return the active fast, think, or code policy mode and its deadline."""
+    return api.work_mode_get()
+
+
+@mcp.tool()
+def work_mode_set(mode: Literal["fast", "think", "code"]) -> dict[str, object]:
+    """Change capability mode after an explicit user request."""
+    return api.work_mode_set(mode=mode)
 
 
 @mcp.tool()

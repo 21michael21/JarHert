@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from .action_plans import ActionPlan, ActionPlanStore, execute_plan
+from .capabilities import CapabilityPolicyStore
 from .contacts import ContactStore, MessagePlan
 from .monitors import Monitor, MonitorRegistry
 from .personal_os import PersonalOSStore
@@ -40,6 +41,7 @@ class NativeToolsAPI:
         self.exporter = exporter
 
     def integration_health(self) -> dict[str, bool]:
+        self._capabilities().require("integration.health")
         health = self.adapter_factory().health_check()
         return {
             "ok": bool(health.ok),
@@ -48,12 +50,15 @@ class NativeToolsAPI:
         }
 
     def task_list(self, *, list_name: str | None = None) -> dict[str, str]:
+        self._capabilities().require("task.list")
         return {"items": self.adapter_factory().list_tasks(list_name=list_name)}
 
     def calendar_list(self, *, when: str = "today") -> dict[str, str]:
+        self._capabilities().require("calendar.list")
         return {"items": self.adapter_factory().list_calendar_events(when=when)}
 
     def contact_add(self, *, name: str, telegram_chat_id: int, aliases: list[str]) -> dict[str, Any]:
+        self._capabilities().require("contact.write")
         return _value_payload(
             self._contacts().add_contact(
                 name=name,
@@ -63,6 +68,7 @@ class NativeToolsAPI:
         )
 
     def contact_list(self) -> dict[str, Any]:
+        self._capabilities().require("contact.list")
         return {"items": [_value_payload(item) for item in self._contacts().list_contacts()]}
 
     async def message_plan_confirm_schedule(
@@ -72,6 +78,7 @@ class NativeToolsAPI:
         idempotency_key: str,
         confirmer: Confirmer,
     ) -> dict[str, Any]:
+        self._capabilities().require("message.schedule")
         store = self._contacts()
         plan = store.create_message_plan(items, idempotency_key=idempotency_key)
         if plan.status != "draft":
@@ -81,6 +88,7 @@ class NativeToolsAPI:
         return _message_plan_payload(store.approve_message_plan(plan.id))
 
     def message_plan_cancel(self, *, plan_id: int) -> dict[str, Any]:
+        self._capabilities().require("message.cancel")
         return _message_plan_payload(self._contacts().cancel_message_plan(plan_id))
 
     def monitor_add_github_releases(
@@ -91,6 +99,7 @@ class NativeToolsAPI:
         repo: str,
         condition: str,
     ) -> dict[str, Any]:
+        self._capabilities().require("monitor.write")
         return _monitor_payload(
             self._monitors().add(
                 name=name,
@@ -101,12 +110,15 @@ class NativeToolsAPI:
         )
 
     def monitor_list(self) -> dict[str, Any]:
+        self._capabilities().require("monitor.list")
         return {"items": [_monitor_payload(item) for item in self._monitors().list()]}
 
     def monitor_disable(self, *, monitor_id: int) -> dict[str, Any]:
+        self._capabilities().require("monitor.write")
         return _monitor_payload(self._monitors().disable(monitor_id))
 
     def memory_block_upsert(self, **payload: Any) -> dict[str, Any]:
+        self._capabilities().require("memory.write")
         return _value_payload(self._personal_os().upsert_memory_block(**payload))
 
     def memory_block_list(
@@ -116,6 +128,7 @@ class NativeToolsAPI:
         project: str | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
+        self._capabilities().require("memory.read")
         items = self._personal_os().list_memory_blocks(
             block_type=block_type,
             project=project,
@@ -124,14 +137,26 @@ class NativeToolsAPI:
         return {"items": [_value_payload(item) for item in items]}
 
     def project_context_upsert(self, **payload: Any) -> dict[str, Any]:
+        self._capabilities().require("project.write")
         return _value_payload(self._personal_os().upsert_project(**payload))
 
     def project_context_list(self) -> dict[str, Any]:
+        self._capabilities().require("project.read")
         return {"items": [_value_payload(item) for item in self._personal_os().list_projects()]}
 
     def project_context_resolve(self, *, text: str) -> dict[str, Any] | None:
+        self._capabilities().require("project.read")
         project = self._personal_os().resolve_project(text)
         return _value_payload(project) if project else None
+
+    def work_mode_get(self) -> dict[str, Any]:
+        return _value_payload(self._capabilities().get_mode())
+
+    def work_mode_set(self, *, mode: str) -> dict[str, Any]:
+        return _value_payload(self._capabilities().set_mode(mode))
+
+    def capability_decision(self, *, capability: str) -> dict[str, Any]:
+        return _value_payload(self._capabilities().decide(capability))
 
     def action_plan_create(
         self, *, actions: list[dict[str, Any]], idempotency_key: str
@@ -160,6 +185,8 @@ class NativeToolsAPI:
         idempotency_key: str,
         confirmer: Confirmer,
     ) -> dict[str, Any]:
+        for action in actions:
+            self._capabilities().require(str(action.get("type") or ""))
         store = self._plans()
         plan = store.create(actions, idempotency_key=idempotency_key)
         if plan.status in {"succeeded", "partial", "failed"}:
@@ -198,6 +225,7 @@ class NativeToolsAPI:
         limit: int = 5000,
         confirmer: Confirmer,
     ) -> dict[str, Any]:
+        self._capabilities().require("telegram.export")
         preview = f"Экспортировать текст Telegram peer {peer}: до {limit} сообщений, формат {output_format}."
         if not await confirmer(preview):
             return {"status": "cancelled"}
@@ -220,6 +248,9 @@ class NativeToolsAPI:
 
     def _personal_os(self) -> PersonalOSStore:
         return PersonalOSStore(self.database_path)
+
+    def _capabilities(self) -> CapabilityPolicyStore:
+        return CapabilityPolicyStore(self.database_path)
 
 
 def _plan_payload(plan: ActionPlan) -> dict[str, Any]:
