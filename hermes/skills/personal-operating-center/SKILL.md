@@ -12,8 +12,8 @@ messy inbox, pick priorities, review the day, or prepare the next one.
 
 ## Procedure
 
-1. Read the user's current project, timezone, and recent commitments from the
-   Personal OS tools when they are available.
+1. Resolve the project with `mcp_jarhert_native_project_context_resolve`, then
+   read matching commitments via `mcp_jarhert_native_memory_block_list`.
 2. For `what is today`, combine calendar blocks, due tasks, reminders, and
    explicitly saved commitments. Do not invent unavailable data.
 3. For `unload my head`, turn each distinct item into a note, reminder, task,

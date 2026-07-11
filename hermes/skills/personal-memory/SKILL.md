@@ -12,10 +12,11 @@ requests such as `find notes about OAuth` or `what did I promise Ilya`.
 
 ## Procedure
 
-1. Store a note with a concrete type: idea, promise, decision, reference, or
-   follow-up.
-2. Link the note to a project, contact, task, or calendar event when the user
-   names one. Ask only when the link changes the meaning.
+1. Use `mcp_jarhert_native_memory_block_upsert` only when the user explicitly
+   asks to remember a stable profile, person, project, commitment, or preference
+   fact. Do not save ordinary chat automatically.
+2. Use `mcp_jarhert_native_memory_block_list` with a type/project filter before
+   answering personal-memory questions. Return only the matching block group.
 3. Search by words first. Return short excerpts and dates, never a giant dump.
 4. When editing or deleting a pronoun reference such as `change it`, resolve
    it against the latest matching note. If there are two plausible matches,
@@ -28,6 +29,9 @@ requests such as `find notes about OAuth` or `what did I promise Ilya`.
 - Do not claim a note was saved before the storage tool confirms it.
 - Do not use raw conversation history as a training dataset without explicit
   user consent.
+- Resolve project wording through `mcp_jarhert_native_project_context_resolve`.
+  Create or update project context only after an explicit request, using
+  `mcp_jarhert_native_project_context_upsert`.
 
 ## Verification
 

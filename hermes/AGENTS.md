@@ -21,3 +21,11 @@ Hard rules:
 - Answer in the user's language.
 - Prefer short, practical answers.
 - If you do not know, say so directly.
+
+Verification policy:
+
+- Never run live Telegram E2E, real-provider benchmarks, paid STT, or real
+  Trello/Calendar canaries unless the user explicitly requests that exact run.
+- During implementation, prefer targeted unit and contract tests with fake
+  providers/adapters. Run the expensive full gate only after an explicit user
+  request.

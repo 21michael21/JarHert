@@ -24,6 +24,10 @@ class ScheduledMessagePayload(BaseModel):
     send_at: str
 
 
+MemoryBlockType = Literal["profile", "person", "project", "commitment", "preference"]
+ProjectTool = Literal["tasks", "calendar", "notes", "reminders", "contacts", "messages", "monitors", "sandbox"]
+
+
 class TaskCreatePayload(BaseModel):
     title: str
     list_name: str = "Inbox"
@@ -191,6 +195,70 @@ def monitor_list() -> dict[str, object]:
 def monitor_disable(monitor_id: int) -> dict[str, object]:
     """Disable one proactive monitor while preserving its audit state."""
     return api.monitor_disable(monitor_id=monitor_id)
+
+
+@mcp.tool()
+def memory_block_upsert(
+    block_type: MemoryBlockType,
+    subject: str,
+    content: str,
+    project: str | None = None,
+) -> dict[str, object]:
+    """Save an explicitly requested profile, person, project, commitment, or preference fact."""
+    return api.memory_block_upsert(
+        block_type=block_type,
+        subject=subject,
+        content=content,
+        project=project,
+    )
+
+
+@mcp.tool()
+def memory_block_list(
+    block_type: MemoryBlockType | None = None,
+    project: str | None = None,
+    limit: Annotated[int, Field(ge=1, le=200)] = 50,
+) -> dict[str, object]:
+    """List structured personal memory without returning unrelated block types."""
+    return api.memory_block_list(block_type=block_type, project=project, limit=limit)
+
+
+@mcp.tool()
+def project_context_upsert(
+    key: str,
+    name: str,
+    aliases: list[str] | None = None,
+    trello_board: str | None = None,
+    trello_list: str | None = None,
+    calendar_id: str | None = None,
+    contacts: list[str] | None = None,
+    tools: list[ProjectTool] | None = None,
+    context_note: str | None = None,
+) -> dict[str, object]:
+    """Create or update one project context after an explicit user request."""
+    return api.project_context_upsert(
+        key=key,
+        name=name,
+        aliases=aliases or [],
+        trello_board=trello_board,
+        trello_list=trello_list,
+        calendar_id=calendar_id,
+        contacts=contacts or [],
+        tools=tools or [],
+        context_note=context_note,
+    )
+
+
+@mcp.tool()
+def project_context_list() -> dict[str, object]:
+    """List active project contexts and their scoped integrations."""
+    return api.project_context_list()
+
+
+@mcp.tool()
+def project_context_resolve(text: str) -> dict[str, object] | None:
+    """Resolve one project from exact configured aliases in the user's text."""
+    return api.project_context_resolve(text=text)
 
 
 @mcp.tool()

@@ -52,6 +52,11 @@ mcp_servers:
         - monitor_add_github_releases
         - monitor_list
         - monitor_disable
+        - memory_block_upsert
+        - memory_block_list
+        - project_context_upsert
+        - project_context_list
+        - project_context_resolve
         - telegram_text_export_confirmed
       resources: false
       prompts: false

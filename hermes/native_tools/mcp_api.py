@@ -9,6 +9,7 @@ from typing import Any, Awaitable, Callable
 from .action_plans import ActionPlan, ActionPlanStore, execute_plan
 from .contacts import ContactStore, MessagePlan
 from .monitors import Monitor, MonitorRegistry
+from .personal_os import PersonalOSStore
 from .task_calendar import TaskCalendarAdapter
 from .telegram_text_export import ExportResult, run_telegram_export
 
@@ -105,6 +106,33 @@ class NativeToolsAPI:
     def monitor_disable(self, *, monitor_id: int) -> dict[str, Any]:
         return _monitor_payload(self._monitors().disable(monitor_id))
 
+    def memory_block_upsert(self, **payload: Any) -> dict[str, Any]:
+        return _value_payload(self._personal_os().upsert_memory_block(**payload))
+
+    def memory_block_list(
+        self,
+        *,
+        block_type: str | None = None,
+        project: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        items = self._personal_os().list_memory_blocks(
+            block_type=block_type,
+            project=project,
+            limit=limit,
+        )
+        return {"items": [_value_payload(item) for item in items]}
+
+    def project_context_upsert(self, **payload: Any) -> dict[str, Any]:
+        return _value_payload(self._personal_os().upsert_project(**payload))
+
+    def project_context_list(self) -> dict[str, Any]:
+        return {"items": [_value_payload(item) for item in self._personal_os().list_projects()]}
+
+    def project_context_resolve(self, *, text: str) -> dict[str, Any] | None:
+        project = self._personal_os().resolve_project(text)
+        return _value_payload(project) if project else None
+
     def action_plan_create(
         self, *, actions: list[dict[str, Any]], idempotency_key: str
     ) -> dict[str, Any]:
@@ -189,6 +217,9 @@ class NativeToolsAPI:
 
     def _monitors(self) -> MonitorRegistry:
         return MonitorRegistry(self.database_path)
+
+    def _personal_os(self) -> PersonalOSStore:
+        return PersonalOSStore(self.database_path)
 
 
 def _plan_payload(plan: ActionPlan) -> dict[str, Any]:
