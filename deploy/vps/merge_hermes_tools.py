@@ -7,19 +7,21 @@ from pathlib import Path
 def merge_native_tool_allowlist(source: Path, target: Path) -> list[str]:
     source_lines = source.read_text(encoding="utf-8").splitlines(keepends=True)
     target_lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
-    source_tools, _ = _native_tool_block(source_lines)
-    target_tools, insertion_index = _native_tool_block(target_lines)
+    source_tools, _, _ = _native_tool_block(source_lines)
+    target_tools, insertion_index, target_prefix = _native_tool_block(target_lines)
     missing = [tool for tool in source_tools if tool not in target_tools]
     if missing:
-        target_lines[insertion_index:insertion_index] = [f"        - {tool}\n" for tool in missing]
+        target_lines[insertion_index:insertion_index] = [f"{target_prefix}- {tool}\n" for tool in missing]
         target.write_text("".join(target_lines), encoding="utf-8")
     return missing
 
 
-def _native_tool_block(lines: list[str]) -> tuple[list[str], int]:
+def _native_tool_block(lines: list[str]) -> tuple[list[str], int, str]:
     in_server = False
     in_tools = False
     in_include = False
+    include_indent = 0
+    item_prefix = "        "
     values: list[str] = []
     for index, line in enumerate(lines):
         stripped = line.strip()
@@ -33,14 +35,20 @@ def _native_tool_block(lines: list[str]) -> tuple[list[str], int]:
             continue
         if in_tools and line.startswith("      include:"):
             in_include = True
+            include_indent = len(line) - len(line.lstrip())
+            item_prefix = " " * (include_indent + 2)
             continue
         if in_include:
-            if line.startswith("        - "):
-                values.append(line.removeprefix("        - ").strip())
+            stripped_indent = len(line) - len(line.lstrip())
+            if line.lstrip().startswith("- ") and stripped_indent >= include_indent:
+                item_prefix = line[:stripped_indent]
+                values.append(line.lstrip().removeprefix("- ").strip())
                 continue
-            return values, index
+            if not stripped:
+                continue
+            return values, index, item_prefix
     if in_include:
-        return values, len(lines)
+        return values, len(lines), item_prefix
     raise ValueError("jarhert_native MCP tool include block was not found")
 
 
