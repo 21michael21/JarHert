@@ -1,8 +1,9 @@
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
 
-from scripts.live_hermes_e2e import approval_button, isolated_telethon_session, telethon_session_file
+from scripts.live_hermes_e2e import approval_button, isolated_telethon_session, telethon_session_file, wait_confirmation_result
 
 
 @dataclass
@@ -14,6 +15,8 @@ class Button:
 class Message:
     message: str
     buttons: list[list[Button]]
+    id: int = 1
+    out: bool = False
 
 
 def test_approval_button_supports_numbered_telegram_clarify_buttons() -> None:
@@ -48,3 +51,21 @@ def test_isolated_telethon_session_uses_a_disposable_sqlite_snapshot(tmp_path) -
             assert connection.execute("SELECT value FROM sessions").fetchone()[0] == "authorized"
 
     assert not Path(snapshot).exists()
+
+
+def test_confirmation_result_accepts_an_edited_approval_message() -> None:
+    approval = Message("Выполнить этот план?", [[Button("Выполнить")]], id=42)
+    edited = Message("Готово.", [], id=42)
+
+    class Client:
+        async def get_messages(self, entity, ids):
+            assert entity == "bot"
+            assert ids == 42
+            return edited
+
+        async def iter_messages(self, entity, limit):
+            if False:
+                yield None
+
+    result = asyncio.run(wait_confirmation_result(Client(), "bot", approval, "Выполнить", timeout=1))
+    assert result is edited

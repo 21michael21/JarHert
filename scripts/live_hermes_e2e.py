@@ -74,6 +74,20 @@ async def wait_message(client, entity, *, after_id: int, predicate: Callable[[An
     raise TimeoutError("Telegram response timeout")
 
 
+async def wait_confirmation_result(client, entity, approval, approval_text: str, timeout: int):
+    """Telegram callbacks may edit the approval message or send a new result."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        updated = await client.get_messages(entity, ids=int(approval.id))
+        if updated is not None and approval_button(updated, approval_text) is None:
+            return updated
+        async for message in client.iter_messages(entity, limit=20):
+            if int(message.id) > int(approval.id) and not message.out and approval_button(message, approval_text) is None:
+                return message
+        await asyncio.sleep(1)
+    raise TimeoutError("Telegram confirmation result timeout")
+
+
 def buttons(message) -> list[str]:
     return [str(button.text) for row in (message.buttons or []) for button in row]
 
@@ -147,14 +161,7 @@ async def send_confirmed(
         timeout=timeout,
     )
     await approval.click(text=approval_button(approval, approval_text))
-    result = await wait_message(
-        client,
-        entity,
-        after_id=int(approval.id),
-        predicate=lambda message: approval_button(message, approval_text) is None
-        and (marker.lower() in str(message.message or "").lower() or message.file is not None),
-        timeout=timeout,
-    )
+    result = await wait_confirmation_result(client, entity, approval, approval_text, timeout)
     if has_bad_reply(result):
         raise RuntimeError("Confirmed action returned blocked reply")
     return result, int((time.perf_counter() - started) * 1000)
