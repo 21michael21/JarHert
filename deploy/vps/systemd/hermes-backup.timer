@@ -1,0 +1,10 @@
+[Unit]
+Description=Create a daily JarHert encrypted backup
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+Persistent=true
+Unit=hermes-backup.service
+
+[Install]
+WantedBy=timers.target

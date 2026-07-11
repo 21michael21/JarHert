@@ -101,6 +101,16 @@ VPS. A VPS-local archive protects from a bad deploy; it does not protect from a
 lost server. Do not enable a paid provider snapshot without checking its
 retention and restore policy.
 
+Install the daily timer after syncing the profile:
+
+```bash
+JARHERT_VPS=deploy@your-vps-host deploy/vps/install_backup_timer.sh
+```
+
+The timer runs at `03:15` and verifies every new archive by restoring it into a
+temporary directory. It stays safely skipped until `~/.config/jarhert/backup.env`
+exists with mode `600`; this prevents accidental unencrypted backups.
+
 ### Gateway watchdog
 
 `hermes/scripts/watchdog.py` checks the user systemd gateway, its main PID,
