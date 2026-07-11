@@ -37,6 +37,10 @@ def collect_system_status(
     ticker = profile / "cron" / "ticker_last_success"
     return {
         "gateway": {"active": active, "main_pid": main_pid},
+        "automation": {
+            "watchdog_timer_active": _systemctl_active("hermes-watchdog.timer", command_runner),
+            "backup_timer_active": _systemctl_active("hermes-backup.timer", command_runner),
+        },
         "resources": {
             "disk_free_gib": round(disk.free / (1024**3), 2),
             "memory_used_percent": round(100 * (1 - available_memory / total_memory), 1),

@@ -12,8 +12,8 @@ Report only factual, compact fields:
 
 - gateway active/inactive;
 - Trello and Calendar health;
-- cron job count and stale heartbeat if present;
-- encrypted backup count and age;
+- cron job count, watchdog timer and stale heartbeat if present;
+- backup timer state, encrypted backup readiness, count and age;
 - free disk, memory pressure and zombie-child count;
 - deployed profile revision.
 

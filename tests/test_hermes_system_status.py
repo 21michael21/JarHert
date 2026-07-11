@@ -10,6 +10,10 @@ from hermes.native_tools.system_status import collect_system_status
 def _runner(arguments: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
     if arguments[:4] == ["systemctl", "--user", "is-active", "hermes-gateway-jarhert.service"]:
         return subprocess.CompletedProcess(arguments, 0, stdout="active\n", stderr="")
+    if arguments[:4] == ["systemctl", "--user", "is-active", "hermes-watchdog.timer"]:
+        return subprocess.CompletedProcess(arguments, 0, stdout="active\n", stderr="")
+    if arguments[:4] == ["systemctl", "--user", "is-active", "hermes-backup.timer"]:
+        return subprocess.CompletedProcess(arguments, 0, stdout="active\n", stderr="")
     if arguments[:4] == ["systemctl", "--user", "show", "hermes-gateway-jarhert.service"]:
         return subprocess.CompletedProcess(arguments, 0, stdout="123\n", stderr="")
     if arguments[:2] == ["ps", "-eo"]:
@@ -46,6 +50,7 @@ def test_system_status_reports_operational_facts_without_personal_content(tmp_pa
     )
 
     assert status["gateway"] == {"active": True, "main_pid": 123}
+    assert status["automation"] == {"watchdog_timer_active": True, "backup_timer_active": True}
     assert status["resources"]["zombie_children"] == [124]
     assert status["resources"]["memory_used_percent"] == 75.0
     assert status["cron"]["jobs"] == 2
