@@ -11,9 +11,11 @@ For `/status`, `статус` or a question about why the agent is unavailable, 
 Report only factual, compact fields:
 
 - gateway active/inactive;
+- selected provider and model, without keys or quotas;
 - Trello and Calendar health;
 - cron job count, watchdog timer and stale heartbeat if present;
 - backup timer state, encrypted backup readiness, count and age;
+- aggregate native coding queue state, without prompts, results or errors;
 - free disk, memory pressure and zombie-child count;
 - deployed profile revision.
 

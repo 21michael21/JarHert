@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -25,12 +26,26 @@ def test_system_status_reports_operational_facts_without_personal_content(tmp_pa
     profile = tmp_path / "profile"
     (profile / "cron").mkdir(parents=True)
     (profile / "state").mkdir()
+    (profile / "data").mkdir()
     (profile / "cron" / "jobs.json").write_text(json.dumps({"jobs": [{"id": 1}, {"id": 2}]}), encoding="utf-8")
     ticker = profile / "cron" / "ticker_last_success"
     ticker.write_text("ok", encoding="utf-8")
     (profile / "state" / "jarhert-profile-revision.json").write_text(
         json.dumps({"jarhert_commit": "0123456789abcdef"}), encoding="utf-8"
     )
+    (profile / "config.yaml").write_text(
+        "model:\n  provider: openai-codex\n  default: gpt-5-nano\n",
+        encoding="utf-8",
+    )
+    with sqlite3.connect(profile / "data" / "personal-os.sqlite3") as connection:
+        connection.executescript(
+            """
+            CREATE TABLE native_coding_jobs (status TEXT, delivery_status TEXT);
+            INSERT INTO native_coding_jobs VALUES ('queued', 'pending');
+            INSERT INTO native_coding_jobs VALUES ('running', 'delivered');
+            INSERT INTO native_coding_jobs VALUES ('failed', 'pending');
+            """
+        )
     backup = tmp_path / "backups"
     backup.mkdir()
     (backup / "jarhert-profile-20260711T120000Z.tar.gpg").write_bytes(b"encrypted")
@@ -51,6 +66,14 @@ def test_system_status_reports_operational_facts_without_personal_content(tmp_pa
 
     assert status["gateway"] == {"active": True, "main_pid": 123}
     assert status["automation"] == {"watchdog_timer_active": True, "backup_timer_active": True}
+    assert status["provider"] == {"name": "openai-codex", "model": "gpt-5-nano"}
+    assert status["coding_queue"] == {
+        "available": True,
+        "queued": 1,
+        "running": 1,
+        "failed": 1,
+        "delivery_pending": 2,
+    }
     assert status["resources"]["zombie_children"] == [124]
     assert status["resources"]["memory_used_percent"] == 75.0
     assert status["cron"]["jobs"] == 2
@@ -77,6 +100,8 @@ def test_system_status_marks_backup_unconfigured_without_reading_a_secret(tmp_pa
 
     assert status["backup"]["configured"] is False
     assert status["backup"]["secret_file_mode"] is None
+    assert status["provider"] == {"name": "unknown", "model": "unknown"}
+    assert status["coding_queue"]["available"] is False
 
 
 def test_profile_exposes_status_only_through_native_mcp() -> None:

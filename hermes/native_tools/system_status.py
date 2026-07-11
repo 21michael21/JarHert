@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sqlite3
 import subprocess
 import time
 from collections.abc import Callable
@@ -35,8 +36,11 @@ def collect_system_status(
     archives = _backup_archives(backup_dir or profile.parent.parent / "backups" / "jarhert")
     backup_secret = Path(backup_secret_path or Path.home() / ".config" / "jarhert" / "backup.env").expanduser()
     ticker = profile / "cron" / "ticker_last_success"
+    database = profile / "data" / "personal-os.sqlite3"
     return {
         "gateway": {"active": active, "main_pid": main_pid},
+        "provider": _model_config(profile / "config.yaml"),
+        "coding_queue": _coding_queue_status(database),
         "automation": {
             "watchdog_timer_active": _systemctl_active("hermes-watchdog.timer", command_runner),
             "backup_timer_active": _systemctl_active("hermes-backup.timer", command_runner),
@@ -93,6 +97,56 @@ def _file_mode(path: Path) -> str | None:
 
 def _is_private_backup_secret(path: Path) -> bool:
     return _file_mode(path) == "0600"
+
+
+def _model_config(path: Path) -> dict[str, str]:
+    result = {"name": "unknown", "model": "unknown"}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return result
+    in_model = False
+    for line in lines:
+        if line.strip() == "model:":
+            in_model = True
+            continue
+        if in_model and line and not line[0].isspace():
+            break
+        if not in_model:
+            continue
+        key, separator, value = line.strip().partition(":")
+        if not separator:
+            continue
+        if key == "provider" and value.strip():
+            result["name"] = value.strip().strip('"\'')
+        if key == "default" and value.strip():
+            result["model"] = value.strip().strip('"\'')
+    return result
+
+
+def _coding_queue_status(database: Path) -> dict[str, int | bool]:
+    result: dict[str, int | bool] = {
+        "available": False,
+        "queued": 0,
+        "running": 0,
+        "failed": 0,
+        "delivery_pending": 0,
+    }
+    if not database.is_file():
+        return result
+    try:
+        with sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True) as connection:
+            statuses = dict(connection.execute("SELECT status, COUNT(*) FROM native_coding_jobs GROUP BY status"))
+            pending = connection.execute(
+                "SELECT COUNT(*) FROM native_coding_jobs WHERE delivery_status IN ('pending', 'delivering')"
+            ).fetchone()
+    except (OSError, sqlite3.Error):
+        return result
+    result["available"] = True
+    for status in ("queued", "running", "failed"):
+        result[status] = int(statuses.get(status, 0))
+    result["delivery_pending"] = int(pending[0]) if pending else 0
+    return result
 
 
 def _cron_job_count(path: Path) -> int:
