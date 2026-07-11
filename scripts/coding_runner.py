@@ -21,6 +21,7 @@ if load_dotenv is not None:
 
 from hermes.native_tools.coding_queue import RemoteCodingQueueClient
 from hermes.native_tools.sandbox_worker import SandboxTask, SandboxedHermesWorker
+from hermes.native_tools.ssh_coding_queue import SshNativeCodingQueueClient
 
 
 def run_once(*, client, worker, worker_id: str) -> bool:
@@ -68,12 +69,22 @@ def main() -> int:
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--interval", type=float, default=5)
     parser.add_argument("--worker-id", default=f"mac-{socket.gethostname()}")
+    parser.add_argument("--queue-ssh", default=os.getenv("HERMES_CODING_QUEUE_SSH", ""))
+    parser.add_argument("--remote-profile", default="/home/deploy/.hermes/profiles/jarhert")
+    parser.add_argument("--remote-python", default="/home/deploy/.hermes/hermes-agent/venv/bin/python")
     args = parser.parse_args()
-    base_url = os.getenv("JARHERT_BACKEND_URL", "").strip()
-    token = os.getenv("ASSISTANT_SERVICE_TOKEN", "").strip()
-    if not base_url or not token:
-        raise SystemExit("JARHERT_BACKEND_URL and ASSISTANT_SERVICE_TOKEN are required")
-    client = RemoteCodingQueueClient(base_url, token)
+    if args.queue_ssh:
+        client = SshNativeCodingQueueClient(
+            args.queue_ssh,
+            remote_profile=args.remote_profile,
+            remote_python=args.remote_python,
+        )
+    else:
+        base_url = os.getenv("JARHERT_BACKEND_URL", "").strip()
+        token = os.getenv("ASSISTANT_SERVICE_TOKEN", "").strip()
+        if not base_url or not token:
+            raise SystemExit("Set --queue-ssh or JARHERT_BACKEND_URL and ASSISTANT_SERVICE_TOKEN")
+        client = RemoteCodingQueueClient(base_url, token)
     worker = SandboxedHermesWorker()
     while True:
         worked = run_once(client=client, worker=worker, worker_id=args.worker_id)

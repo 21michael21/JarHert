@@ -427,22 +427,25 @@ TELEGRAM_FAST_ACK_SECONDS=0.6
 
 `TELEGRAM_BLOCKING_MAX_CONCURRENCY` ограничивает суммарное число LLM, STT и Task Command Center вызовов. Сообщения одного пользователя выполняются по порядку, а разные пользователи не блокируют друг друга. Если работа не укладывается в `TELEGRAM_FAST_ACK_SECONDS`, бот быстро отправляет «Принял» и доставляет итог через outbox.
 
-## Remote coding runner
+## Native coding runner
 
-VDS хранит только `coding_jobs`. Код выполняет отдельный Mac/runner через уже
-настроенный Hermes Docker sandbox; host shell, Docker socket VDS и секреты в job
-не передаются.
+VDS хранит очередь внутри профиля Hermes, а Mac выполняет код в своём Docker
+sandbox. Между ними нет публичного HTTP-порта, второго backend-сервиса или
+общего API-токена: runner вызывает только фиксированный profile CLI через твой
+SSH-ключ.
 
-На VDS задай `JARHERT_BACKEND_URL` и длинный случайный
-`ASSISTANT_SERVICE_TOKEN`. На Mac используй те же значения и запусти:
+На Mac из checkout JarHert:
 
 ```bash
-.venv/bin/python scripts/coding_runner.py --worker-id mac-main
+.venv/bin/python scripts/coding_runner.py \
+  --queue-ssh deploy@your-vps-host \
+  --worker-id mac-main
 ```
 
-Для одной локальной итерации добавь `--once`. Runner атомарно забирает lease,
-посылает heartbeat и возвращает bounded result. При падении Mac просроченная
-job снова станет доступна другому runner.
+Для одной итерации добавь `--once`. Runner атомарно забирает lease, шлёт
+heartbeat и возвращает ограниченный результат в очередь. Если Mac выключился,
+job после lease снова доступна следующему runner. Старый HTTP-режим остаётся
+только для legacy-развёртывания с `JARHERT_BACKEND_URL`.
 
 ## Personal export
 
