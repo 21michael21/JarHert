@@ -38,6 +38,7 @@ from backend.stores import (
     SqlUserPreferenceStore,
     UserStore,
 )
+from backend.personal_export import PersonalExportService
 from gateway_bot.service import GatewayService
 
 
@@ -190,6 +191,11 @@ def build_gateway_service() -> GatewayService:
         inbound_updates=SqlInboundUpdateStore(get_session_factory()),
         training_feedback=SqlTrainingFeedbackStore(get_session_factory()),
         training_feedback_buttons_enabled=settings.training_feedback_buttons_enabled,
+        personal_exports=PersonalExportService(
+            get_session_factory(),
+            personal_os_path=Path(settings.personal_os_db).expanduser(),
+            export_dir=Path(settings.personal_export_dir).expanduser(),
+        ),
     )
 
 

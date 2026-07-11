@@ -122,6 +122,8 @@ class Settings:
     task_command_center_dir: str = os.getenv("TASK_COMMAND_CENTER_DIR", "")
     task_command_center_python: str = os.getenv("TASK_COMMAND_CENTER_PYTHON", ".venv/bin/python")
     task_command_center_timeout_seconds: float = float(os.getenv("TASK_COMMAND_CENTER_TIMEOUT_SECONDS", "45"))
+    personal_os_db: str = os.getenv("PERSONAL_OS_DB", "~/.hermes/data/personal-os.sqlite3")
+    personal_export_dir: str = os.getenv("PERSONAL_EXPORT_DIR", "./data/personal_exports")
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "admin_tg_user_ids", _int_set_env("ADMIN_TG_USER_IDS"))

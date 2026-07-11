@@ -21,12 +21,13 @@ logger = logging.getLogger(__name__)
 try:
     from aiogram import Dispatcher, F
     from aiogram.filters import CommandStart
-    from aiogram.types import CallbackQuery, Message
+    from aiogram.types import CallbackQuery, FSInputFile, Message
 except ModuleNotFoundError:  # pragma: no cover - exercised by import smoke without deps.
     Dispatcher = None  # type: ignore[assignment]
     F = None  # type: ignore[assignment]
     CommandStart = None  # type: ignore[assignment]
     CallbackQuery = object  # type: ignore[assignment,misc]
+    FSInputFile = None  # type: ignore[assignment]
     Message = object  # type: ignore[assignment,misc]
 
 
@@ -133,6 +134,21 @@ def create_dispatcher():
             return
         root_key = _telegram_message_key(message)
         trace_id = new_trace_id()
+        command = (message.text or "").strip().split(maxsplit=1)
+        if command and command[0].lower() == "/export_me":
+            archive = await blocking_executor.run_blocking(
+                message.from_user.id,
+                service.create_personal_export,
+                message.from_user.id,
+            )
+            try:
+                await message.answer_document(
+                    FSInputFile(archive, filename="jarhert-personal-export.zip"),
+                    caption="Твой проверенный экспорт JarHert. Храни его приватно.",
+                )
+            finally:
+                archive.unlink(missing_ok=True)
+            return
         await submit_reply(
             user_id=message.from_user.id,
             chat_id=message.chat.id,

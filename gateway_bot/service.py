@@ -27,6 +27,7 @@ class GatewayService:
     inbound_updates: object | None = None
     training_feedback: SqlTrainingFeedbackStore | None = None
     training_feedback_buttons_enabled: bool = False
+    personal_exports: object | None = None
 
     def is_allowed(self, tg_user_id: int) -> bool:
         if not self.allowed_tg_user_ids:
@@ -180,6 +181,14 @@ class GatewayService:
                 trace_id=trace_id,
             )
         return self.handle_text(tg_user_id, text, idempotency_key=idempotency_key, trace_id=trace_id)
+
+    def create_personal_export(self, tg_user_id: int):
+        if not self.is_allowed(tg_user_id):
+            raise PermissionError("user not allowed")
+        if self.personal_exports is None or self.users is None:
+            raise RuntimeError("personal export is not configured")
+        user = self.users.get_or_create(tg_user_id)
+        return self.personal_exports.create(user_id=user.id, tg_user_id=tg_user_id)
 
     def perf_status(self, user: UserContext) -> AssistantReply:
         if not user.is_admin:
