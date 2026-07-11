@@ -9,7 +9,7 @@ from typing import Any, Awaitable, Callable
 
 from .action_plans import ActionPlan, ActionPlanStore, execute_plan
 from .capabilities import CapabilityPolicyStore
-from .coding_queue import RemoteCodingQueueClient
+from .coding_jobs import NativeCodingJobStore
 from .contacts import ContactStore, MessagePlan
 from .knowledge_archive import FetchBytes as KnowledgeFetchBytes
 from .knowledge_archive import KnowledgeArchive
@@ -51,7 +51,6 @@ class NativeToolsAPI:
         adapter_factory: AdapterFactory = TaskCalendarAdapter.from_env,
         exporter: Exporter = run_telegram_export,
         subscription_sync: SubscriptionSync | None = None,
-        coding_queue_factory: AdapterFactory = RemoteCodingQueueClient.from_env,
         knowledge_fetcher: KnowledgeFetchBytes | None = None,
     ) -> None:
         self.database_path = Path(database_path or personal_os_database_path()).expanduser()
@@ -59,7 +58,6 @@ class NativeToolsAPI:
         self._task_calendar_adapter: Any | None = None
         self.exporter = exporter
         self.subscription_sync = subscription_sync if subscription_sync is not None else subscription_sync_from_env()
-        self.coding_queue_factory = coding_queue_factory
         self.knowledge_fetcher = knowledge_fetcher
 
     def integration_health(self) -> dict[str, bool]:
@@ -621,14 +619,21 @@ class NativeToolsAPI:
         tg_user_id = int(os.getenv("HERMES_OWNER_TELEGRAM_CHAT_ID", "0") or 0)
         if tg_user_id <= 0:
             raise RuntimeError("HERMES_OWNER_TELEGRAM_CHAT_ID is required")
-        return self.coding_queue_factory().enqueue(
+        return _value_payload(self._coding_jobs().enqueue(
             tg_user_id=tg_user_id,
             mode=mode,
             prompt=prompt,
             repository_url=repository_url,
             source_urls=list(source_urls or []),
             idempotency_key=idempotency_key,
-        )
+        ))
+
+    def coding_job_list(self, *, limit: int = 20) -> dict[str, Any]:
+        self._capabilities().require("sandbox.run")
+        tg_user_id = int(os.getenv("HERMES_OWNER_TELEGRAM_CHAT_ID", "0") or 0)
+        if tg_user_id <= 0:
+            raise RuntimeError("HERMES_OWNER_TELEGRAM_CHAT_ID is required")
+        return {"items": [_value_payload(item) for item in self._coding_jobs().list_for_user(tg_user_id, limit=limit)]}
 
     def capability_decision(self, *, capability: str) -> dict[str, Any]:
         return _value_payload(self._capabilities().decide(capability))
@@ -750,6 +755,9 @@ class NativeToolsAPI:
 
     def _trips(self) -> TripStore:
         return TripStore(self.database_path)
+
+    def _coding_jobs(self) -> NativeCodingJobStore:
+        return NativeCodingJobStore(self.database_path)
 
     def _sync_subscriptions(self) -> None:
         if self.subscription_sync is None:

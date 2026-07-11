@@ -8,8 +8,10 @@ description: Run coding or source-bounded research through the native Hermes Doc
 ## When to use
 
 Use for repository research, implementation, tests, code review, or bounded
-web research that needs files or commands. Launch it through the deterministic
-wrapper rather than changing the main chat's terminal backend.
+web research that needs files or commands. Hermes queues the request locally;
+a separately authorised Mac runner claims it over SSH and runs the sandbox.
+Use `mcp_jarhert_native_coding_job_list` to report the actual queue/result,
+not an imagined completion.
 
 ## Launch
 

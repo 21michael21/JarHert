@@ -745,6 +745,12 @@ async def coding_job_enqueue_confirmed(
 
 
 @mcp.tool()
+def coding_job_list(limit: Annotated[int, Field(ge=1, le=100)] = 20) -> dict[str, object]:
+    """List native coding and research jobs, including their bounded final result."""
+    return api.coding_job_list(limit=limit)
+
+
+@mcp.tool()
 async def action_plan_confirm_execute(
     actions: list[Action], idempotency_key: str, ctx: Context
 ) -> dict[str, object]:

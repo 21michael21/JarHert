@@ -112,6 +112,7 @@ mcp_servers:
         - work_mode_get
         - work_mode_set
         - coding_job_enqueue_confirmed
+        - coding_job_list
         - telegram_text_export_confirmed
       resources: false
       prompts: false
