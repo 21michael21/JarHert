@@ -11,6 +11,7 @@ def test_watchdog_units_are_user_safe_and_periodic() -> None:
 
     assert "systemctl --user" in installer
     assert "watchdog.py" in service
-    assert "--restart-inactive" not in service
+    assert "--restart-inactive" in service
+    assert "ConditionPathExists=!%h/.hermes/profiles/jarhert/state/maintenance" in service
     assert "OnUnitActiveSec=5min" in timer
     assert "Persistent=true" in timer

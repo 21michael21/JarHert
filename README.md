@@ -130,8 +130,8 @@ exists with mode `600`; this prevents accidental unencrypted backups.
 `hermes/scripts/watchdog.py` checks the user systemd gateway, its main PID,
 disk headroom, memory pressure and zombie children. Zombie processes do not
 consume CPU or RAM themselves, so the watchdog reports them instead of blindly
-killing processes. By default it never restarts a process; explicit
-`--restart-inactive` restarts only the named systemd unit if it is inactive.
+killing processes. The installed timer restarts only an inactive gateway; it
+never restarts a healthy process.
 
 ```bash
 python ~/.hermes/profiles/jarhert/scripts/watchdog.py
@@ -146,8 +146,11 @@ Install the user-level timer after profile sync:
 JARHERT_VPS=deploy@your-vps-host deploy/vps/install_watchdog_timer.sh
 ```
 
-It runs every five minutes and keeps its result in the user journal. The timer
-does not restart a healthy gateway and does not need access to any secret.
+It runs every five minutes and keeps its result in the user journal. For an
+intentional maintenance window, create
+`~/.hermes/profiles/jarhert/state/maintenance` before stopping the gateway.
+Remove the marker and start the gateway again when the work is finished. The
+timer does not restart a healthy gateway and does not need access to any secret.
 
 The stable profile uses direct `openai-api` with `gpt-5-nano`. Free gateways
 are not in the primary route because their availability and model selection are
