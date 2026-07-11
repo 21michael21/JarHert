@@ -13,6 +13,7 @@ from hermes.native_tools.operations import (
     rotate_backups,
     snapshot_profile,
     verify_restored_profile,
+    write_backup_secret,
     zombie_processes,
 )
 
@@ -68,6 +69,31 @@ def test_backup_rotation_keeps_daily_weekly_and_monthly_recovery_points(tmp_path
     assert archives[-1] not in removed
     assert archives[-2] not in removed
     assert archives[0] in removed
+
+
+def test_backup_secret_setup_writes_private_shell_safe_environment_file(tmp_path: Path) -> None:
+    destination = tmp_path / "config" / "backup.env"
+
+    written = write_backup_secret(
+        destination,
+        passphrase="test backup phrase with spaces and $dollar",
+    )
+
+    assert written == destination
+    assert destination.stat().st_mode & 0o777 == 0o600
+    assert destination.parent.stat().st_mode & 0o777 == 0o700
+    assert destination.read_text(encoding="utf-8") == "HERMES_BACKUP_PASSPHRASE='test backup phrase with spaces and $dollar'\n"
+
+
+def test_backup_secret_setup_refuses_short_or_accidental_overwrite(tmp_path: Path) -> None:
+    destination = tmp_path / "backup.env"
+
+    with pytest.raises(ValueError, match="at least 20"):
+        write_backup_secret(destination, passphrase="too-short")
+
+    write_backup_secret(destination, passphrase="a sufficiently long passphrase")
+    with pytest.raises(ValueError, match="already exists"):
+        write_backup_secret(destination, passphrase="another sufficiently long passphrase")
 
 
 def test_memory_and_zombie_parsers_keep_watchdog_logic_deterministic() -> None:

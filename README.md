@@ -87,15 +87,17 @@ archives: seven daily, four weekly and three monthly points by default. It backs
 up the profile databases plus configuration and session files needed for
 recovery. Archives are never committed to Git.
 
-Keep the recovery secret outside the profile and outside Git, for example in a
-mode-600 systemd environment file:
+Keep the recovery secret in your password manager before entering it on the
+VPS. The VPS keeps a mode-600 systemd environment file solely so the daily
+timer can encrypt backups automatically. Configure it interactively without
+printing the secret:
 
 ```bash
-mkdir -p ~/.config/jarhert
-chmod 700 ~/.config/jarhert
-printf '%s\n' 'HERMES_BACKUP_PASSPHRASE=<store-this-in-your-password-manager>' > ~/.config/jarhert/backup.env
-chmod 600 ~/.config/jarhert/backup.env
+python ~/.hermes/profiles/jarhert/scripts/configure_backup_secret.py
 ```
+
+The helper asks twice, rejects weak or malformed values, refuses to overwrite
+an existing file unless `--replace` is explicit, and never echoes the phrase.
 
 Create an archive and immediately prove it can be restored without touching the
 live profile:

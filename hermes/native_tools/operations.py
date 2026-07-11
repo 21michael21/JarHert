@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import sqlite3
 import subprocess
@@ -45,6 +46,37 @@ class BackupRetention:
 class BackupResult:
     archive: Path
     removed: tuple[Path, ...]
+
+
+def write_backup_secret(
+    destination: str | Path,
+    *,
+    passphrase: str,
+    replace: bool = False,
+) -> Path:
+    """Write a mode-600 shell environment file without ever logging its secret."""
+    if len(passphrase) < 20:
+        raise ValueError("Backup passphrase must be at least 20 characters.")
+    if any(character in passphrase for character in ("\x00", "\n", "\r")):
+        raise ValueError("Backup passphrase cannot contain line breaks or null bytes.")
+    target = Path(destination).expanduser().resolve()
+    if target.exists() and not replace:
+        raise ValueError(f"Backup secret file already exists: {target}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(target.parent, 0o700)
+    payload = f"HERMES_BACKUP_PASSPHRASE={shlex.quote(passphrase)}\n"
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent, text=True)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, target)
+        os.chmod(target, 0o600)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+    return target
 
 
 def snapshot_profile(profile_home: str | Path, destination: str | Path) -> Path:
