@@ -49,6 +49,7 @@ mcp_servers:
     tools:
       include:
         - integration_health
+        - system_status
         - task_list
         - calendar_list
         - action_plan_confirm_execute

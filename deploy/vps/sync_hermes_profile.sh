@@ -10,7 +10,7 @@ REMOTE_SOURCE_DIR="${JARHERT_REMOTE_SOURCE_DIR:-/home/deploy/jarhert-profile}"
 PROFILE_DIR="${HERMES_PROFILE_DIR:-/home/deploy/.hermes/profiles/jarhert}"
 HERMES_PYTHON="${HERMES_PYTHON:-/home/deploy/.hermes/hermes-agent/venv/bin/python}"
 GIT_URL="${JARHERT_GIT_URL:-https://github.com/21michael21/JarHert.git}"
-SYNC_CONFIG="${SYNC_PROFILE_CONFIG:-0}"
+SYNC_CONFIG="${SYNC_PROFILE_CONFIG:-merge}"
 
 cd "$ROOT"
 if [[ -n "$(git status --porcelain)" ]]; then
@@ -84,6 +84,9 @@ rsync -a "$SOURCE_DIR/hermes/scripts/" "$PROFILE_DIR/scripts/"
 
 if [[ "$SYNC_CONFIG" == "1" ]]; then
   cp -a "$SOURCE_DIR/hermes/config.yaml" "$PROFILE_DIR/config.yaml"
+elif [[ "$SYNC_CONFIG" == "merge" ]]; then
+  "$HERMES_PYTHON" "$SOURCE_DIR/deploy/vps/merge_hermes_tools.py" "$SOURCE_DIR/hermes/config.yaml" "$PROFILE_DIR/config.yaml"
+  echo "Merged native MCP tools while preserving live config.yaml."
 else
   echo "Preserved live config.yaml (set SYNC_PROFILE_CONFIG=1 to update it explicitly)."
 fi

@@ -177,6 +177,12 @@ def integration_health() -> dict[str, bool]:
 
 
 @mcp.tool()
+def system_status() -> dict[str, object]:
+    """Read a privacy-safe operational snapshot of the personal Hermes runtime."""
+    return api.system_status()
+
+
+@mcp.tool()
 def task_list(list_name: str | None = None) -> dict[str, str]:
     """List Trello tasks, optionally from one list."""
     return api.task_list(list_name=list_name)

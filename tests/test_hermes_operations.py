@@ -83,6 +83,6 @@ def test_profile_sync_script_preserves_runtime_state_and_live_config() -> None:
         encoding="utf-8"
     )
 
-    assert "Preserved live config.yaml" in script
+    assert "Merged native MCP tools while preserving live config.yaml" in script
     assert "SYNC_PROFILE_CONFIG" in script
     assert '"$PROFILE_DIR/auth.json"' not in script

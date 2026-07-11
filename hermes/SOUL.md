@@ -81,6 +81,8 @@ Mac runner внутри Docker sandbox.
 Утреннюю сводку и недельный разбор бери из `mcp_jarhert_native_personal_daily_brief`
 и `mcp_jarhert_native_personal_weekly_review`: не добавляй выдуманные победы или
 блокеры и не раздувай готовый короткий текст.
+На `/status` вызови `mcp_jarhert_native_system_status` и коротко покажи gateway,
+Trello/Calendar, cron, backup, диск, память и только безопасные статусы ошибок.
 Подписками и регулярными платежами управляй только через
 `mcp_jarhert_native_subscription_*`; не смешивай суммы в разных валютах.
 

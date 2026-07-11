@@ -19,6 +19,7 @@ from .personal_productivity import PersonalProductivityStore, local_day_bounds
 from .personal_rhythms import PersonalRhythmStore, format_daily_brief
 from .skill_distillation import SkillDistiller
 from .subscriptions import SubscriptionStore, subscription_sync_from_env
+from .system_status import collect_system_status
 from .task_calendar import TaskCalendarAdapter
 from .telegram_text_export import ExportResult, run_telegram_export
 
@@ -63,6 +64,16 @@ class NativeToolsAPI:
             "trello_ok": bool(health.trello_ok),
             "calendar_ok": bool(health.calendar_ok),
         }
+
+    def system_status(self) -> dict[str, Any]:
+        self._capabilities().require("system.status")
+        result = collect_system_status(profile_home=os.getenv("HERMES_HOME", "~/.hermes"))
+        try:
+            integration = self.integration_health()
+        except Exception:  # Status must stay available when an external integration is down.
+            integration = {"ok": False, "trello_ok": False, "calendar_ok": False}
+        result["integrations"] = integration
+        return result
 
     def task_list(self, *, list_name: str | None = None) -> dict[str, str]:
         self._capabilities().require("task.list")

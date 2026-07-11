@@ -39,6 +39,7 @@ CODE_ONLY = frozenset({"code"})
 
 CAPABILITIES = {
     "integration.health": CapabilityRule("low", ALL_MODES),
+    "system.status": CapabilityRule("low", ALL_MODES),
     "task.list": CapabilityRule("low", ALL_MODES),
     "task.create": CapabilityRule("medium", ALL_MODES),
     "task.move": CapabilityRule("medium", ALL_MODES),
