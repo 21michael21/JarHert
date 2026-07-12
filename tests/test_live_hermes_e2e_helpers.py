@@ -7,9 +7,11 @@ import pytest
 
 from scripts.live_hermes_e2e import (
     approval_button,
+    cleanup_temporary_task,
     isolated_telethon_session,
     recent_inbound_messages,
     require_live_approval,
+    task_present,
     telethon_session_file,
     wait_confirmation_result,
 )
@@ -93,3 +95,22 @@ def test_live_runner_requires_explicit_external_action_flag() -> None:
         require_live_approval(False)
 
     require_live_approval(True)
+
+
+def test_live_runner_task_verification_and_cleanup_are_side_effect_bounded() -> None:
+    class Adapter:
+        def __init__(self) -> None:
+            self.tasks = {"JarHert E2E test"}
+
+        def list_tasks(self) -> str:
+            return "\n".join(self.tasks)
+
+        def delete_task(self, *, title: str) -> None:
+            self.tasks.discard(title)
+
+    adapter = Adapter()
+
+    assert task_present(adapter, "JarHert E2E test") is True
+    cleanup_temporary_task(adapter, "JarHert E2E test")
+    assert task_present(adapter, "JarHert E2E test") is False
+    cleanup_temporary_task(adapter, "already-gone")

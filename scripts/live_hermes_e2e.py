@@ -39,6 +39,18 @@ def require_live_approval(allowed: bool) -> None:
         raise PermissionError("Pass --allow-live: this check sends Telegram messages and creates temporary external data.")
 
 
+def task_present(adapter: Any, title: str) -> bool:
+    return title in str(adapter.list_tasks())
+
+
+def cleanup_temporary_task(adapter: Any, title: str) -> None:
+    """Best-effort cleanup is deliberately silent: the canary may have deleted it itself."""
+    try:
+        adapter.delete_task(title=title)
+    except Exception:
+        return
+
+
 def bot_identity(token: str) -> tuple[str, int]:
     request = urllib.request.Request(f"https://api.telegram.org/bot{token}/getMe")
     with urllib.request.urlopen(request, timeout=10) as response:
@@ -197,6 +209,9 @@ async def run(args, steps: list[Step]) -> None:
     username, bot_id = bot_identity(token)
     api_id = int(os.environ["TELEGRAM_API_ID"])
     api_hash = os.environ["TELEGRAM_API_HASH"]
+    from hermes.native_tools.task_calendar import TaskCalendarAdapter
+
+    task_adapter = TaskCalendarAdapter.from_env()
     with isolated_telethon_session(os.environ["TELEGRAM_USER_SESSION"]) as session:
         client = TelegramClient(session, api_id, api_hash)
         await client.connect()
@@ -223,6 +238,8 @@ async def run(args, steps: list[Step]) -> None:
                 args.timeout,
                 marker=run_id,
             )
+            if not task_present(task_adapter, task_title):
+                raise RuntimeError("Trello task was not found after the confirmed Telegram action")
             steps.append(Step("trello_create", True, latency, int(reply.id)))
             reply, latency = await send_confirmed(
                 client,
@@ -231,6 +248,8 @@ async def run(args, steps: list[Step]) -> None:
                 args.timeout,
                 marker=run_id,
             )
+            if task_present(task_adapter, task_title):
+                raise RuntimeError("Trello task still exists after the confirmed delete action")
             steps.append(Step("trello_delete", True, latency, int(reply.id)))
 
             reply, latency = await send_confirmed(
@@ -263,6 +282,7 @@ async def run(args, steps: list[Step]) -> None:
                 raise RuntimeError("Telegram export did not return TXT document")
             steps.append(Step("chat_export", True, latency, int(reply.id), detail="txt_document"))
         finally:
+            cleanup_temporary_task(task_adapter, task_title)
             await client.disconnect()
 
 
