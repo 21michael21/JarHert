@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from hermes.native_tools.mcp_api import NativeToolsAPI
-from hermes.native_tools.personal_rhythms import PersonalRhythmStore, dispatch_personal_summary
+from hermes.native_tools.personal_rhythms import PersonalRhythmStore, dispatch_personal_summary, format_daily_brief
 
 
 class FakeRhythmAdapter:
@@ -50,6 +50,31 @@ def test_daily_brief_uses_factual_personal_today_data(tmp_path: Path) -> None:
     assert "Проверить OAuth" in brief["text"]
     assert "позвонить врачу" in brief["text"]
     assert brief["data"]["top_three"][0]["title"] == "позвонить врачу"
+
+
+def test_daily_brief_formats_external_lists_as_short_readable_items() -> None:
+    text = format_daily_brief(
+        {
+            "calendar": "No events found.",
+            "tasks": (
+                "- Проверить OAuth [open] | list: Today | labels: P1 | https://trello.com/c/abc\n"
+                "- Подготовить план [open] | list: Today\n"
+                "- Созвониться с Ильёй [open] | list: Today\n"
+                "- Лишняя четвёртая задача [open] | list: Today"
+            ),
+            "reminders": [],
+            "top_three": [],
+        }
+    )
+
+    assert "Календарь: пусто" in text
+    assert "Задачи:" in text
+    assert "1. Проверить OAuth" in text
+    assert "2. Подготовить план" in text
+    assert "3. Созвониться с Ильёй" in text
+    assert "ещё 1" in text
+    assert "https://" not in text
+    assert "[open]" not in text
 
 
 def test_weekly_review_reports_done_moved_failed_and_next_priorities(tmp_path: Path) -> None:

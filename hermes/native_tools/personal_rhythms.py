@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -177,10 +178,21 @@ class PersonalRhythmStore:
 
 def format_daily_brief(data: dict[str, Any]) -> str:
     lines = ["Сегодня:"]
-    if data.get("calendar"):
-        lines.append(f"Календарь: {_compact(data['calendar'])}")
-    if data.get("tasks"):
-        lines.append(f"Задачи: {_compact(data['tasks'])}")
+    calendar_items = _external_items(data.get("calendar"), empty_markers=("no events found", "событий нет"))
+    if calendar_items:
+        lines.append("Календарь:")
+        lines.extend(f"• {item}" for item in calendar_items[:3])
+        if len(calendar_items) > 3:
+            lines.append(f"• ещё {len(calendar_items) - 3}")
+    elif data.get("calendar"):
+        lines.append("Календарь: пусто")
+
+    task_items = _external_items(data.get("tasks"))
+    if task_items:
+        lines.append("Задачи:")
+        lines.extend(f"{index}. {item}" for index, item in enumerate(task_items[:3], start=1))
+        if len(task_items) > 3:
+            lines.append(f"…и ещё {len(task_items) - 3}")
     reminders = data.get("reminders") or []
     if reminders:
         lines.append("Напоминания: " + "; ".join(str(item["text"]) for item in reminders[:3]))
@@ -261,6 +273,23 @@ def _table_exists(connection: sqlite3.Connection, table: str) -> bool:
 
 def _compact(value: Any) -> str:
     return " ".join(str(value).split())[:500]
+
+
+def _external_items(value: Any, *, empty_markers: tuple[str, ...] = ()) -> list[str]:
+    """Turn an external CLI listing into short, chat-readable titles."""
+    raw = str(value or "").strip()
+    empty_value = raw.casefold().rstrip(".!")
+    if not raw or empty_value in {marker.casefold().rstrip(".!") for marker in empty_markers}:
+        return []
+    chunks = re.split(r"(?:^|\n)\s*-\s+|\s+-\s+(?=[^|\n]{1,180}\s+\[)", raw)
+    items: list[str] = []
+    for chunk in chunks:
+        title = re.sub(r"https?://\S+", "", chunk).split("|", 1)[0]
+        title = re.sub(r"\s*\[[^\]]+\]\s*$", "", title).strip(" -•\t\n")
+        title = " ".join(title.split())
+        if title:
+            items.append(title[:140].rstrip())
+    return items or [_compact(raw)[:140].rstrip()]
 
 
 def _summary_type(value: str) -> str:

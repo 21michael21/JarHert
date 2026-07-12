@@ -42,6 +42,16 @@ def merge_profile_config(source: Path, target: Path) -> list[str]:
         separator = "" if not target_lines or target_lines[-1].endswith("\n\n") else "\n"
         target.write_text("".join(target_lines) + separator + "".join(stt_block), encoding="utf-8")
         merged.append("stt")
+        target_lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
+
+    # Telegram is JarHert's personal inbox, not an operator console. Add the
+    # versioned quiet display profile only when the live profile has no display
+    # configuration at all; an existing live block remains the owner's choice.
+    display_block = _top_level_block(source_lines, "display")
+    if display_block and _top_level_block(target_lines, "display") is None:
+        separator = "" if not target_lines or target_lines[-1].endswith("\n\n") else "\n"
+        target.write_text("".join(target_lines) + separator + "".join(display_block), encoding="utf-8")
+        merged.append("display")
     return merged
 
 

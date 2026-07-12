@@ -103,3 +103,39 @@ def test_merge_keeps_live_stt_when_it_already_exists(tmp_path: Path) -> None:
 
     assert merge_profile_config(source, target) == []
     assert target.read_text(encoding="utf-8") == "stt:\n  enabled: false\n  provider: openai\n"
+
+
+def test_merge_adds_telegram_final_answer_display_defaults_without_touching_model(tmp_path: Path) -> None:
+    source = tmp_path / "source.yaml"
+    target = tmp_path / "target.yaml"
+    source.write_text(
+        "model:\n  provider: openai-api\n"
+        "display:\n"
+        "  busy_input_mode: queue\n"
+        "  busy_ack_enabled: false\n"
+        "  platforms:\n"
+        "    telegram:\n"
+        "      tool_progress: off\n"
+        "      interim_assistant_messages: false\n"
+        "      long_running_notifications: false\n"
+        "      cleanup_progress: true\n",
+        encoding="utf-8",
+    )
+    target.write_text("model:\n  provider: openai-codex\n  default: gpt-5.4-mini\n", encoding="utf-8")
+
+    assert merge_profile_config(source, target) == ["display"]
+    updated = target.read_text(encoding="utf-8")
+    assert "provider: openai-codex" in updated
+    assert "default: gpt-5.4-mini" in updated
+    assert "busy_input_mode: queue" in updated
+    assert "interim_assistant_messages: false" in updated
+
+
+def test_merge_keeps_existing_live_display_choices(tmp_path: Path) -> None:
+    source = tmp_path / "source.yaml"
+    target = tmp_path / "target.yaml"
+    source.write_text("display:\n  busy_ack_enabled: false\n", encoding="utf-8")
+    target.write_text("display:\n  busy_ack_enabled: true\n", encoding="utf-8")
+
+    assert merge_profile_config(source, target) == []
+    assert target.read_text(encoding="utf-8") == "display:\n  busy_ack_enabled: true\n"

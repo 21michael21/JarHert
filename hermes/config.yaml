@@ -4,6 +4,24 @@ model:
 
 agent:
   reasoning_effort: low
+  restart_drain_timeout: 60
+
+# Telegram is a personal inbox. Keep only the useful final response and a
+# single approval prompt: no generated "Working", mid-turn commentary, or
+# status breadcrumbs that read like broken duplicate replies on a phone.
+display:
+  busy_input_mode: queue
+  busy_ack_enabled: false
+  platforms:
+    telegram:
+      streaming: false
+      tool_progress: off
+      interim_assistant_messages: false
+      long_running_notifications: false
+      busy_ack_detail: false
+      busy_steer_ack_enabled: false
+      cleanup_progress: true
+      notifications: important
 
 # Voice messages stay on the VPS: faster-whisper "base" is already cached
 # there and does not use an API key.  Suppress a raw transcript echo so one
