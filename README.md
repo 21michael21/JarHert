@@ -821,6 +821,14 @@ STT будет проверен, но полный путь voice → action que
 зависает в CI. Путь задаётся через `LIVE_E2E_TELETHON_SESSION`. При `--require-live` любой skip,
 blocked reply, fake provider, отсутствующий credential или timeout даёт ненулевой exit code.
 
+Отдельный `scripts/live_hermes_e2e.py` обращается к реальному Hermes gateway, создаёт временные
+Trello/Calendar сущности и может написать в Telegram. Он всегда требует явный флаг `--allow-live`:
+
+```bash
+HERMES_HOME=~/.hermes/profiles/jarhert \
+~/.hermes/profiles/jarhert/.venv/bin/python scripts/live_hermes_e2e.py --allow-live
+```
+
 Проверяются text/LLM, voice/STT/natural route, task и Calendar с inline approval, reminder, итоговая
 доставка outbox, provider fallback, action idempotency, восстановление queued action новым store,
 monitor triggered/no-change и ownership. Текущая duplicate-проверка относится к action queue:

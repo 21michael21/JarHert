@@ -34,6 +34,11 @@ def load_env(path: Path) -> None:
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
+def require_live_approval(allowed: bool) -> None:
+    if not allowed:
+        raise PermissionError("Pass --allow-live: this check sends Telegram messages and creates temporary external data.")
+
+
 def bot_identity(token: str) -> tuple[str, int]:
     request = urllib.request.Request(f"https://api.telegram.org/bot{token}/getMe")
     with urllib.request.urlopen(request, timeout=10) as response:
@@ -266,8 +271,14 @@ def main() -> int:
     parser.add_argument("--profile-home", type=Path, default=Path.home() / ".hermes" / "profiles" / "jarhert")
     parser.add_argument("--timeout", type=int, default=180)
     parser.add_argument("--total-timeout", type=int, default=600)
+    parser.add_argument("--allow-live", action="store_true")
     parser.add_argument("--report", type=Path, default=Path("reports/live_hermes_e2e.json"))
     args = parser.parse_args()
+    try:
+        require_live_approval(args.allow_live)
+    except PermissionError as error:
+        print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False))
+        return 2
     load_env(args.profile_home / ".env")
     started_at = datetime.now(timezone.utc).isoformat()
     steps: list[Step] = []

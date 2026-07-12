@@ -3,10 +3,13 @@ from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
 
+import pytest
+
 from scripts.live_hermes_e2e import (
     approval_button,
     isolated_telethon_session,
     recent_inbound_messages,
+    require_live_approval,
     telethon_session_file,
     wait_confirmation_result,
 )
@@ -83,3 +86,10 @@ def test_recent_messages_times_out_without_hanging_the_runner() -> None:
             await asyncio.sleep(1)
 
     assert asyncio.run(recent_inbound_messages(Client(), "bot", timeout=0.01)) == []
+
+
+def test_live_runner_requires_explicit_external_action_flag() -> None:
+    with pytest.raises(PermissionError, match="--allow-live"):
+        require_live_approval(False)
+
+    require_live_approval(True)
