@@ -2,8 +2,9 @@ const $ = (id) => document.getElementById(id);
 const telegram = window.Telegram?.WebApp;
 const state = {
   activeView: "today", snapshot: null, tasks: {items: [], lists: [], priorities: []}, calendar: {items: []},
-  coding: {items: []}, notes: {items: []}, knowledge: {items: []}, subscriptions: {items: []}, digest: {items: []}, noteQuery: "", quickType: "task", edit: null, plan: null, clip: null,
+  coding: {items: []}, notes: {items: []}, knowledge: {items: []}, subscriptions: {items: []}, digest: {items: []}, noteQuery: "", quickType: "task", edit: null, plan: null, clip: null, lastUpdatedAt: null,
 };
+const VIEWS = new Set(["today", "tasks", "calendar", "code", "memory"]);
 
 function text(value) { return String(value ?? "").trim(); }
 function field(item, ...keys) { for (const key of keys) if (item?.[key]) return text(item[key]); return "Без названия"; }
@@ -15,9 +16,10 @@ function node(tag, className, value) {
   return element;
 }
 
-function button(label, className, click) {
+function button(label, className, click, accessibleName = "") {
   const element = node("button", className, label);
   element.type = "button";
+  if (accessibleName) element.setAttribute("aria-label", accessibleName);
   element.addEventListener("click", click);
   return element;
 }
@@ -53,12 +55,14 @@ async function refresh() {
   state.knowledge = knowledgeResult.status === "fulfilled" ? knowledgeResult.value : {items: []};
   state.subscriptions = subscriptionResult.status === "fulfilled" ? subscriptionResult.value : {items: []};
   state.digest = digestResult.status === "fulfilled" ? digestResult.value : {items: []};
+  state.lastUpdatedAt = new Date();
   render(); showNotice("");
 }
 
 function render() {
   const snapshot = state.snapshot || {};
   $("mode-chip").textContent = workModeLabel(snapshot.work_mode);
+  $("last-sync").textContent = state.lastUpdatedAt ? `Обновлено ${formatTime(state.lastUpdatedAt)}` : "Собираю твой контур";
   renderToday(snapshot);
   renderTasks();
   renderCalendar();
@@ -71,15 +75,29 @@ function render() {
 function renderToday(snapshot) {
   const priorities = snapshot.today?.priorities || [];
   const focus = findTask(field(priorities[0], "title", "text", "subject"));
-  $("focus-title").textContent = focus?.title || field(priorities[0], "title", "text", "subject");
+  $("focus-title").textContent = focus?.title || (priorities.length ? field(priorities[0], "title", "text", "subject") : "Сегодня без жёсткого фокуса");
   $("focus-meta").textContent = focus ? taskMeta(focus) : priorities.length ? "Главный фокус на сегодня" : "Можно добавить первую задачу.";
+  $("focus-state").textContent = focus ? "Фокус" : "Свободно";
   $("focus-done").disabled = !focus;
   $("focus-move").disabled = !focus;
   $("focus-done").onclick = () => focus && preparePlan([{type: "task.done", payload: {title: focus.title}}]);
   $("focus-move").onclick = () => focus && openTaskMove(focus);
   list("priorities", priorities, (item) => focusRow(findTask(field(item, "title", "text", "subject")) || {title: field(item, "title", "text", "subject")}), "На сегодня пока нет явных задач.");
   list("today-calendar", state.calendar.items.slice(0, 3), eventRow, "На ближайшие дни встреч нет.");
+  renderOverview(snapshot);
   renderRadar(snapshot);
+}
+
+function renderOverview(snapshot) {
+  const tasks = state.tasks.items || [];
+  const calendar = state.calendar.items || [];
+  const radarCount = (state.subscriptions.items || []).length + (snapshot.monitors || []).filter((item) => item.enabled !== false).length + (state.digest.items || []).length;
+  $("overview-tasks-value").textContent = tasks.length;
+  $("overview-tasks-meta").textContent = tasks.length ? `${tasks.filter((item) => item.list_name === "Today").length} в Today` : "добавить первую";
+  $("overview-calendar-value").textContent = calendar.length;
+  $("overview-calendar-meta").textContent = calendar.length ? "ближайшие 7 дней" : "окно свободно";
+  $("overview-radar-value").textContent = radarCount;
+  $("overview-radar-meta").textContent = state.digest.items?.length ? `${state.digest.items.length} в digest` : radarCount ? "источники включены" : "без сигналов";
 }
 
 function renderRadar(snapshot) {
@@ -91,6 +109,7 @@ function renderRadar(snapshot) {
     meta: radarMonitorMeta(item),
   }));
   const deferred = state.digest.items?.length ? [{title: "Digest радара", meta: `${state.digest.items.length} обновл. ждут общего дайджеста`}] : [];
+  $("radar-state").textContent = String(subscriptions.length + monitors.length + deferred.length);
   list("radar", [...subscriptions, ...monitors, ...deferred], (item) => {
     const row = node("article", "work-row"); const copy = node("div", "row-copy");
     copy.append(node("strong", "row-title", item.title), node("span", "row-meta", item.meta));
@@ -115,6 +134,10 @@ function focusRow(task) {
 }
 
 function renderTasks() {
+  const allItems = state.tasks.items || [];
+  $("tasks-summary").textContent = allItems.length
+    ? `${allItems.length} ${plural(allItems.length, "задача", "задачи", "задач")} в списках`
+    : "Задач пока нет.";
   const filters = $("task-filters"); filters.replaceChildren();
   const choices = ["Все", ...(state.tasks.lists || [])];
   choices.forEach((choice) => {
@@ -122,7 +145,7 @@ function renderTasks() {
     const filterButton = button(choice, `filter-button${active ? " is-active" : ""}`, () => { state.taskFilter = choice; renderTasks(); });
     filters.append(filterButton);
   });
-  const items = (state.tasks.items || []).filter((item) => !state.taskFilter || state.taskFilter === "Все" || item.list_name === state.taskFilter);
+  const items = allItems.filter((item) => !state.taskFilter || state.taskFilter === "Все" || item.list_name === state.taskFilter);
   list("task-list", items, taskRow, "Задач в этой колонке нет.");
 }
 
@@ -133,14 +156,18 @@ function taskRow(task) {
   const meta = node("span", "row-meta", taskMeta(task));
   copy.append(title, meta);
   const actions = node("div", "row-actions");
-  actions.append(button("✓", "icon-action", () => preparePlan([{type: "task.done", payload: {title: task.title}}])));
-  actions.append(button("↔", "icon-action", () => openTaskMove(task)));
-  actions.append(button(task.priority || "·", "priority-button", () => openTaskPriority(task)));
-  if (task.url) actions.append(button("↗", "icon-action", () => openExternal(task.url)));
+  actions.append(button("Готово", "row-button", () => preparePlan([{type: "task.done", payload: {title: task.title}}])));
+  actions.append(button("Перенести", "row-button", () => openTaskMove(task)));
+  actions.append(button(task.priority || "Без приоритета", "priority-button", () => openTaskPriority(task), `Изменить приоритет: ${task.title}`));
+  if (task.url) actions.append(button("Открыть", "row-button", () => openExternal(task.url)));
   row.append(copy, actions); return row;
 }
 
-function renderCalendar() { list("calendar-list", state.calendar.items || [], eventRow, "На ближайшие 7 дней событий нет."); }
+function renderCalendar() {
+  const items = state.calendar.items || [];
+  $("calendar-summary").textContent = items.length ? `${items.length} ${plural(items.length, "событие", "события", "событий")} в ближайшие 7 дней` : "Ближайшие 7 дней свободны";
+  list("calendar-list", items, eventRow, "На ближайшие 7 дней событий нет.");
+}
 
 function eventRow(event) {
   const row = node("article", "timeline-row");
@@ -148,8 +175,8 @@ function eventRow(event) {
   const copy = node("div", "row-copy");
   copy.append(node("strong", "row-title", event.title), node("span", "row-meta", event.end ? `до ${formatTime(event.end)}` : "Весь день"));
   const actions = node("div", "row-actions");
-  actions.append(button("↔", "icon-action", () => openCalendarMove(event)));
-  if (event.url) actions.append(button("↗", "icon-action", () => openExternal(event.url)));
+  actions.append(button("Перенести", "row-button", () => openCalendarMove(event)));
+  if (event.url) actions.append(button("Открыть", "row-button", () => openExternal(event.url)));
   row.append(when, copy, actions); return row;
 }
 
@@ -266,15 +293,22 @@ function taskMeta(task) {
 
 function findTask(title) { return (state.tasks.items || []).find((item) => item.title === title); }
 function formatDayTime(value) { if (!value) return "без времени"; const date = new Date(value); return Number.isNaN(date.getTime()) ? text(value) : date.toLocaleString("ru-RU", {weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit"}); }
-function formatTime(value) { const date = new Date(value); return Number.isNaN(date.getTime()) ? text(value) : date.toLocaleTimeString("ru-RU", {hour: "2-digit", minute: "2-digit"}); }
+function formatTime(value) { const date = value instanceof Date ? value : new Date(value); return Number.isNaN(date.getTime()) ? text(value) : date.toLocaleTimeString("ru-RU", {hour: "2-digit", minute: "2-digit"}); }
 function toLocalDateTime(value) { const date = new Date(value); if (Number.isNaN(date.getTime())) return ""; return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
 function toIso(value) { const date = new Date(value); return Number.isNaN(date.getTime()) ? "" : date.toISOString(); }
 function workModeLabel(mode) { const value = field(mode, "name", "mode").toLowerCase(); return {fast: "Быстро", think: "Думаю", code: "Код"}[value] || "Быстро"; }
+function plural(value, one, few, many) { const mod10 = value % 10; const mod100 = value % 100; return mod10 === 1 && mod100 !== 11 ? one : mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20) ? few : many; }
 
-function setView(view) {
-  state.activeView = view;
-  document.querySelectorAll(".view").forEach((item) => { item.hidden = item.id !== `view-${view}`; });
-  document.querySelectorAll("[data-view]").forEach((item) => item.classList.toggle("is-active", item.dataset.view === view));
+function setView(view, {syncHistory = true} = {}) {
+  const nextView = VIEWS.has(view) ? view : "today";
+  state.activeView = nextView;
+  document.querySelectorAll(".view").forEach((item) => { item.hidden = item.id !== `view-${nextView}`; });
+  document.querySelectorAll("[data-view]").forEach((item) => {
+    const isActive = item.dataset.view === nextView;
+    item.classList.toggle("is-active", isActive);
+    item.setAttribute("aria-current", isActive ? "page" : "false");
+  });
+  if (syncHistory && window.location.hash !== `#${nextView}`) history.replaceState(null, "", `#${nextView}`);
   telegram?.BackButton?.hide();
 }
 
@@ -297,7 +331,7 @@ function scheduleNoteSearch(value) {
   }, 180);
 }
 
-function openQuick(type = "task") { state.quickType = type; updateQuickForm(); $("quick-dialog").showModal(); }
+function openQuick(type = "task") { state.quickType = type; updateQuickForm(); $("quick-dialog").showModal(); window.setTimeout(() => $("quick-text").focus(), 0); }
 function updateQuickForm() {
   const type = state.quickType;
   document.querySelectorAll("[data-quick-type]").forEach((item) => item.classList.toggle("is-active", item.dataset.quickType === type));
@@ -388,6 +422,8 @@ function init() {
   $("note-search").addEventListener("input", (event) => scheduleNoteSearch(event.target.value));
   $("knowledge-add").addEventListener("click", openKnowledgeClip); $("clip-form").addEventListener("submit", previewKnowledgeClip); $("clip-execute").addEventListener("click", executeKnowledgeClip); $("clip-cancel").addEventListener("click", () => $("clip-dialog").close());
   $("open-trello").addEventListener("click", () => openExternal(state.tasks.board_url || "https://trello.com/")); $("open-calendar").addEventListener("click", () => openExternal("https://calendar.google.com/"));
+  window.addEventListener("hashchange", () => setView(window.location.hash.slice(1), {syncHistory: false}));
+  if (VIEWS.has(window.location.hash.slice(1))) state.activeView = window.location.hash.slice(1);
   startTelegramSession();
 }
 init();

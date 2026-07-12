@@ -440,6 +440,22 @@ def test_dashboard_page_uses_telegram_webapp_and_external_assets_only() -> None:
     assert 'id="knowledge-sources"' in response.text
 
 
+def test_dashboard_has_a_touch_first_command_center_and_preserves_navigation_state() -> None:
+    app_client, _ = client()
+
+    page = app_client.get("/").text
+    script = (Path(__file__).parents[1] / "hermes" / "native_tools" / "dashboard_assets" / "dashboard.js").read_text()
+
+    assert 'id="overview-tasks"' in page
+    assert 'id="overview-calendar"' in page
+    assert 'id="overview-radar"' in page
+    assert 'id="last-sync"' in page
+    assert 'aria-live="polite"' in page
+    assert 'aria-label="Обновить данные"' in page
+    assert "history.replaceState" in script
+    assert "aria-current" in script
+
+
 def test_dashboard_styles_keep_hidden_loading_panel_out_of_the_layout() -> None:
     stylesheet = (Path(__file__).parents[1] / "hermes" / "native_tools" / "dashboard_assets" / "dashboard.css").read_text()
 
