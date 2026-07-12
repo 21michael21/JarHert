@@ -112,6 +112,8 @@ def test_profile_sync_script_preserves_runtime_state_and_live_config() -> None:
     assert "Merged safe JarHert defaults while preserving live config.yaml" in script
     assert "SYNC_PROFILE_CONFIG" in script
     assert "HERMES_NATIVE_SEND_COMMAND" in script
+    assert "HERMES_NATIVE_SEND_COMMAND='%s -m hermes_cli.main'" in script
+    assert "printf 'HERMES_NATIVE_SEND_COMMAND=%q" not in script
     assert "tools disable --platform telegram" in script
     assert "terminal file code_execution browser computer_use delegation cronjob" in script
     assert "hermes-gateway-jarhert.service.d/override.conf" in script

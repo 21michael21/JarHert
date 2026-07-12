@@ -92,10 +92,11 @@ else
 fi
 
 HERMES_HOME="$PROFILE_DIR" "$HERMES_PYTHON" "$PROFILE_DIR/scripts/bootstrap_native_deps.py"
-if ! grep -q '^HERMES_NATIVE_SEND_COMMAND=' "$PROFILE_DIR/.env"; then
-  printf 'HERMES_NATIVE_SEND_COMMAND=%q\n' "$HERMES_PYTHON -m hermes_cli.main" >> "$PROFILE_DIR/.env"
-  chmod 600 "$PROFILE_DIR/.env"
-fi
+# This value is consumed both by a shell and Hermes' dotenv parser. Shell-style
+# backslash escaping would make dotenv treat the complete command as one executable.
+sed -i '/^HERMES_NATIVE_SEND_COMMAND=/d' "$PROFILE_DIR/.env"
+printf "HERMES_NATIVE_SEND_COMMAND='%s -m hermes_cli.main'\n" "$HERMES_PYTHON" >> "$PROFILE_DIR/.env"
+chmod 600 "$PROFILE_DIR/.env"
 "$HERMES_PYTHON" -m hermes_cli.main --profile jarhert tools disable --platform telegram \
   terminal file code_execution browser computer_use delegation cronjob >/dev/null
 install -Dm644 "$SOURCE_DIR/deploy/vps/systemd/hermes-gateway-jarhert.override.conf" \
