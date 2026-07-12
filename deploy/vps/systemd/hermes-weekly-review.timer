@@ -1,0 +1,10 @@
+[Unit]
+Description=Send JarHert weekly review on Sunday
+
+[Timer]
+OnCalendar=Sun *-*-* 18:00:00
+Persistent=true
+Unit=hermes-weekly-review.service
+
+[Install]
+WantedBy=timers.target

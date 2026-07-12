@@ -193,6 +193,22 @@ The timer runs at `03:15` and verifies every new archive by restoring it into a
 temporary directory. It stays safely skipped until `~/.config/jarhert/backup.env`
 exists with mode `600`; this prevents accidental unencrypted backups.
 
+### Daily brief and weekly review
+
+JarHert can deliver a deterministic daily brief at `09:00` and a weekly review
+on Sunday at `18:00` in the server timezone. They read Calendar, Trello,
+reminders, commitments and follow-ups, do not call an LLM, and store a period
+key so a repeated timer run does not send a duplicate message.
+
+Install the timers after syncing the profile:
+
+```bash
+JARHERT_VPS=deploy@your-vps-host deploy/vps/install_personal_summary_timers.sh
+```
+
+Use `systemctl --user list-timers hermes-daily-brief.timer hermes-weekly-review.timer`
+on the VPS to check their next runs.
+
 ### Gateway watchdog
 
 `hermes/scripts/watchdog.py` checks the user systemd gateway, its main PID,
