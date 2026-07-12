@@ -126,4 +126,4 @@ def test_gateway_stop_timeout_override_is_bounded() -> None:
         encoding="utf-8"
     )
 
-    assert "TimeoutStopSec=25s" in override
+    assert "TimeoutStopSec=35s" in override
