@@ -221,7 +221,9 @@ def test_hermes_profile_exposes_productivity_tools_and_natural_workflows() -> No
     assert "что у меня сегодня" in soul.lower()
     assert "model: small" in config
     assert "не проси пользователя переписывать голосовое" in soul.lower()
+    assert "голосовой черновик" in soul.lower()
     assert "не проси пользователя переписывать голосовое" in voice_skill.lower()
+    assert "голосовой черновик" in voice_skill.lower()
     assert "разгрузи голову" in skill.lower()
     assert "выбери три" in skill.lower()
 
