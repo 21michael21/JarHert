@@ -51,6 +51,14 @@ def cleanup_temporary_task(adapter: Any, title: str) -> None:
         return
 
 
+def cleanup_temporary_calendar_event(adapter: Any, title: str) -> None:
+    """Calendar cleanup mirrors task cleanup: test resources must never become user data."""
+    try:
+        adapter.delete_calendar_event(title=title)
+    except Exception:
+        return
+
+
 def bot_identity(token: str) -> tuple[str, int]:
     request = urllib.request.Request(f"https://api.telegram.org/bot{token}/getMe")
     with urllib.request.urlopen(request, timeout=10) as response:
@@ -283,6 +291,7 @@ async def run(args, steps: list[Step]) -> None:
             steps.append(Step("chat_export", True, latency, int(reply.id), detail="txt_document"))
         finally:
             cleanup_temporary_task(task_adapter, task_title)
+            cleanup_temporary_calendar_event(task_adapter, event_title)
             await client.disconnect()
 
 

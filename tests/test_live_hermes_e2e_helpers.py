@@ -7,6 +7,7 @@ import pytest
 
 from scripts.live_hermes_e2e import (
     approval_button,
+    cleanup_temporary_calendar_event,
     cleanup_temporary_task,
     isolated_telethon_session,
     recent_inbound_messages,
@@ -114,3 +115,18 @@ def test_live_runner_task_verification_and_cleanup_are_side_effect_bounded() -> 
     cleanup_temporary_task(adapter, "JarHert E2E test")
     assert task_present(adapter, "JarHert E2E test") is False
     cleanup_temporary_task(adapter, "already-gone")
+
+
+def test_live_runner_calendar_cleanup_is_best_effort() -> None:
+    class Adapter:
+        def __init__(self) -> None:
+            self.events = {"JarHert Calendar E2E test"}
+
+        def delete_calendar_event(self, *, title: str) -> None:
+            self.events.discard(title)
+
+    adapter = Adapter()
+    cleanup_temporary_calendar_event(adapter, "JarHert Calendar E2E test")
+    cleanup_temporary_calendar_event(adapter, "already-gone")
+
+    assert adapter.events == set()
