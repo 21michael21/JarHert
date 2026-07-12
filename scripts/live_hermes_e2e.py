@@ -64,11 +64,21 @@ def isolated_telethon_session(session: str) -> Iterator[str]:
         yield str(destination)
 
 
+async def recent_inbound_messages(client, entity, *, timeout: float) -> list[Any]:
+    """Bound one Telegram API read so a broken connection cannot stall the runner."""
+    try:
+        messages = await asyncio.wait_for(client.get_messages(entity, limit=20), timeout=timeout)
+    except TimeoutError:
+        return []
+    return [message for message in messages if not message.out]
+
+
 async def wait_message(client, entity, *, after_id: int, predicate: Callable[[Any], bool], timeout: int):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        async for message in client.iter_messages(entity, limit=20):
-            if int(message.id) > after_id and not message.out and predicate(message):
+        remaining = max(0.1, deadline - time.monotonic())
+        for message in await recent_inbound_messages(client, entity, timeout=min(10.0, remaining)):
+            if int(message.id) > after_id and predicate(message):
                 return message
         await asyncio.sleep(1)
     raise TimeoutError("Telegram response timeout")
@@ -78,11 +88,17 @@ async def wait_confirmation_result(client, entity, approval, approval_text: str,
     """Telegram callbacks may edit the approval message or send a new result."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        updated = await client.get_messages(entity, ids=int(approval.id))
+        remaining = max(0.1, deadline - time.monotonic())
+        try:
+            updated = await asyncio.wait_for(
+                client.get_messages(entity, ids=int(approval.id)), timeout=min(10.0, remaining)
+            )
+        except TimeoutError:
+            updated = None
         if updated is not None and approval_button(updated, approval_text) is None:
             return updated
-        async for message in client.iter_messages(entity, limit=20):
-            if int(message.id) > int(approval.id) and not message.out and approval_button(message, approval_text) is None:
+        for message in await recent_inbound_messages(client, entity, timeout=min(10.0, remaining)):
+            if int(message.id) > int(approval.id) and approval_button(message, approval_text) is None:
                 return message
         await asyncio.sleep(1)
     raise TimeoutError("Telegram confirmation result timeout")
@@ -249,13 +265,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--profile-home", type=Path, default=Path.home() / ".hermes" / "profiles" / "jarhert")
     parser.add_argument("--timeout", type=int, default=180)
+    parser.add_argument("--total-timeout", type=int, default=600)
     parser.add_argument("--report", type=Path, default=Path("reports/live_hermes_e2e.json"))
     args = parser.parse_args()
     load_env(args.profile_home / ".env")
     started_at = datetime.now(timezone.utc).isoformat()
     steps: list[Step] = []
     try:
-        asyncio.run(run(args, steps))
+        asyncio.run(asyncio.wait_for(run(args, steps), timeout=args.total_timeout))
         ok = all(step.ok for step in steps) and len(steps) == 6
         error = None
     except Exception as exc:

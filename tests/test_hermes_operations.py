@@ -114,4 +114,14 @@ def test_profile_sync_script_preserves_runtime_state_and_live_config() -> None:
     assert "HERMES_NATIVE_SEND_COMMAND" in script
     assert "tools disable --platform telegram" in script
     assert "terminal file code_execution browser computer_use delegation cronjob" in script
+    assert "hermes-gateway-jarhert.service.d/override.conf" in script
+    assert "systemctl --user daemon-reload" in script
     assert '"$PROFILE_DIR/auth.json"' not in script
+
+
+def test_gateway_stop_timeout_override_is_bounded() -> None:
+    override = (Path(__file__).resolve().parents[1] / "deploy" / "vps" / "systemd" / "hermes-gateway-jarhert.override.conf").read_text(
+        encoding="utf-8"
+    )
+
+    assert "TimeoutStopSec=25s" in override

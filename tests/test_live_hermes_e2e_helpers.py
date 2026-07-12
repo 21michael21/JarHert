@@ -3,7 +3,13 @@ from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
 
-from scripts.live_hermes_e2e import approval_button, isolated_telethon_session, telethon_session_file, wait_confirmation_result
+from scripts.live_hermes_e2e import (
+    approval_button,
+    isolated_telethon_session,
+    recent_inbound_messages,
+    telethon_session_file,
+    wait_confirmation_result,
+)
 
 
 @dataclass
@@ -69,3 +75,11 @@ def test_confirmation_result_accepts_an_edited_approval_message() -> None:
 
     result = asyncio.run(wait_confirmation_result(Client(), "bot", approval, "Выполнить", timeout=1))
     assert result is edited
+
+
+def test_recent_messages_times_out_without_hanging_the_runner() -> None:
+    class Client:
+        async def get_messages(self, entity, limit):
+            await asyncio.sleep(1)
+
+    assert asyncio.run(recent_inbound_messages(Client(), "bot", timeout=0.01)) == []

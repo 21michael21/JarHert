@@ -98,6 +98,9 @@ if ! grep -q '^HERMES_NATIVE_SEND_COMMAND=' "$PROFILE_DIR/.env"; then
 fi
 "$HERMES_PYTHON" -m hermes_cli.main --profile jarhert tools disable --platform telegram \
   terminal file code_execution browser computer_use delegation cronjob >/dev/null
+install -Dm644 "$SOURCE_DIR/deploy/vps/systemd/hermes-gateway-jarhert.override.conf" \
+  "$HOME/.config/systemd/user/hermes-gateway-jarhert.service.d/override.conf"
+systemctl --user daemon-reload
 mkdir -p "$PROFILE_DIR/state"
 printf '{"jarhert_commit":"%s","synced_at":"%s"}\n' "$COMMIT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PROFILE_DIR/state/jarhert-profile-revision.json"
 systemctl --user restart hermes-gateway-jarhert.service
