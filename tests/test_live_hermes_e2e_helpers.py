@@ -13,6 +13,7 @@ from scripts.live_hermes_e2e import (
     recent_inbound_messages,
     require_live_approval,
     task_present,
+    task_adapter_from_profile,
     telethon_session_file,
     wait_confirmation_result,
 )
@@ -130,3 +131,20 @@ def test_live_runner_calendar_cleanup_is_best_effort() -> None:
     cleanup_temporary_calendar_event(adapter, "already-gone")
 
     assert adapter.events == set()
+
+
+def test_live_runner_loads_native_adapter_from_profile_path(tmp_path, monkeypatch) -> None:
+    profile = tmp_path / "profile"
+    package = profile / "native_tools"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "task_calendar.py").write_text(
+        "class TaskCalendarAdapter:\n"
+        "    @classmethod\n"
+        "    def from_env(cls):\n"
+        "        return 'adapter-from-profile'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HERMES_HOME", str(profile))
+
+    assert task_adapter_from_profile() == "adapter-from-profile"

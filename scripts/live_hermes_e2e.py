@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import sqlite3
+import sys
 import tempfile
 import time
 import urllib.request
@@ -57,6 +58,15 @@ def cleanup_temporary_calendar_event(adapter: Any, title: str) -> None:
         adapter.delete_calendar_event(title=title)
     except Exception:
         return
+
+
+def task_adapter_from_profile() -> Any:
+    profile = Path(os.getenv("HERMES_HOME", "~/.hermes")).expanduser()
+    if str(profile) not in sys.path:
+        sys.path.insert(0, str(profile))
+    from native_tools.task_calendar import TaskCalendarAdapter
+
+    return TaskCalendarAdapter.from_env()
 
 
 def bot_identity(token: str) -> tuple[str, int]:
@@ -217,9 +227,7 @@ async def run(args, steps: list[Step]) -> None:
     username, bot_id = bot_identity(token)
     api_id = int(os.environ["TELEGRAM_API_ID"])
     api_hash = os.environ["TELEGRAM_API_HASH"]
-    from hermes.native_tools.task_calendar import TaskCalendarAdapter
-
-    task_adapter = TaskCalendarAdapter.from_env()
+    task_adapter = task_adapter_from_profile()
     with isolated_telethon_session(os.environ["TELEGRAM_USER_SESSION"]) as session:
         client = TelegramClient(session, api_id, api_hash)
         await client.connect()
