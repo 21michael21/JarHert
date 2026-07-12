@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -117,6 +118,57 @@ def create_app(
     async def snapshot(request: Request) -> JSONResponse:
         require_user(request)
         return JSONResponse(_snapshot(dashboard_api))
+
+    @app.get("/api/tasks")
+    async def tasks(request: Request) -> JSONResponse:
+        require_user(request)
+        return JSONResponse(_call_read(dashboard_api.task_dashboard))
+
+    @app.get("/api/calendar")
+    async def calendar(request: Request, days: int = 7) -> JSONResponse:
+        require_user(request)
+        if not 1 <= days <= 31:
+            raise HTTPException(status_code=422, detail="days must be between 1 and 31")
+        return JSONResponse(_call_read(lambda: dashboard_api.calendar_dashboard(days=days)))
+
+    @app.post("/api/plans")
+    async def create_plan(request: Request) -> JSONResponse:
+        user_id = require_user(request)
+        payload = await _request_payload(request)
+        request_id = str(payload.get("request_id") or "")
+        actions = payload.get("actions")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", request_id) or not isinstance(actions, list):
+            raise HTTPException(status_code=422, detail="invalid plan request")
+        plan = _call_write(
+            lambda: dashboard_api.action_plan_create(
+                actions=actions,
+                idempotency_key=f"dashboard:{user_id}:{request_id}",
+            )
+        )
+        plan_id = _positive_id(plan["id"])
+        return JSONResponse(
+            {
+                **plan,
+                "plan_token": _new_plan_token(user_id, plan_id, config.session_secret),
+                "preview": _plan_preview(plan),
+            }
+        )
+
+    @app.post("/api/plans/{plan_id}/execute")
+    async def execute_plan(plan_id: int, request: Request) -> JSONResponse:
+        user_id = require_user(request)
+        payload = await _request_payload(request)
+        safe_plan_id = _positive_id(plan_id)
+        _require_plan_token(payload.get("plan_token"), user_id, safe_plan_id, config.session_secret)
+        return JSONResponse(_call_write(lambda: dashboard_api.action_plan_execute(plan_id=safe_plan_id, confirmed=True)))
+
+    @app.post("/api/plans/{plan_id}/cancel")
+    async def cancel_plan(plan_id: int, request: Request) -> JSONResponse:
+        user_id = require_user(request)
+        payload = await _request_payload(request)
+        safe_plan_id = _positive_id(plan_id)
+        _require_plan_token(payload.get("plan_token"), user_id, safe_plan_id, config.session_secret)
+        return JSONResponse(_call_write(lambda: dashboard_api.action_plan_cancel(plan_id=safe_plan_id)))
 
     @app.post("/api/reminders/{reminder_id}/reschedule")
     async def reschedule_reminder(reminder_id: int, request: Request) -> JSONResponse:
@@ -278,6 +330,18 @@ def _valid_session(token: str, secret: str, *, clock: Callable[[], float]) -> in
     return int(user_id)
 
 
+def _new_plan_token(user_id: int, plan_id: int, secret: str) -> str:
+    payload = f"dashboard-plan.{int(user_id)}.{int(plan_id)}"
+    signature = hmac.new(secret.encode("utf-8"), payload.encode("ascii"), hashlib.sha256).hexdigest()
+    return f"{payload}.{signature}"
+
+
+def _require_plan_token(token: Any, user_id: int, plan_id: int, secret: str) -> None:
+    expected = _new_plan_token(user_id, plan_id, secret)
+    if not isinstance(token, str) or not hmac.compare_digest(token, expected):
+        raise HTTPException(status_code=403, detail="plan confirmation is not valid for this session")
+
+
 def _positive_id(value: int) -> int:
     if int(value) <= 0:
         raise HTTPException(status_code=422, detail="invalid id")
@@ -298,6 +362,37 @@ def _call_write(operation: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(error)[:240]) from error
 
 
+def _call_read(operation: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    try:
+        return operation()
+    except (OSError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=503, detail=str(error)[:240]) from error
+
+
+def _plan_preview(plan: dict[str, Any]) -> list[str]:
+    labels = {
+        "task.create": "Создать задачу",
+        "task.move": "Переместить задачу",
+        "task.priority": "Изменить приоритет",
+        "task.done": "Закрыть задачу",
+        "task.delete": "Удалить задачу",
+        "calendar.create": "Создать событие",
+        "calendar.move": "Перенести событие",
+        "calendar.delete": "Удалить событие",
+        "reminder.create": "Создать напоминание",
+        "note.save": "Сохранить заметку",
+        "commitment.create": "Сохранить обещание",
+    }
+    rows: list[str] = []
+    for action in list(plan.get("actions") or []):
+        if not isinstance(action, dict):
+            continue
+        payload = action.get("payload") if isinstance(action.get("payload"), dict) else {}
+        title = str(payload.get("title") or payload.get("text") or payload.get("subject") or "без названия")
+        rows.append(f"{labels.get(str(action.get('action_type') or action.get('type') or ''), 'Выполнить')}: {title}")
+    return rows
+
+
 def _capabilities() -> list[dict[str, str]]:
     return [
         {"title": "План дня", "text": "Календарь, Trello, напоминания и три главных приоритета."},
@@ -315,17 +410,22 @@ def _dashboard_page() -> str:
 <title>JarHert</title><link rel="stylesheet" href="/assets/dashboard.css"><script src="https://telegram.org/js/telegram-web-app.js?62"></script></head>
 <body>
 <main class="shell">
-  <header class="topbar"><div><p class="eyebrow">PERSONAL OS</p><h1>JarHert</h1></div><div class="top-actions"><span id="mode-chip" class="chip">Загрузка</span><button id="refresh" class="icon-button" type="button" aria-label="Обновить">↻</button></div></header>
-  <section id="loading-panel" class="login-panel"><p class="eyebrow">TELEGRAM MINI APP</p><h2>Открываю кабинет</h2><p id="loading-text">Проверяю Telegram-сессию.</p></section>
+  <header class="topbar"><div><p class="eyebrow">PERSONAL OS</p><h1>JarHert</h1></div><div class="top-actions"><span id="mode-chip" class="chip">Быстро</span><button id="refresh" class="icon-button" type="button" aria-label="Обновить">↻</button></div></header>
+  <section id="loading-panel" class="loading-panel"><span class="loading-mark"></span><p id="loading-text">Открываю кабинет</p></section>
   <section id="cabinet" hidden>
     <div id="notice" class="notice" hidden></div>
-    <section class="summary-grid"><article class="summary-card"><span>Трелло</span><strong id="task-count">—</strong><small>задач на сегодня</small></article><article class="summary-card"><span>Календарь</span><strong id="calendar-count">—</strong><small>встреч на сегодня</small></article><article class="summary-card"><span>Напоминания</span><strong id="reminder-count">—</strong><small>активных</small></article><article class="summary-card"><span>Monitors</span><strong id="monitor-count">—</strong><small>включено</small></article></section>
-    <section class="grid primary-grid"><article class="panel"><div class="panel-head"><div><p class="eyebrow">СЕГОДНЯ</p><h2>Главное</h2></div></div><div id="priorities" class="list"></div></article><article class="panel"><p class="eyebrow">КАЛЕНДАРЬ</p><h2>Расписание</h2><div id="calendar" class="list"></div></article><article class="panel"><p class="eyebrow">TRELLO</p><h2>Очередь</h2><div id="tasks" class="list"></div></article></section>
-    <section class="grid secondary-grid"><article class="panel"><p class="eyebrow">НАПОМИНАНИЯ</p><h2>Ближайшее</h2><div id="reminders" class="list"></div></article><article class="panel"><p class="eyebrow">ЗАМЕТКИ</p><h2>Последние</h2><div id="notes" class="list"></div></article><article class="panel"><p class="eyebrow">СОСТОЯНИЕ</p><h2>Система</h2><div id="system" class="status-list"></div></article></section>
-    <section class="grid tertiary-grid"><article class="panel"><p class="eyebrow">ПРОЕКТЫ</p><h2>Контексты</h2><div id="projects" class="list"></div></article><article class="panel capabilities"><p class="eyebrow">ВОЗМОЖНОСТИ</p><h2>Что можно поручить</h2><div id="capabilities" class="capability-grid"></div></article></section>
+    <nav class="view-tabs" aria-label="Разделы"><button class="view-tab is-active" data-view="today" type="button">Сегодня</button><button class="view-tab" data-view="tasks" type="button">Задачи</button><button class="view-tab" data-view="calendar" type="button">Календарь</button><button class="view-tab" data-view="inbox" type="button">Входящее</button></nav>
+    <section id="view-today" class="view"><article class="focus-card"><p class="eyebrow">СЕЙЧАС</p><h2 id="focus-title">Собираю твой день</h2><p id="focus-meta" class="muted">Задача появится здесь.</p><div class="focus-actions"><button id="focus-done" class="primary" type="button">Сделано</button><button id="focus-move" class="secondary" type="button">Перенести</button></div></article><section class="section"><div class="section-head"><div><p class="eyebrow">ДЕНЬ</p><h2>Следом</h2></div><button class="text-button" data-open-view="calendar" type="button">Весь календарь</button></div><div id="today-calendar" class="timeline"></div></section><section class="section"><div class="section-head"><div><p class="eyebrow">ОЧЕРЕДЬ</p><h2>Три главных</h2></div><button class="text-button" data-open-view="tasks" type="button">Все задачи</button></div><div id="priorities" class="work-list"></div></section></section>
+    <section id="view-tasks" class="view" hidden><div class="section-head"><div><p class="eyebrow">TRELLO</p><h2>Задачи</h2></div><button id="open-trello" class="text-button" type="button">Открыть Trello</button></div><div id="task-filters" class="filter-row"></div><div id="task-list" class="work-list"></div></section>
+    <section id="view-calendar" class="view" hidden><div class="section-head"><div><p class="eyebrow">7 ДНЕЙ</p><h2>Календарь</h2></div><button id="open-calendar" class="text-button" type="button">Google Calendar</button></div><div id="calendar-list" class="timeline"></div></section>
+    <section id="view-inbox" class="view" hidden><section class="section"><div class="section-head"><div><p class="eyebrow">НАПОМИНАНИЯ</p><h2>Ближайшее</h2></div><span id="reminder-count" class="count-pill">0</span></div><div id="reminders" class="work-list"></div></section><section class="section"><div class="section-head"><div><p class="eyebrow">ЗАМЕТКИ</p><h2>Последние</h2></div></div><div id="notes" class="work-list"></div></section><section class="section status-section"><div class="section-head"><div><p class="eyebrow">СИСТЕМА</p><h2>Статус</h2></div></div><div id="system" class="status-list"></div></section></section>
   </section>
 </main>
-<dialog id="edit-dialog"><form id="edit-form" method="dialog"><p class="eyebrow" id="edit-eyebrow">КОРРЕКТИРОВКА</p><h2 id="edit-title">Изменить</h2><p id="edit-help" class="muted"></p><label id="edit-field-label"><span id="edit-field-name">Значение</span><input id="edit-date" type="datetime-local" hidden><textarea id="edit-value" rows="5"></textarea></label><label id="recurrence-field" hidden><span>Повтор</span><select id="edit-recurrence"><option value="keep">Не менять</option><option value="none">Не повторять</option><option value="daily">Каждый день</option><option value="weekly">Каждую неделю</option><option value="monthly">Каждый месяц</option></select></label><div class="dialog-actions"><button id="dialog-cancel" class="secondary" value="cancel" type="button">Отмена</button><button id="dialog-save" class="primary" value="default" type="submit">Сохранить</button></div></form></dialog>
+<button id="quick-add" class="quick-add" type="button" aria-label="Добавить">＋ <span>Добавить</span></button>
+<nav id="bottom-nav" class="bottom-nav" aria-label="Навигация"><button class="nav-button is-active" data-view="today" type="button">Сегодня</button><button class="nav-button" data-view="tasks" type="button">Задачи</button><button class="nav-button" data-view="calendar" type="button">План</button><button class="nav-button" data-view="inbox" type="button">Входящее</button></nav>
+<dialog id="quick-dialog"><form id="quick-form"><p class="eyebrow">БЫСТРОЕ ДОБАВЛЕНИЕ</p><h2 id="quick-title">Новая задача</h2><div class="quick-types"><button class="type-button is-active" data-quick-type="task" type="button">Задача</button><button class="type-button" data-quick-type="event" type="button">Встреча</button><button class="type-button" data-quick-type="reminder" type="button">Напоминание</button><button class="type-button" data-quick-type="note" type="button">Заметка</button></div><label><span id="quick-label">Что сделать</span><textarea id="quick-text" rows="3" maxlength="1000" required></textarea></label><label id="quick-list-field"><span>Колонка</span><select id="quick-list"></select></label><label id="quick-priority-field"><span>Приоритет</span><select id="quick-priority"></select></label><label id="quick-start-field" hidden><span id="quick-start-label">Когда</span><input id="quick-start" type="datetime-local"></label><label id="quick-end-field" hidden><span>До</span><input id="quick-end" type="datetime-local"></label><div class="dialog-actions"><button id="quick-cancel" class="secondary" type="button">Отмена</button><button class="primary" type="submit">К preview</button></div></form></dialog>
+<dialog id="edit-dialog"><form id="edit-form"><p class="eyebrow" id="edit-eyebrow">КОРРЕКТИРОВКА</p><h2 id="edit-title">Изменить</h2><p id="edit-help" class="muted"></p><label id="edit-field-label"><span id="edit-field-name">Значение</span><input id="edit-date" type="datetime-local" hidden><input id="edit-end" type="datetime-local" hidden><select id="edit-choice" hidden></select><textarea id="edit-value" rows="5"></textarea></label><label id="recurrence-field" hidden><span>Повтор</span><select id="edit-recurrence"><option value="keep">Не менять</option><option value="none">Не повторять</option><option value="daily">Каждый день</option><option value="weekly">Каждую неделю</option><option value="monthly">Каждый месяц</option></select></label><div class="dialog-actions"><button id="dialog-cancel" class="secondary" type="button">Отмена</button><button id="dialog-save" class="primary" type="submit">К preview</button></div></form></dialog>
+<dialog id="plan-dialog"><form id="plan-form"><p class="eyebrow">ПРОВЕРЬ И ПОДТВЕРДИ</p><h2>План действий</h2><div id="plan-preview" class="preview-list"></div><p class="muted">Изменения применятся один раз после подтверждения.</p><div class="dialog-actions"><button id="plan-cancel" class="secondary" type="button">Отмена</button><button id="plan-execute" class="primary" type="submit">Применить</button></div></form></dialog>
 <script src="/assets/dashboard.js" defer></script></body></html>"""
 
 

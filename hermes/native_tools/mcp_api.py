@@ -87,6 +87,14 @@ class NativeToolsAPI:
         self._capabilities().require("calendar.list")
         return {"items": self._task_calendar().list_calendar_events(when=when)}
 
+    def task_dashboard(self) -> dict[str, Any]:
+        self._capabilities().require("task.list")
+        return self._task_calendar().dashboard_tasks()
+
+    def calendar_dashboard(self, *, days: int = 7) -> dict[str, Any]:
+        self._capabilities().require("calendar.list")
+        return self._task_calendar().dashboard_calendar(days=days)
+
     def contact_add(self, *, name: str, telegram_chat_id: int, aliases: list[str]) -> dict[str, Any]:
         self._capabilities().require("contact.write")
         return _value_payload(
@@ -676,6 +684,8 @@ class NativeToolsAPI:
     def action_plan_create(
         self, *, actions: list[dict[str, Any]], idempotency_key: str
     ) -> dict[str, Any]:
+        for action in actions:
+            self._capabilities().require(str(action.get("type") or ""))
         plan = self._plans().create(actions, idempotency_key=idempotency_key)
         return _plan_payload(plan)
 
@@ -686,6 +696,8 @@ class NativeToolsAPI:
         if not confirmed:
             raise ValueError("Plan execution требует подтверждение пользователя.")
         store = self._plans()
+        for action in store.get(plan_id).actions:
+            self._capabilities().require(action.action_type)
         if store.get(plan_id).status == "draft":
             store.approve(plan_id)
         return _plan_payload(execute_plan(store, plan_id, self._action_adapter()))
@@ -892,6 +904,7 @@ class _NativeActionAdapter:
         handlers = {
             "task.create": "create_task",
             "task.move": "move_task",
+            "task.priority": "set_task_priority",
             "task.done": "complete_task",
             "task.delete": "delete_task",
             "calendar.create": "create_calendar_event",

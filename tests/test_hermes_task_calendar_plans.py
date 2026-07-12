@@ -220,3 +220,22 @@ def test_external_actions_use_one_batch_and_keep_per_action_results(tmp_path) ->
     assert adapter.calls == 1
     assert [item.status for item in result.actions] == ["succeeded", "failed"]
     assert result.status == "partial"
+
+
+def test_priority_change_uses_the_same_confirmed_external_plan(tmp_path) -> None:
+    store = ActionPlanStore(tmp_path / "priority.sqlite3")
+    plan = store.create(
+        [{"type": "task.priority", "payload": {"title": "Задача", "priority": "P1"}}],
+        idempotency_key="priority-plan",
+    )
+    store.approve(plan.id)
+
+    class BatchAdapter:
+        def execute_batch(self, actions):
+            assert actions == [{"type": "task.priority", "payload": {"title": "Задача", "priority": "P1"}}]
+            return [{"ok": True, "result": "trello_card_id=task-1"}]
+
+    result = execute_plan(store, plan.id, BatchAdapter())
+
+    assert result.status == "succeeded"
+    assert result.actions[0].result_meta["trello_card_id"] == "task-1"

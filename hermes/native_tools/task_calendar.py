@@ -55,7 +55,7 @@ class TaskCalendarAdapter:
         if not actions or len(actions) > 20:
             raise TaskCalendarError("Batch должен содержать от 1 до 20 действий.")
         allowed = {
-            "task.create", "task.move", "task.done", "task.delete",
+            "task.create", "task.move", "task.priority", "task.done", "task.delete",
             "calendar.create", "calendar.move", "calendar.delete",
         }
         for item in actions:
@@ -105,6 +105,12 @@ class TaskCalendarAdapter:
     def delete_task(self, *, title: str) -> str:
         return self._run([*self._base_args(), "delete", "--card", _required(title, "title"), "--yes"])
 
+    def set_task_priority(self, *, title: str, priority: str) -> str:
+        return self._run_python(
+            _TASK_PRIORITY_SCRIPT,
+            {"title": _required(title, "title"), "priority": _required(priority, "priority")},
+        )
+
     def create_calendar_event(
         self,
         *,
@@ -131,6 +137,12 @@ class TaskCalendarAdapter:
 
     def list_calendar_events(self, *, when: str = "today") -> str:
         return self._run_python(_CALENDAR_LIST_SCRIPT, {"when": when})
+
+    def dashboard_tasks(self) -> dict[str, object]:
+        return self._run_json(_TASK_DASHBOARD_SCRIPT, {})
+
+    def dashboard_calendar(self, *, days: int = 7) -> dict[str, object]:
+        return self._run_json(_CALENDAR_DASHBOARD_SCRIPT, {"days": max(1, min(int(days), 31))})
 
     def move_calendar_event(self, *, title: str, start: str, end: str) -> str:
         return self._run_python(
@@ -184,6 +196,16 @@ class TaskCalendarAdapter:
             [str(self._python_path()), "-c", script, json.dumps(payload, ensure_ascii=False)],
             max_output_chars=max_output_chars,
         )
+
+    def _run_json(self, script: str, payload: dict[str, object]) -> dict[str, object]:
+        output = self._run_python(script, payload, max_output_chars=32_000)
+        try:
+            parsed = json.loads(output)
+        except json.JSONDecodeError as error:
+            raise TaskCalendarError("Task Command Center вернул некорректный dashboard JSON.") from error
+        if not isinstance(parsed, dict):
+            raise TaskCalendarError("Task Command Center вернул некорректный dashboard JSON.")
+        return parsed
 
     def _run(self, argv: list[str], *, max_output_chars: int = 3000) -> str:
         if not self.root.exists():
@@ -312,6 +334,91 @@ if event.get('htmlLink'): print(event.get('htmlLink'))
 """.strip()
 
 
+_TASK_DASHBOARD_SCRIPT = """
+import json
+from pathlib import Path
+from src.config import load_config
+from src.trello_client import TrelloClient
+
+config = load_config(Path('.'))
+trello = TrelloClient(config, Path('.'))
+cards = trello.list_cards()
+items = []
+for card in cards[:150]:
+    labels = [str(item.get('name')) for item in card.get('labels', []) if isinstance(item, dict) and item.get('name')]
+    priority = next((name for name in labels if name in config.priorities), None)
+    items.append({
+        'id': str(card.get('id') or ''),
+        'title': str(card.get('name') or ''),
+        'list_name': str(card.get('listName') or ''),
+        'priority': priority,
+        'labels': labels,
+        'due': card.get('due'),
+        'url': card.get('shortUrl') or card.get('url'),
+    })
+board = trello.get_board()
+print(json.dumps({'items': items, 'lists': [str(item.get('name')) for item in trello.get_lists()], 'priorities': list(config.priorities), 'board_url': board.get('url')}, ensure_ascii=False))
+""".strip()
+
+
+_CALENDAR_DASHBOARD_SCRIPT = """
+import json, sys
+from datetime import datetime, timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
+from src.config import load_config
+from src.google_calendar_client import GoogleCalendarClient, _event_start
+
+payload = json.loads(sys.argv[1])
+config = load_config(Path('.'))
+calendar = GoogleCalendarClient(config, Path('.'))
+days = max(1, min(int(payload.get('days') or 7), 31))
+tz = ZoneInfo(config.timezone)
+start = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+end = start + timedelta(days=days)
+if config.mock:
+    events = [event for event in calendar._load_store()['events'] if _event_start(event) and start <= _event_start(event) < end]
+else:
+    events = list(calendar.authenticate().events().list(calendarId=config.google_calendar_id, timeMin=start.isoformat(), timeMax=end.isoformat(), singleEvents=True, orderBy='startTime').execute().get('items', []))
+items = []
+for event in events[:150]:
+    start_value = event.get('start', {}).get('dateTime') or event.get('start', {}).get('date')
+    end_value = event.get('end', {}).get('dateTime') or event.get('end', {}).get('date')
+    items.append({'id': str(event.get('id') or ''), 'title': str(event.get('summary') or ''), 'start': start_value, 'end': end_value, 'url': event.get('htmlLink')})
+print(json.dumps({'items': items, 'days': days}, ensure_ascii=False))
+""".strip()
+
+
+_TASK_PRIORITY_SCRIPT = """
+import json, sys
+from pathlib import Path
+from src.config import load_config
+from src.formatter import format_card
+from src.trello_client import TrelloClient
+
+payload = json.loads(sys.argv[1])
+config = load_config(Path('.'))
+priority = str(payload['priority'])
+if priority not in config.priorities:
+    raise SystemExit('Unknown priority.')
+trello = TrelloClient(config, Path('.'))
+card = trello.find_card_by_name(payload['title'])
+priority_names = set(config.priorities)
+existing_labels = card.get('labels') or []
+remaining = [item for item in existing_labels if not (isinstance(item, dict) and str(item.get('name')) in priority_names)]
+new_label = next(item for item in trello.get_labels() if str(item.get('name')) == priority)
+labels = [*remaining, new_label]
+if config.mock:
+    updated = trello.update_card(card, labels=labels)
+else:
+    updated = trello.update_card(card, idLabels=','.join(str(item['id']) for item in labels))
+print(format_card(updated))
+print('trello_card_id=' + str(updated.get('id') or card.get('id')))
+if updated.get('shortUrl') or updated.get('url'):
+    print(str(updated.get('shortUrl') or updated.get('url')))
+""".strip()
+
+
 _BATCH_SCRIPT = """
 import json, sys
 from pathlib import Path
@@ -366,6 +473,19 @@ for action in payload['actions']:
             result = task_result(card)
         elif kind == 'task.move':
             client = get_trello(); result = task_result(client.move_card(client.find_card_by_name(data['title']), data['target_list']))
+        elif kind == 'task.priority':
+            client = get_trello(); card = client.find_card_by_name(data['title'])
+            priority = str(data['priority'])
+            if priority not in config.priorities: raise ValueError('Unknown priority.')
+            priority_names = set(config.priorities)
+            remaining = [item for item in (card.get('labels') or []) if not (isinstance(item, dict) and str(item.get('name')) in priority_names)]
+            new_label = next(item for item in client.get_labels() if str(item.get('name')) == priority)
+            labels = [*remaining, new_label]
+            if config.mock:
+                updated = client.update_card(card, labels=labels)
+            else:
+                updated = client.update_card(card, idLabels=','.join(str(item['id']) for item in labels))
+            result = task_result(updated)
         elif kind == 'task.done':
             client = get_trello(); card = client.find_card_by_name(data['title'])
             client.add_comment(card, f"Done summary: {data.get('summary') or 'Готово.'}")

@@ -18,6 +18,7 @@ ACTION_SCHEMAS: dict[str, tuple[str, ...]] = {
     "reminder.create": ("text", "remind_at"),
     "task.create": ("title",),
     "task.move": ("title", "target_list"),
+    "task.priority": ("title", "priority"),
     "task.done": ("title",),
     "task.delete": ("title",),
     "calendar.create": ("title", "start", "end"),

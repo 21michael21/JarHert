@@ -139,6 +139,22 @@ def test_batch_uses_one_task_command_center_process(tmp_path) -> None:
     assert "-c" in calls[0][0]
 
 
+def test_batch_allows_task_priority_change(tmp_path) -> None:
+    root = tmp_path / "task-command-center"
+    root.mkdir()
+    calls = []
+
+    def runner(argv, *, cwd, timeout, **_kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout='[{"ok":true,"result":"priority changed"}]', stderr="")
+
+    adapter = TaskCalendarAdapter(root=root, runner=runner)
+    result = adapter.execute_batch([{"type": "task.priority", "payload": {"title": "Задача", "priority": "P1"}}])
+
+    assert result == [{"ok": True, "result": "priority changed"}]
+    assert len(calls) == 1
+
+
 def test_failed_command_returns_bounded_friendly_error(tmp_path) -> None:
     root = tmp_path / "tcc"
     root.mkdir()

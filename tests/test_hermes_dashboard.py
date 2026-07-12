@@ -24,6 +24,8 @@ class FakeDashboardAPI:
         self.rescheduled: list[dict[str, object]] = []
         self.cancelled: list[int] = []
         self.edited_notes: list[dict[str, object]] = []
+        self.created_plans: list[dict[str, object]] = []
+        self.executed_plans: list[int] = []
 
     def personal_today(self):
         return {
@@ -68,6 +70,30 @@ class FakeDashboardAPI:
 
     def work_mode_get(self):
         return {"mode": "fast"}
+
+    def task_dashboard(self):
+        return {
+            "items": [{"title": "Проверить OAuth", "list_name": "Today", "priority": "P1", "url": "https://trello.com/c/example"}],
+            "lists": ["Inbox", "Today", "Done"],
+            "priorities": ["P1", "P2", "P3"],
+            "board_url": "https://trello.com/b/example",
+        }
+
+    def calendar_dashboard(self, *, days: int = 7):
+        assert days == 7
+        return {"items": [{"title": "Созвон", "start": "2026-07-13T15:00:00+03:00", "end": "2026-07-13T16:00:00+03:00", "url": "https://calendar.google.com/calendar/event?eid=abc"}]}
+
+    def action_plan_create(self, *, actions, idempotency_key: str):
+        self.created_plans.append({"actions": actions, "idempotency_key": idempotency_key})
+        return {"id": 41, "status": "draft", "idempotency_key": idempotency_key, "actions": actions}
+
+    def action_plan_execute(self, *, plan_id: int, confirmed: bool):
+        assert confirmed is True
+        self.executed_plans.append(plan_id)
+        return {"id": plan_id, "status": "succeeded", "actions": []}
+
+    def action_plan_cancel(self, *, plan_id: int):
+        return {"id": plan_id, "status": "cancelled", "actions": []}
 
 
 def _init_data(*, user_id: int = OWNER_ID, auth_date: int | None = None, tamper: bool = False) -> str:
@@ -175,6 +201,74 @@ def test_dashboard_does_not_mutate_personal_data_without_telegram_session() -> N
     assert dashboard_api.rescheduled == []
 
 
+def test_dashboard_exposes_operational_trello_and_calendar_views() -> None:
+    app_client, _ = client()
+    sign_in(app_client)
+
+    tasks = app_client.get("/api/tasks")
+    calendar = app_client.get("/api/calendar")
+
+    assert tasks.status_code == 200
+    assert tasks.json()["lists"] == ["Inbox", "Today", "Done"]
+    assert tasks.json()["items"][0]["priority"] == "P1"
+    assert tasks.json()["board_url"] == "https://trello.com/b/example"
+    assert calendar.status_code == 200
+    assert calendar.json()["items"][0]["title"] == "Созвон"
+
+
+def test_dashboard_creates_one_preview_plan_then_executes_only_after_explicit_confirmation() -> None:
+    app_client, dashboard_api = client()
+    sign_in(app_client)
+
+    draft = app_client.post(
+        "/api/plans",
+        json={
+            "request_id": "quick-add-task-001",
+            "actions": [{"type": "task.create", "payload": {"title": "Проверить Mini App", "list_name": "Today", "priority": "P1"}}],
+        },
+    )
+    assert draft.status_code == 200
+    token = draft.json()["plan_token"]
+    blocked = app_client.post("/api/plans/41/execute", json={})
+    executed = app_client.post("/api/plans/41/execute", json={"plan_token": token})
+
+    assert draft.json()["preview"] == ["Создать задачу: Проверить Mini App"]
+    assert blocked.status_code == 403
+    assert executed.status_code == 200
+    assert dashboard_api.created_plans[0]["idempotency_key"].startswith(f"dashboard:{OWNER_ID}:quick-add-task-001")
+    assert dashboard_api.executed_plans == [41]
+
+
+def test_dashboard_cancel_requires_the_plan_token() -> None:
+    app_client, _ = client()
+    sign_in(app_client)
+    draft = app_client.post(
+        "/api/plans",
+        json={
+            "request_id": "quick-cancel-001",
+            "actions": [{"type": "task.done", "payload": {"title": "Не выполнять"}}],
+        },
+    )
+
+    assert app_client.post("/api/plans/41/cancel", json={}).status_code == 403
+    cancelled = app_client.post("/api/plans/41/cancel", json={"plan_token": draft.json()["plan_token"]})
+
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+
+
+def test_dashboard_never_creates_external_plan_without_telegram_session() -> None:
+    app_client, dashboard_api = client()
+
+    response = app_client.post(
+        "/api/plans",
+        json={"request_id": "blocked-001", "actions": [{"type": "task.done", "payload": {"title": "Не трогать"}}]},
+    )
+
+    assert response.status_code == 401
+    assert dashboard_api.created_plans == []
+
+
 def test_dashboard_page_uses_telegram_webapp_and_external_assets_only() -> None:
     app_client, _ = client()
 
@@ -186,6 +280,8 @@ def test_dashboard_page_uses_telegram_webapp_and_external_assets_only() -> None:
     assert 'src="/assets/dashboard.js"' in response.text
     assert "<script>" not in response.text
     assert "script-src 'self' https://telegram.org" in response.headers["content-security-policy"]
+    assert 'id="quick-add"' in response.text
+    assert 'id="plan-dialog"' in response.text
 
 
 def test_dashboard_styles_keep_hidden_loading_panel_out_of_the_layout() -> None:

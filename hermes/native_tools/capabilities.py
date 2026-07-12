@@ -43,6 +43,7 @@ CAPABILITIES = {
     "task.list": CapabilityRule("low", ALL_MODES),
     "task.create": CapabilityRule("medium", ALL_MODES),
     "task.move": CapabilityRule("medium", ALL_MODES),
+    "task.priority": CapabilityRule("medium", ALL_MODES),
     "task.done": CapabilityRule("medium", ALL_MODES),
     "task.delete": CapabilityRule("high", ALL_MODES),
     "calendar.list": CapabilityRule("low", ALL_MODES),

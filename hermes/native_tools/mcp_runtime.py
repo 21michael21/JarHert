@@ -79,6 +79,11 @@ class TaskMovePayload(BaseModel):
     target_list: str
 
 
+class TaskPriorityPayload(BaseModel):
+    title: str
+    priority: str
+
+
 class TaskDonePayload(BaseModel):
     title: str
     summary: str = "Готово."
@@ -114,6 +119,11 @@ class TaskCreateAction(BaseModel):
 class TaskMoveAction(BaseModel):
     type: Literal["task.move"]
     payload: TaskMovePayload
+
+
+class TaskPriorityAction(BaseModel):
+    type: Literal["task.priority"]
+    payload: TaskPriorityPayload
 
 
 class TaskDoneAction(BaseModel):
@@ -160,6 +170,7 @@ Action = Annotated[
     Union[
         TaskCreateAction,
         TaskMoveAction,
+        TaskPriorityAction,
         TaskDoneAction,
         TaskDeleteAction,
         CalendarCreateAction,
