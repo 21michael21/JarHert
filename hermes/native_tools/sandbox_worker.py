@@ -86,6 +86,23 @@ class SandboxedHermesWorker:
             )
         return SandboxResult(output=(result.stdout or "").strip()[:20_000], mode=task.mode)
 
+    def preflight(self) -> None:
+        """Check Docker and the local profile CLI without starting an agent turn."""
+        if not self.docker_available():
+            raise RuntimeError("Docker sandbox недоступен; запуск на host запрещён.")
+        try:
+            result = self.execute(
+                [self.profile_binary, "--help"],
+                timeout=15,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise RuntimeError("Hermes profile CLI недоступен для coding runner.") from error
+        if result.returncode != 0:
+            raise RuntimeError("Hermes profile CLI недоступен для coding runner.")
+
 
 def _build_prompt(task: SandboxTask, allowed_hosts: set[str]) -> str:
     mode = task.mode.strip().lower()

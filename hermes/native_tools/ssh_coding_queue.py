@@ -30,6 +30,9 @@ class SshNativeCodingQueueClient:
     def claim(self, worker_id: str) -> dict[str, Any] | None:
         return self._call("claim", {"worker_id": worker_id})
 
+    def ping(self) -> bool:
+        return bool(self._call("ping", {})["ok"])
+
     def heartbeat(self, job_id: int, worker_id: str) -> bool:
         return bool(self._call("heartbeat", {"job_id": int(job_id), "worker_id": worker_id})["ok"])
 

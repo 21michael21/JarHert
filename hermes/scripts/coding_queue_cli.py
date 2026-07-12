@@ -20,6 +20,8 @@ else:
 
 def dispatch(operation: str, payload: dict[str, object], *, database_path: Path) -> object:
     store = NativeCodingJobStore(database_path)
+    if operation == "ping":
+        return {"ok": True}
     if operation == "claim":
         job = store.claim_next(worker_id=str(payload["worker_id"]))
         return asdict(job) if job else None
@@ -46,7 +48,7 @@ def dispatch(operation: str, payload: dict[str, object], *, database_path: Path)
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Private stdin/stdout API for the native Hermes coding queue.")
-    parser.add_argument("operation", choices=("claim", "heartbeat", "complete", "fail"))
+    parser.add_argument("operation", choices=("ping", "claim", "heartbeat", "complete", "fail"))
     args = parser.parse_args()
     raw = sys.stdin.read()
     try:

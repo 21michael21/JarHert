@@ -28,6 +28,7 @@ def test_private_queue_cli_claims_and_completes_without_http(tmp_path: Path) -> 
 
     assert claimed["id"] == job.id
     assert completed["status"] == "succeeded"
+    assert dispatch("ping", {}, database_path=database_path) == {"ok": True}
 
 
 def test_ssh_client_sends_json_over_stdin_to_fixed_profile_cli() -> None:
@@ -45,3 +46,15 @@ def test_ssh_client_sends_json_over_stdin_to_fixed_profile_cli() -> None:
     assert argv[:4] == ["ssh", "-o", "BatchMode=yes", "deploy@example.test"]
     assert "coding_queue_cli.py claim" in argv[4]
     assert kwargs["input"] == '{"worker_id": "mac-main"}'
+
+
+def test_ssh_client_ping_does_not_claim_a_job() -> None:
+    calls = []
+
+    def execute(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, stdout='{"ok": true}', stderr="")
+
+    assert SshNativeCodingQueueClient("deploy@example.test", execute=execute).ping() is True
+    assert "coding_queue_cli.py ping" in calls[0][0][4]
+    assert calls[0][1]["input"] == "{}"

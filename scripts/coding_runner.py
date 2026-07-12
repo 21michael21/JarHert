@@ -67,6 +67,7 @@ def _heartbeat_loop(client, job_id: int, worker_id: str, stop: threading.Event) 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run sandboxed Hermes coding jobs from a remote queue.")
     parser.add_argument("--once", action="store_true")
+    parser.add_argument("--check", action="store_true", help="Verify SSH queue, Docker, and Hermes CLI without claiming a job.")
     parser.add_argument("--interval", type=float, default=5)
     parser.add_argument("--worker-id", default=f"mac-{socket.gethostname()}")
     parser.add_argument("--queue-ssh", default=os.getenv("HERMES_CODING_QUEUE_SSH", ""))
@@ -86,6 +87,13 @@ def main() -> int:
             raise SystemExit("Set --queue-ssh or JARHERT_BACKEND_URL and ASSISTANT_SERVICE_TOKEN")
         client = RemoteCodingQueueClient(base_url, token)
     worker = SandboxedHermesWorker()
+    if args.check:
+        if not hasattr(client, "ping"):
+            raise SystemExit("--check поддерживается только для --queue-ssh native queue")
+        client.ping()
+        worker.preflight()
+        print("coding_runner_ready=true")
+        return 0
     while True:
         worked = run_once(client=client, worker=worker, worker_id=args.worker_id)
         if args.once:

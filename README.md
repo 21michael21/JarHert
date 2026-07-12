@@ -461,6 +461,16 @@ heartbeat и возвращает ограниченный результат в
 job после lease снова доступна следующему runner. Старый HTTP-режим остаётся
 только для legacy-развёртывания с `JARHERT_BACKEND_URL`.
 
+Перед первым запуском без LLM-вызова проверь весь путь:
+
+```bash
+.venv/bin/python scripts/coding_runner.py \
+  --queue-ssh deploy@your-vps-host --worker-id mac-main --check
+```
+
+Команда проверяет private SSH queue, Docker и локальный профиль Hermes, но не
+забирает job, не запускает модель и не создаёт внешний эффект.
+
 Script-only Hermes cron забирает завершённые jobs и присылает короткий итог в
 чат владельца. Он не вызывает LLM и при временной ошибке Telegram вернёт
 результат в очередь на повторную доставку.

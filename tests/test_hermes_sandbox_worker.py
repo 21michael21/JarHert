@@ -75,6 +75,19 @@ def test_worker_refuses_to_fall_back_to_host_when_docker_is_missing() -> None:
         )
 
 
+def test_sandbox_preflight_checks_cli_without_starting_an_agent_turn() -> None:
+    calls = []
+
+    def execute(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, stdout="usage", stderr="")
+
+    worker = SandboxedHermesWorker(profile_binary="jarhert", execute=execute, docker_available=lambda: True)
+    worker.preflight()
+
+    assert calls[0][0] == ["jarhert", "--help"]
+
+
 def test_research_mode_uses_only_declared_sources() -> None:
     captured: list[list[str]] = []
 
