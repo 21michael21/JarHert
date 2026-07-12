@@ -806,6 +806,28 @@ async def action_plan_confirm_execute(
 
 
 @mcp.tool()
+def action_plan_status(plan_id: int) -> dict[str, object]:
+    """Show persisted plan state and completed checkpoints without executing anything."""
+    return api.action_plan_get(plan_id=plan_id)
+
+
+@mcp.tool()
+async def action_plan_pause_confirmed(plan_id: int, ctx: Context) -> dict[str, object]:
+    """Pause a pending plan after one explicit confirmation."""
+    if not await _confirm(ctx, f"Поставить plan #{plan_id} на паузу?"):
+        return {"status": "unchanged", "plan_id": plan_id}
+    return api.action_plan_pause(plan_id=plan_id)
+
+
+@mcp.tool()
+async def action_plan_resume_confirmed(plan_id: int, ctx: Context) -> dict[str, object]:
+    """Resume a paused plan after one explicit confirmation."""
+    if not await _confirm(ctx, f"Продолжить plan #{plan_id}?"):
+        return {"status": "unchanged", "plan_id": plan_id}
+    return api.action_plan_resume(plan_id=plan_id)
+
+
+@mcp.tool()
 async def telegram_text_export_confirmed(
     peer: str,
     ctx: Context,

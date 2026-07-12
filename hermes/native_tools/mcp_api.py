@@ -689,6 +689,17 @@ class NativeToolsAPI:
     def action_plan_cancel(self, *, plan_id: int) -> dict[str, Any]:
         return _plan_payload(self._plans().cancel(plan_id))
 
+    def action_plan_get(self, *, plan_id: int) -> dict[str, Any]:
+        return _plan_payload(self._plans().get(plan_id))
+
+    def action_plan_pause(self, *, plan_id: int) -> dict[str, Any]:
+        self._capabilities().require("planner.control")
+        return _plan_payload(self._plans().pause(plan_id))
+
+    def action_plan_resume(self, *, plan_id: int) -> dict[str, Any]:
+        self._capabilities().require("planner.control")
+        return _plan_payload(self._plans().resume(plan_id))
+
     async def action_plan_confirm_execute(
         self,
         *,

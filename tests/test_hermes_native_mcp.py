@@ -195,6 +195,9 @@ def test_profile_uses_native_mcp_instead_of_terminal_allowlist() -> None:
     assert "${HERMES_HOME}/.venv/bin/python" in config
     assert "native_tools/mcp_runtime.py" in config
     assert "action_plan_confirm_execute" in config
+    assert "action_plan_status" in config
+    assert "action_plan_pause_confirmed" in config
+    assert "action_plan_resume_confirmed" in config
     assert "telegram_text_export_confirmed" in config
     assert "contact_add" in config
     assert "contact_list" in config

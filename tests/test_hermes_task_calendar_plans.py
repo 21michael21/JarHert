@@ -109,6 +109,22 @@ def test_cancelled_plan_cannot_be_approved(tmp_path) -> None:
         store.approve(plan.id)
 
 
+def test_plan_can_pause_resume_without_losing_pending_actions(tmp_path) -> None:
+    store = ActionPlanStore(tmp_path / "plans.sqlite3")
+    plan = store.create(
+        [{"type": "task.create", "payload": {"title": "Продолжить позже"}}],
+        idempotency_key="pause-resume",
+    )
+    store.approve(plan.id)
+
+    paused = store.pause(plan.id)
+    resumed = store.resume(plan.id)
+
+    assert paused.status == "paused"
+    assert resumed.status == "approved"
+    assert resumed.actions[0].status == "pending"
+
+
 def test_external_actions_use_one_batch_and_keep_per_action_results(tmp_path) -> None:
     store = ActionPlanStore(tmp_path / "plans.sqlite3")
     plan = store.create(

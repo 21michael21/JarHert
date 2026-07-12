@@ -117,6 +117,26 @@ class ActionPlanStore:
                 raise ActionPlanError("Можно отменить только draft plan.")
         return self.get(plan_id)
 
+    def pause(self, plan_id: int) -> ActionPlan:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE action_plans SET status = 'paused' WHERE id = ? AND status IN ('draft', 'approved')",
+                (plan_id,),
+            )
+            if cursor.rowcount != 1:
+                raise ActionPlanError("Можно приостановить только draft или approved plan.")
+        return self.get(plan_id)
+
+    def resume(self, plan_id: int) -> ActionPlan:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE action_plans SET status = 'approved' WHERE id = ? AND status = 'paused'",
+                (plan_id,),
+            )
+            if cursor.rowcount != 1:
+                raise ActionPlanError("Можно продолжить только paused plan.")
+        return self.get(plan_id)
+
     def mark_running(self, action_id: int) -> None:
         with self._connect() as connection:
             connection.execute(
