@@ -246,6 +246,7 @@ function noteRow(item) {
   const actions = node("div", "row-actions");
   actions.append(button("История", "row-button", () => openNoteHistory(item)));
   actions.append(button("Править", "row-button", () => openNoteEditor(item)));
+  actions.append(button("×", "icon-action danger", () => deleteNote(item), `Удалить заметку: ${field(item, "subject")}`));
   row.append(copy, actions); return row;
 }
 
@@ -345,6 +346,7 @@ function updateQuickForm() {
   };
   $("quick-title").textContent = labels[type][0]; $("quick-label").textContent = labels[type][1];
   $("quick-help").textContent = labels[type][2];
+  $("quick-project-field").hidden = type !== "note";
   $("quick-start-field").hidden = !["event", "reminder"].includes(type); $("quick-end-field").hidden = type !== "event";
   $("quick-start-label").textContent = type === "event" ? "Начало" : "Когда";
 }
@@ -355,7 +357,12 @@ function quickAction() {
   if (type === "task") return {type: "task.create", payload: {title: content}};
   if (type === "event") { const start = toIso($("quick-start").value); const end = toIso($("quick-end").value); if (!start || !end || end <= start) throw new Error("Укажи корректное время встречи"); return {type: "calendar.create", payload: {title: content, start, end}}; }
   if (type === "reminder") { const remindAt = toIso($("quick-start").value); if (!remindAt) throw new Error("Укажи время напоминания"); return {type: "reminder.create", payload: {text: content, remind_at: remindAt}}; }
-  return {type: "note.save", payload: {subject: "Inbox", content}};
+  return {type: "note.save", payload: {subject: noteSubject(content), content, project: $("quick-project").value.trim() || null}};
+}
+
+function noteSubject(content) {
+  const firstLine = content.split(/\r?\n/, 1)[0].trim();
+  return firstLine.length <= 80 ? firstLine : `${firstLine.slice(0, 79).trimEnd()}…`;
 }
 
 async function preparePlan(actions) {
@@ -430,6 +437,7 @@ async function saveEdit(event) {
 }
 
 async function cancelReminder(item) { if (!await confirmAction(`Отменить напоминание «${field(item, "text", "title")}»?`)) return; try { await request(`/api/reminders/${item.id}/cancel`, {method: "POST"}); haptic("notification", "success"); showNotice("Напоминание отменено"); await refresh(); } catch (error) { showNotice(friendlyError(error)); } }
+async function deleteNote(item) { if (!await confirmAction(`Удалить заметку «${field(item, "subject")}»?`)) return; try { await request(`/api/notes/${item.id}`, {method: "DELETE"}); haptic("notification", "success"); showNotice("Заметка удалена"); await refresh(); } catch (error) { haptic("notification", "error"); showNotice(friendlyError(error)); } }
 function confirmAction(message) { if (telegram?.showConfirm) return new Promise((resolve) => telegram.showConfirm(message, resolve)); return Promise.resolve(window.confirm(message)); }
 function openExternal(url) { if (telegram?.openLink) telegram.openLink(url); else window.open(url, "_blank", "noopener"); }
 function requestId() { return window.crypto?.randomUUID?.().replaceAll("-", "") || `quick${Date.now()}${Math.random().toString(36).slice(2)}`; }

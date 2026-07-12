@@ -24,6 +24,7 @@ class FakeDashboardAPI:
         self.rescheduled: list[dict[str, object]] = []
         self.cancelled: list[int] = []
         self.edited_notes: list[dict[str, object]] = []
+        self.deleted_notes: list[int] = []
         self.created_plans: list[dict[str, object]] = []
         self.executed_plans: list[int] = []
         self.archived_urls: list[dict[str, object]] = []
@@ -60,6 +61,10 @@ class FakeDashboardAPI:
     def note_edit(self, *, note_id: int, content: str):
         self.edited_notes.append({"note_id": note_id, "content": content})
         return {"id": note_id, "subject": "OAuth", "content": content, "project": "Hub_ML"}
+
+    def note_delete(self, *, note_id: int):
+        self.deleted_notes.append(note_id)
+        return {"id": note_id, "status": "deleted"}
 
     def monitor_list(self):
         return {
@@ -429,6 +434,18 @@ def test_dashboard_previews_coding_job_before_adding_it_to_the_queue() -> None:
     assert queued.json()["idempotency_key"].startswith(f"dashboard:coding:{OWNER_ID}:coding-task-001")
 
 
+def test_dashboard_deletes_note_only_for_an_authenticated_telegram_session() -> None:
+    app_client, dashboard_api = client()
+
+    assert app_client.delete("/api/notes/4").status_code == 401
+    sign_in(app_client)
+    deleted = app_client.delete("/api/notes/4")
+
+    assert deleted.status_code == 200
+    assert deleted.json() == {"id": 4, "status": "deleted"}
+    assert dashboard_api.deleted_notes == [4]
+
+
 def test_dashboard_cancel_requires_the_plan_token() -> None:
     app_client, _ = client()
     sign_in(app_client)
@@ -493,6 +510,7 @@ def test_dashboard_has_a_touch_first_command_center_and_preserves_navigation_sta
     assert 'id="coding-dialog"' in page
     assert 'id="quick-list-field"' not in page
     assert 'id="quick-priority-field"' not in page
+    assert 'id="quick-project-field"' in page
     assert "history.replaceState" in script
     assert "aria-current" in script
 
