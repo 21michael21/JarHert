@@ -75,6 +75,23 @@ def test_security_scan_reports_location_without_secret_value() -> None:
     assert token not in " ".join(findings)
 
 
+def test_security_scan_only_ignores_the_exact_synthetic_redaction_fixture() -> None:
+    synthetic = "sk-" "proj-abcdefghijklmnopqrstuvwxyz123456"
+    real_looking = "sk-" "proj-abcdefghijklmnopqrstuvwxyz123457"
+
+    findings = find_secret_locations(
+        {
+            "tests/test_hermes_skill_distillation.py": f'secret = "{synthetic}"\nsecret = "{real_looking}"',
+            "tests/test_hermes_skill_distillation.py:copy": f'secret = "{synthetic}"',
+        }
+    )
+
+    assert findings == [
+        "tests/test_hermes_skill_distillation.py:2",
+        "tests/test_hermes_skill_distillation.py:copy:1",
+    ]
+
+
 def test_load_probe_exercises_gateway_with_unique_traces() -> None:
     report = run_load_test(requests=24, concurrency=6, max_p95_ms=1000)
 

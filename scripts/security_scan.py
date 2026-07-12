@@ -13,13 +13,15 @@ SECRET_PATTERN = re.compile(
     r"AIza[0-9A-Za-z_-]{35}|gh[pousr]_[A-Za-z0-9]{30,})"
 )
 SENSITIVE_NAMES = {".env", "token.json", "client_secret.json", "credentials.json"}
+_SYNTHETIC_TEST_SECRET = "sk-" "proj-abcdefghijklmnopqrstuvwxyz123456"
+_SYNTHETIC_TEST_PATH = "tests/test_hermes_skill_distillation.py"
 
 
 def find_secret_locations(files: dict[str, str]) -> list[str]:
     findings: list[str] = []
     for path, content in files.items():
         for line_number, line in enumerate(content.splitlines(), start=1):
-            if SECRET_PATTERN.search(line):
+            if SECRET_PATTERN.search(line) and not _is_known_synthetic_test_value(path, line):
                 findings.append(f"{path}:{line_number}")
     return findings
 
@@ -54,9 +56,14 @@ def scan_repository(root: Path = PROJECT_ROOT) -> list[str]:
             raise RuntimeError(f"git grep failed for {revision[:12]}")
         for line in result.stdout.splitlines():
             parts = line.split(":", 3)
-            if len(parts) >= 3:
+            if len(parts) >= 4 and not _is_known_synthetic_test_value(parts[1], parts[3]):
                 findings.append(f"history:{parts[0][:12]}:{parts[1]}:{parts[2]}")
     return sorted(set(findings))
+
+
+def _is_known_synthetic_test_value(path: str, line: str) -> bool:
+    """Keep a single redaction fixture from making historical secret scans unusable."""
+    return path == _SYNTHETIC_TEST_PATH and _SYNTHETIC_TEST_SECRET in line
 
 
 def _git(root: Path, *args: str) -> str:
