@@ -3,7 +3,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import subprocess
+import sys
 import time
+from pathlib import Path
 from urllib.parse import urlencode
 
 from fastapi.testclient import TestClient
@@ -178,3 +181,20 @@ def test_menu_button_requires_https_url_before_any_telegram_request() -> None:
         assert "HTTPS" in str(error)
     else:  # pragma: no cover - protects against a security regression.
         raise AssertionError("insecure dashboard URL was accepted")
+
+
+def test_dashboard_runner_resolves_native_tools_when_executed_as_a_script() -> None:
+    runner_path = Path(__file__).parents[1] / "hermes" / "scripts" / "run_dashboard.py"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import runpy; module = runpy.run_path(__import__('sys').argv[1]); print(module['PROFILE_ROOT'])",
+            str(runner_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() == str(runner_path.parents[1])
