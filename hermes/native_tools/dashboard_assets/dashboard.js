@@ -70,7 +70,7 @@ function render(snapshot) {
   $("calendar-count").textContent = (today.calendar || []).length;
   $("reminder-count").textContent = (today.reminders || []).length;
   $("monitor-count").textContent = (snapshot.monitors || []).filter((item) => item.enabled !== false).length;
-  $("mode-chip").textContent = `Режим: ${field(snapshot.work_mode, "mode")}`;
+  $("mode-chip").textContent = `Режим: ${workModeLabel(snapshot.work_mode)}`;
   list("priorities", today.priorities, (item) => plainItem(field(item, "title", "text", "subject")));
   list("calendar", today.calendar, plainItem);
   list("tasks", today.tasks, plainItem);
@@ -105,6 +105,11 @@ function renderCapabilities(capabilities) {
     const description = document.createElement("p"); description.textContent = field(capability, "text");
     item.append(title, description); node.append(item);
   });
+}
+
+function workModeLabel(mode) {
+  const value = field(mode, "name", "mode").toLowerCase();
+  return {fast: "Быстро", think: "Думаю", code: "Код"}[value] || "Быстро";
 }
 
 async function request(url, options = {}) {

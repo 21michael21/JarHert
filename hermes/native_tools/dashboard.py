@@ -177,12 +177,16 @@ def _snapshot(api: Any) -> dict[str, Any]:
     projects = _safe(api.project_context_list, fallback={"items": []})
     integrations = _safe(api.integration_health, fallback={})
     work_mode = _safe(api.work_mode_get, fallback={"mode": "fast"})
+    tasks = _external_items(today.get("tasks"))
+    priorities = list(today.get("top_three") or [])[:3]
+    if not priorities:
+        priorities = [{"title": task, "type": "task"} for task in tasks[:3]]
     return {
         "today": {
-            "tasks": _external_items(today.get("tasks")),
+            "tasks": tasks,
             "calendar": _external_items(today.get("calendar")),
             "reminders": _items(reminders),
-            "priorities": list(today.get("top_three") or [])[:3],
+            "priorities": priorities,
         },
         "notes": _items(notes),
         "status": status,

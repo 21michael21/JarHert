@@ -130,6 +130,20 @@ def test_dashboard_telegram_session_exposes_only_safe_personal_snapshot() -> Non
     assert "https://" not in str(payload)
 
 
+def test_dashboard_uses_trello_tasks_as_priorities_when_personal_queue_is_empty() -> None:
+    class EmptyPersonalQueue(FakeDashboardAPI):
+        def personal_today(self):
+            data = super().personal_today()
+            data["top_three"] = []
+            return data
+
+    app_client, _ = client(EmptyPersonalQueue())
+    sign_in(app_client)
+    snapshot = app_client.get("/api/snapshot").json()
+
+    assert [item["title"] for item in snapshot["today"]["priorities"]] == ["Проверить OAuth", "Собрать план"]
+
+
 def test_dashboard_allows_explicit_reminder_correction_and_note_edit() -> None:
     app_client, dashboard_api = client()
     sign_in(app_client)
@@ -172,6 +186,12 @@ def test_dashboard_page_uses_telegram_webapp_and_external_assets_only() -> None:
     assert 'src="/assets/dashboard.js"' in response.text
     assert "<script>" not in response.text
     assert "script-src 'self' https://telegram.org" in response.headers["content-security-policy"]
+
+
+def test_dashboard_styles_keep_hidden_loading_panel_out_of_the_layout() -> None:
+    stylesheet = (Path(__file__).parents[1] / "hermes" / "native_tools" / "dashboard_assets" / "dashboard.css").read_text()
+
+    assert "[hidden] { display:none !important; }" in stylesheet
 
 
 def test_menu_button_requires_https_url_before_any_telegram_request() -> None:
