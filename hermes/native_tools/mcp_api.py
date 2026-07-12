@@ -183,6 +183,23 @@ class NativeToolsAPI:
         self._capabilities().require("monitor.write")
         return _monitor_payload(self._monitors().disable(monitor_id))
 
+    def monitor_schedule_update(
+        self,
+        *,
+        monitor_id: int,
+        quiet_hours: str | None,
+        timezone_name: str = "Europe/Moscow",
+    ) -> dict[str, Any]:
+        """Keep changed monitor events quiet and collect them for the existing digest."""
+        self._capabilities().require("monitor.write")
+        return _monitor_payload(
+            self._monitors().update_schedule(
+                monitor_id,
+                quiet_hours=quiet_hours,
+                timezone_name=timezone_name,
+            )
+        )
+
     def monitor_digest(self) -> dict[str, Any]:
         self._capabilities().require("monitor.list")
         return self._monitors().build_digest()
@@ -657,7 +674,7 @@ class NativeToolsAPI:
         repository_url: str | None = None,
         source_urls: list[str] | None = None,
     ) -> dict[str, Any]:
-        capability = "sandbox.run" if mode == "coding" else "research.run"
+        capability = "coding.queue" if mode == "coding" else "research.run"
         self._capabilities().require(capability)
         tg_user_id = int(os.getenv("HERMES_OWNER_TELEGRAM_CHAT_ID", "0") or 0)
         if tg_user_id <= 0:
@@ -672,7 +689,7 @@ class NativeToolsAPI:
         ))
 
     def coding_job_list(self, *, limit: int = 20) -> dict[str, Any]:
-        self._capabilities().require("sandbox.run")
+        self._capabilities().require("coding.read")
         tg_user_id = int(os.getenv("HERMES_OWNER_TELEGRAM_CHAT_ID", "0") or 0)
         if tg_user_id <= 0:
             raise RuntimeError("HERMES_OWNER_TELEGRAM_CHAT_ID is required")

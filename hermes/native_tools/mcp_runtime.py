@@ -463,6 +463,20 @@ async def monitor_disable(monitor_id: int, ctx: Context) -> dict[str, object]:
 
 
 @mcp.tool()
+def monitor_schedule_update(
+    monitor_id: int,
+    quiet_hours: str | None = None,
+    timezone_name: str = "Europe/Moscow",
+) -> dict[str, object]:
+    """Set quiet hours for one monitor; changes during them wait for one digest."""
+    return api.monitor_schedule_update(
+        monitor_id=monitor_id,
+        quiet_hours=quiet_hours,
+        timezone_name=timezone_name,
+    )
+
+
+@mcp.tool()
 def skill_feedback(
     workflow_key: str,
     title: str,
@@ -791,7 +805,7 @@ async def coding_job_enqueue_confirmed(
     repository_url: str | None = None,
     source_urls: list[str] | None = None,
 ) -> dict[str, object]:
-    """Preview once, then queue work for an isolated remote runner."""
+    """Preview once, then queue coding work for an isolated remote runner."""
     if not await _confirm(ctx, f"Поставить {mode} job в изолированную очередь?\n{prompt[:300]}"):
         return {"status": "unchanged"}
     return api.coding_job_enqueue(

@@ -182,6 +182,35 @@ class MonitorRegistry:
                 raise ValueError("Monitor не найден.")
         return self.get(monitor_id)
 
+    def update_schedule(
+        self,
+        monitor_id: int,
+        *,
+        quiet_hours: str | None,
+        timezone_name: str,
+    ) -> Monitor:
+        """Change delivery cadence without changing the source or its condition."""
+        clean_timezone = _valid_timezone(timezone_name)
+        clean_quiet_hours = _valid_quiet_hours(quiet_hours)
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT source_config_json FROM native_monitors WHERE id = ?",
+                (int(monitor_id),),
+            ).fetchone()
+            if row is None:
+                raise ValueError("Monitor не найден.")
+            config = json.loads(row["source_config_json"])
+            config["timezone"] = clean_timezone
+            if clean_quiet_hours is None:
+                config.pop("quiet_hours", None)
+            else:
+                config["quiet_hours"] = clean_quiet_hours
+            connection.execute(
+                "UPDATE native_monitors SET source_config_json = ? WHERE id = ?",
+                (_canonical_json(config), int(monitor_id)),
+            )
+        return self.get(monitor_id)
+
     def defer_change(self, monitor: Monitor, change: dict[str, Any]) -> None:
         with self._connect() as connection:
             connection.execute(
@@ -373,10 +402,10 @@ def _quiet_hours_active(config: dict[str, Any], *, now: str | datetime | None) -
     if not value:
         return False
     try:
-        start_raw, end_raw = value.split("-", 1)
+        start_raw, end_raw = _valid_quiet_hours(value).split("-", 1)
         start = _minutes(start_raw)
         end = _minutes(end_raw)
-        zone = ZoneInfo(str(config.get("timezone") or "Europe/Moscow"))
+        zone = ZoneInfo(_valid_timezone(str(config.get("timezone") or "Europe/Moscow")))
     except (ValueError, ZoneInfoNotFoundError) as error:
         raise ValueError("quiet_hours должен быть HH:MM-HH:MM с корректным timezone.") from error
     current = datetime.fromisoformat(now.replace("Z", "+00:00")) if isinstance(now, str) else now
@@ -399,6 +428,28 @@ def _minutes(value: str) -> int:
     if not 0 <= hour <= 23 or not 0 <= minute <= 59:
         raise ValueError("invalid time")
     return hour * 60 + minute
+
+
+def _valid_quiet_hours(value: str | None) -> str | None:
+    clean = str(value or "").strip()
+    if not clean:
+        return None
+    try:
+        start_raw, end_raw = clean.split("-", 1)
+        _minutes(start_raw)
+        _minutes(end_raw)
+    except ValueError as error:
+        raise ValueError("quiet_hours должен быть HH:MM-HH:MM.") from error
+    return clean
+
+
+def _valid_timezone(value: str) -> str:
+    clean = str(value or "").strip()
+    try:
+        ZoneInfo(clean)
+    except ZoneInfoNotFoundError as error:
+        raise ValueError("timezone должен быть корректным IANA timezone.") from error
+    return clean
 
 
 def _xml_text(node: ET.Element | None, name: str) -> str:

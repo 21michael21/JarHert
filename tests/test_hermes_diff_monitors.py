@@ -209,3 +209,28 @@ def test_native_api_manages_allowlisted_source_and_digest(tmp_path) -> None:
     assert created["source_type"] == "rss"
     assert created["source_config"]["quiet_hours"] == "23:00-08:00"
     assert api.monitor_list()["items"] == [created]
+
+
+def test_monitor_schedule_update_validates_and_can_clear_quiet_hours(tmp_path) -> None:
+    api = NativeToolsAPI(database_path=tmp_path / "personal-os.sqlite3")
+    created = api.monitor_add_source(
+        name="news",
+        source_type="rss",
+        url="https://example.test/feed.xml",
+        allowed_hosts=["example.test"],
+        condition="Только важное",
+    )
+
+    scheduled = api.monitor_schedule_update(
+        monitor_id=created["id"],
+        quiet_hours="22:30-08:30",
+        timezone_name="Europe/Moscow",
+    )
+    cleared = api.monitor_schedule_update(
+        monitor_id=created["id"],
+        quiet_hours=None,
+        timezone_name="Europe/Moscow",
+    )
+
+    assert scheduled["source_config"]["quiet_hours"] == "22:30-08:30"
+    assert cleared["source_config"].get("quiet_hours") is None

@@ -16,6 +16,7 @@ from urllib.parse import parse_qsl
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
+from .knowledge_archive import validate_archive_url
 from .mcp_api import NativeToolsAPI
 
 
@@ -24,6 +25,7 @@ COOKIE_NAME = "jarhert_dashboard"
 SESSION_SECONDS = 12 * 60 * 60
 TELEGRAM_AUTH_MAX_AGE_SECONDS = 60 * 60
 TELEGRAM_AUTH_FUTURE_SKEW_SECONDS = 5 * 60
+CLIP_TOKEN_SECONDS = 15 * 60
 
 
 @dataclass(frozen=True)
@@ -130,6 +132,111 @@ def create_app(
         if not 1 <= days <= 31:
             raise HTTPException(status_code=422, detail="days must be between 1 and 31")
         return JSONResponse(_call_read(lambda: dashboard_api.calendar_dashboard(days=days)))
+
+    @app.get("/api/coding/jobs")
+    async def coding_jobs(request: Request) -> JSONResponse:
+        require_user(request)
+        return JSONResponse(_call_read(lambda: dashboard_api.coding_job_list(limit=20)))
+
+    @app.get("/api/notes")
+    async def notes(request: Request, query: str = "", project: str | None = None) -> JSONResponse:
+        require_user(request)
+        clean_query = query.strip()
+        if len(clean_query) > 200 or project is not None and len(project.strip()) > 120:
+            raise HTTPException(status_code=422, detail="note query is invalid")
+        if clean_query:
+            return JSONResponse(
+                _call_read(lambda: dashboard_api.note_search(query=clean_query, project=project, limit=50))
+            )
+        return JSONResponse(
+            _call_read(lambda: dashboard_api.memory_block_list(block_type="note", project=project, limit=50))
+        )
+
+    @app.get("/api/notes/{note_id}/history")
+    async def note_history(note_id: int, request: Request) -> JSONResponse:
+        require_user(request)
+        return JSONResponse(_call_read(lambda: dashboard_api.note_history(note_id=_positive_id(note_id))))
+
+    @app.get("/api/knowledge/sources")
+    async def knowledge_sources(request: Request, project: str | None = None) -> JSONResponse:
+        require_user(request)
+        if project is not None and len(project.strip()) > 120:
+            raise HTTPException(status_code=422, detail="knowledge project is invalid")
+        return JSONResponse(
+            _call_read(lambda: dashboard_api.knowledge_list_sources(project=project, limit=50))
+        )
+
+    @app.get("/api/subscriptions")
+    async def subscriptions(request: Request) -> JSONResponse:
+        require_user(request)
+        return JSONResponse(_call_read(lambda: dashboard_api.subscription_list(status="active")))
+
+    @app.get("/api/monitors/digest")
+    async def monitor_digest(request: Request) -> JSONResponse:
+        require_user(request)
+        return JSONResponse(_call_read(dashboard_api.monitor_digest))
+
+    @app.put("/api/monitors/{monitor_id}/schedule")
+    async def update_monitor_schedule(monitor_id: int, request: Request) -> JSONResponse:
+        require_user(request)
+        payload = await _request_payload(request)
+        quiet_hours = str(payload.get("quiet_hours") or "").strip() or None
+        if quiet_hours is not None and len(quiet_hours) > 20:
+            raise HTTPException(status_code=422, detail="quiet hours are invalid")
+        timezone_name = str(payload.get("timezone") or "Europe/Moscow").strip()
+        if not timezone_name or len(timezone_name) > 80:
+            raise HTTPException(status_code=422, detail="timezone is invalid")
+        return JSONResponse(
+            _call_write(
+                lambda: dashboard_api.monitor_schedule_update(
+                    monitor_id=_positive_id(monitor_id),
+                    quiet_hours=quiet_hours,
+                    timezone_name=timezone_name,
+                )
+            )
+        )
+
+    @app.post("/api/knowledge/clips/preview")
+    async def preview_knowledge_clip(request: Request) -> JSONResponse:
+        user_id = require_user(request)
+        payload = await _request_payload(request)
+        request_id = _request_id(payload.get("request_id"))
+        url = _call_write(lambda: {"url": validate_archive_url(str(payload.get("url") or ""))})["url"]
+        project = _optional_text(payload.get("project"), limit=120)
+        return JSONResponse(
+            {
+                "url": url,
+                "project": project,
+                "request_id": request_id,
+                "preview": ["Сохранить страницу в базу знаний", *([f"Проект: {project}"] if project else [])],
+                "clip_token": _new_clip_token(
+                    user_id=user_id,
+                    request_id=request_id,
+                    url=url,
+                    project=project,
+                    secret=config.session_secret,
+                    clock=clock,
+                ),
+            }
+        )
+
+    @app.post("/api/knowledge/clips/execute")
+    async def execute_knowledge_clip(request: Request) -> JSONResponse:
+        user_id = require_user(request)
+        payload = await _request_payload(request)
+        request_id = _request_id(payload.get("request_id"))
+        url = _call_write(lambda: {"url": validate_archive_url(str(payload.get("url") or ""))})["url"]
+        project = _optional_text(payload.get("project"), limit=120)
+        _require_clip_token(
+            payload.get("clip_token"),
+            user_id=user_id,
+            request_id=request_id,
+            url=url,
+            project=project,
+            secret=config.session_secret,
+            clock=clock,
+        )
+        return JSONResponse(_call_write(lambda: dashboard_api.knowledge_archive_url(url=url, project=project)))
 
     @app.post("/api/plans")
     async def create_plan(request: Request) -> JSONResponse:
@@ -342,6 +449,52 @@ def _require_plan_token(token: Any, user_id: int, plan_id: int, secret: str) -> 
         raise HTTPException(status_code=403, detail="plan confirmation is not valid for this session")
 
 
+def _new_clip_token(
+    *,
+    user_id: int,
+    request_id: str,
+    url: str,
+    project: str | None,
+    secret: str,
+    clock: Callable[[], float],
+) -> str:
+    expires_at = int(clock()) + CLIP_TOKEN_SECONDS
+    digest = hashlib.sha256(f"{url}\n{project or ''}".encode("utf-8")).hexdigest()
+    payload = f"dashboard-clip.{int(user_id)}.{expires_at}.{request_id}.{digest}"
+    signature = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{payload}.{signature}"
+
+
+def _require_clip_token(
+    token: Any,
+    *,
+    user_id: int,
+    request_id: str,
+    url: str,
+    project: str | None,
+    secret: str,
+    clock: Callable[[], float],
+) -> None:
+    if not isinstance(token, str):
+        raise HTTPException(status_code=403, detail="knowledge clip confirmation is required")
+    parts = token.split(".")
+    if len(parts) != 6 or parts[0] != "dashboard-clip" or not parts[1].isdigit() or not parts[2].isdigit():
+        raise HTTPException(status_code=403, detail="knowledge clip confirmation is not valid")
+    token_user_id = int(parts[1]) if parts[1].isdigit() else -1
+    if token_user_id != int(user_id) or int(parts[2]) < int(clock()) or parts[3] != request_id:
+        raise HTTPException(status_code=403, detail="knowledge clip confirmation is not valid")
+    expected = _new_clip_token(
+        user_id=user_id,
+        request_id=request_id,
+        url=url,
+        project=project,
+        secret=secret,
+        clock=lambda: int(parts[2]) - CLIP_TOKEN_SECONDS,
+    )
+    if not hmac.compare_digest(token, expected):
+        raise HTTPException(status_code=403, detail="knowledge clip confirmation is not valid")
+
+
 def _positive_id(value: int) -> int:
     if int(value) <= 0:
         raise HTTPException(status_code=422, detail="invalid id")
@@ -352,6 +505,20 @@ def _required_text(value: Any, *, label: str, limit: int) -> str:
     clean = str(value or "").strip()
     if not clean or len(clean) > limit:
         raise HTTPException(status_code=422, detail=f"{label} is invalid")
+    return clean
+
+
+def _optional_text(value: Any, *, limit: int) -> str | None:
+    clean = str(value or "").strip()
+    if len(clean) > limit:
+        raise HTTPException(status_code=422, detail="text is invalid")
+    return clean or None
+
+
+def _request_id(value: Any) -> str:
+    clean = str(value or "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", clean):
+        raise HTTPException(status_code=422, detail="invalid request id")
     return clean
 
 
@@ -414,18 +581,22 @@ def _dashboard_page() -> str:
   <section id="loading-panel" class="loading-panel"><span class="loading-mark"></span><p id="loading-text">Открываю кабинет</p></section>
   <section id="cabinet" hidden>
     <div id="notice" class="notice" hidden></div>
-    <nav class="view-tabs" aria-label="Разделы"><button class="view-tab is-active" data-view="today" type="button">Сегодня</button><button class="view-tab" data-view="tasks" type="button">Задачи</button><button class="view-tab" data-view="calendar" type="button">Календарь</button><button class="view-tab" data-view="inbox" type="button">Входящее</button></nav>
-    <section id="view-today" class="view"><article class="focus-card"><p class="eyebrow">СЕЙЧАС</p><h2 id="focus-title">Собираю твой день</h2><p id="focus-meta" class="muted">Задача появится здесь.</p><div class="focus-actions"><button id="focus-done" class="primary" type="button">Сделано</button><button id="focus-move" class="secondary" type="button">Перенести</button></div></article><section class="section"><div class="section-head"><div><p class="eyebrow">ДЕНЬ</p><h2>Следом</h2></div><button class="text-button" data-open-view="calendar" type="button">Весь календарь</button></div><div id="today-calendar" class="timeline"></div></section><section class="section"><div class="section-head"><div><p class="eyebrow">ОЧЕРЕДЬ</p><h2>Три главных</h2></div><button class="text-button" data-open-view="tasks" type="button">Все задачи</button></div><div id="priorities" class="work-list"></div></section></section>
+    <nav class="view-tabs" aria-label="Разделы"><button class="view-tab is-active" data-view="today" type="button">Сегодня</button><button class="view-tab" data-view="tasks" type="button">Задачи</button><button class="view-tab" data-view="calendar" type="button">Календарь</button><button class="view-tab" data-view="code" type="button">Код</button><button class="view-tab" data-view="memory" type="button">Память</button></nav>
+    <section id="view-today" class="view"><article class="focus-card"><p class="eyebrow">СЕЙЧАС</p><h2 id="focus-title">Собираю твой день</h2><p id="focus-meta" class="muted">Задача появится здесь.</p><div class="focus-actions"><button id="focus-done" class="primary" type="button">Сделано</button><button id="focus-move" class="secondary" type="button">Перенести</button></div></article><section class="section"><div class="section-head"><div><p class="eyebrow">ДЕНЬ</p><h2>Следом</h2></div><button class="text-button" data-open-view="calendar" type="button">Весь календарь</button></div><div id="today-calendar" class="timeline"></div></section><section class="section"><div class="section-head"><div><p class="eyebrow">ОЧЕРЕДЬ</p><h2>Три главных</h2></div><button class="text-button" data-open-view="tasks" type="button">Все задачи</button></div><div id="priorities" class="work-list"></div></section><section class="section"><div class="section-head"><div><p class="eyebrow">РАДАР</p><h2>Скоро важно</h2></div></div><div id="radar" class="work-list"></div></section></section>
     <section id="view-tasks" class="view" hidden><div class="section-head"><div><p class="eyebrow">TRELLO</p><h2>Задачи</h2></div><button id="open-trello" class="text-button" type="button">Открыть Trello</button></div><div id="task-filters" class="filter-row"></div><div id="task-list" class="work-list"></div></section>
     <section id="view-calendar" class="view" hidden><div class="section-head"><div><p class="eyebrow">7 ДНЕЙ</p><h2>Календарь</h2></div><button id="open-calendar" class="text-button" type="button">Google Calendar</button></div><div id="calendar-list" class="timeline"></div></section>
-    <section id="view-inbox" class="view" hidden><section class="section"><div class="section-head"><div><p class="eyebrow">НАПОМИНАНИЯ</p><h2>Ближайшее</h2></div><span id="reminder-count" class="count-pill">0</span></div><div id="reminders" class="work-list"></div></section><section class="section"><div class="section-head"><div><p class="eyebrow">ЗАМЕТКИ</p><h2>Последние</h2></div></div><div id="notes" class="work-list"></div></section><section class="section status-section"><div class="section-head"><div><p class="eyebrow">СИСТЕМА</p><h2>Статус</h2></div></div><div id="system" class="status-list"></div></section></section>
+    <section id="view-code" class="view" hidden><div class="section-head"><div><p class="eyebrow">CODE DESK</p><h2>Работа с кодом</h2></div></div><p class="muted section-copy">Задачи выполняются отдельно от сервера: в sandbox, без deploy и без доступа к секретам.</p><div id="coding-jobs" class="work-list"></div></section>
+    <section id="view-memory" class="view" hidden><section class="section"><div class="section-head"><div><p class="eyebrow">НАПОМИНАНИЯ</p><h2>Ближайшее</h2></div><span id="reminder-count" class="count-pill">0</span></div><div id="reminders" class="work-list"></div></section><section class="section"><div class="section-head"><div><p class="eyebrow">ЗАМЕТКИ</p><h2>Живая память</h2></div></div><label class="search-field" for="note-search"><span>Поиск по заметкам</span><input id="note-search" type="search" placeholder="OAuth, Hub_ML, идея..." autocomplete="off"></label><div id="notes" class="work-list"></div></section><section class="section"><div class="section-head"><div><p class="eyebrow">ИСТОЧНИКИ</p><h2>База знаний</h2></div><button id="knowledge-add" class="text-button" type="button">Добавить ссылку</button></div><p class="muted section-copy">Только явно добавленная публичная страница. Сначала preview, потом сохранение.</p><div id="knowledge-sources" class="work-list"></div></section><section class="section status-section"><div class="section-head"><div><p class="eyebrow">СИСТЕМА</p><h2>Статус</h2></div></div><div id="system" class="status-list"></div></section></section>
   </section>
 </main>
 <button id="quick-add" class="quick-add" type="button" aria-label="Добавить">＋ <span>Добавить</span></button>
-<nav id="bottom-nav" class="bottom-nav" aria-label="Навигация"><button class="nav-button is-active" data-view="today" type="button">Сегодня</button><button class="nav-button" data-view="tasks" type="button">Задачи</button><button class="nav-button" data-view="calendar" type="button">План</button><button class="nav-button" data-view="inbox" type="button">Входящее</button></nav>
+<nav id="bottom-nav" class="bottom-nav" aria-label="Навигация"><button class="nav-button is-active" data-view="today" type="button">Сегодня</button><button class="nav-button" data-view="tasks" type="button">Задачи</button><button class="nav-button" data-view="calendar" type="button">План</button><button class="nav-button" data-view="code" type="button">Код</button><button class="nav-button" data-view="memory" type="button">Память</button></nav>
 <dialog id="quick-dialog"><form id="quick-form"><p class="eyebrow">БЫСТРОЕ ДОБАВЛЕНИЕ</p><h2 id="quick-title">Новая задача</h2><div class="quick-types"><button class="type-button is-active" data-quick-type="task" type="button">Задача</button><button class="type-button" data-quick-type="event" type="button">Встреча</button><button class="type-button" data-quick-type="reminder" type="button">Напоминание</button><button class="type-button" data-quick-type="note" type="button">Заметка</button></div><label><span id="quick-label">Что сделать</span><textarea id="quick-text" rows="3" maxlength="1000" required></textarea></label><label id="quick-list-field"><span>Колонка</span><select id="quick-list"></select></label><label id="quick-priority-field"><span>Приоритет</span><select id="quick-priority"></select></label><label id="quick-start-field" hidden><span id="quick-start-label">Когда</span><input id="quick-start" type="datetime-local"></label><label id="quick-end-field" hidden><span>До</span><input id="quick-end" type="datetime-local"></label><div class="dialog-actions"><button id="quick-cancel" class="secondary" type="button">Отмена</button><button class="primary" type="submit">К preview</button></div></form></dialog>
 <dialog id="edit-dialog"><form id="edit-form"><p class="eyebrow" id="edit-eyebrow">КОРРЕКТИРОВКА</p><h2 id="edit-title">Изменить</h2><p id="edit-help" class="muted"></p><label id="edit-field-label"><span id="edit-field-name">Значение</span><input id="edit-date" type="datetime-local" hidden><input id="edit-end" type="datetime-local" hidden><select id="edit-choice" hidden></select><textarea id="edit-value" rows="5"></textarea></label><label id="recurrence-field" hidden><span>Повтор</span><select id="edit-recurrence"><option value="keep">Не менять</option><option value="none">Не повторять</option><option value="daily">Каждый день</option><option value="weekly">Каждую неделю</option><option value="monthly">Каждый месяц</option></select></label><div class="dialog-actions"><button id="dialog-cancel" class="secondary" type="button">Отмена</button><button id="dialog-save" class="primary" type="submit">К preview</button></div></form></dialog>
 <dialog id="plan-dialog"><form id="plan-form"><p class="eyebrow">ПРОВЕРЬ И ПОДТВЕРДИ</p><h2>План действий</h2><div id="plan-preview" class="preview-list"></div><p class="muted">Изменения применятся один раз после подтверждения.</p><div class="dialog-actions"><button id="plan-cancel" class="secondary" type="button">Отмена</button><button id="plan-execute" class="primary" type="submit">Применить</button></div></form></dialog>
+<dialog id="report-dialog"><form method="dialog"><p class="eyebrow">ОТЧЁТ RUNNER</p><h2 id="report-title">Работа</h2><pre id="report-content" class="report-content"></pre><div class="dialog-actions"><button id="report-close" class="primary" type="submit">Закрыть</button></div></form></dialog>
+<dialog id="history-dialog"><form method="dialog"><p class="eyebrow">ИСТОРИЯ ЗАМЕТКИ</p><h2 id="history-title">Заметка</h2><div id="history-content" class="preview-list"></div><div class="dialog-actions"><button id="history-close" class="primary" type="submit">Закрыть</button></div></form></dialog>
+<dialog id="clip-dialog"><form id="clip-form"><p class="eyebrow">БАЗА ЗНАНИЙ</p><h2>Сохранить ссылку</h2><p class="muted">Страница не скачивается до твоего preview.</p><label><span>Публичный HTTPS URL</span><input id="clip-url" type="url" inputmode="url" placeholder="https://example.com/article" maxlength="2000" required></label><label><span>Проект, если нужен</span><input id="clip-project" type="text" placeholder="Hub_ML" maxlength="120"></label><div id="clip-preview" class="preview-list"></div><div class="dialog-actions"><button id="clip-cancel" class="secondary" type="button">Отмена</button><button id="clip-preview-action" class="secondary" type="submit">К preview</button><button id="clip-execute" class="primary" type="button" hidden>Сохранить</button></div></form></dialog>
 <script src="/assets/dashboard.js" defer></script></body></html>"""
 
 

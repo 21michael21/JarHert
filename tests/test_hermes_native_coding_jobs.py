@@ -58,14 +58,11 @@ def test_expired_native_coding_job_can_be_claimed_after_mac_stops(tmp_path) -> N
     assert recovered.worker_id == "replacement-mac"
 
 
-def test_native_api_queues_code_only_in_code_mode_and_lists_results(tmp_path, monkeypatch) -> None:
+def test_native_api_queues_previewed_coding_work_from_fast_mode_and_lists_results(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HERMES_OWNER_TELEGRAM_CHAT_ID", "566055009")
     api = NativeToolsAPI(database_path=tmp_path / "personal-os.sqlite3")
 
-    with pytest.raises(PermissionError):
-        api.coding_job_enqueue(mode="coding", prompt="Добавь тест", idempotency_key="telegram:102:coding")
-
-    api.work_mode_set(mode="code")
+    assert api.coding_job_list() == {"items": []}
     queued = api.coding_job_enqueue(mode="coding", prompt="Добавь тест", idempotency_key="telegram:102:coding")
     assert queued["status"] == "queued"
     assert api.coding_job_list()["items"] == [queued]

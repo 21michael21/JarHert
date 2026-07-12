@@ -1,6 +1,9 @@
 const $ = (id) => document.getElementById(id);
 const telegram = window.Telegram?.WebApp;
-const state = {activeView: "today", snapshot: null, tasks: {items: [], lists: [], priorities: []}, calendar: {items: []}, quickType: "task", edit: null, plan: null};
+const state = {
+  activeView: "today", snapshot: null, tasks: {items: [], lists: [], priorities: []}, calendar: {items: []},
+  coding: {items: []}, notes: {items: []}, knowledge: {items: []}, subscriptions: {items: []}, digest: {items: []}, noteQuery: "", quickType: "task", edit: null, plan: null, clip: null,
+};
 
 function text(value) { return String(value ?? "").trim(); }
 function field(item, ...keys) { for (const key of keys) if (item?.[key]) return text(item[key]); return "Без названия"; }
@@ -38,10 +41,18 @@ async function request(url, options = {}) {
 async function refresh() {
   showNotice("Обновляю…");
   const snapshot = await request("/api/snapshot");
-  const [taskResult, calendarResult] = await Promise.allSettled([request("/api/tasks"), request("/api/calendar")]);
+  const noteUrl = state.noteQuery ? `/api/notes?query=${encodeURIComponent(state.noteQuery)}` : "/api/notes";
+  const [taskResult, calendarResult, codingResult, noteResult, knowledgeResult, subscriptionResult, digestResult] = await Promise.allSettled([
+    request("/api/tasks"), request("/api/calendar"), request("/api/coding/jobs"), request(noteUrl), request("/api/knowledge/sources"), request("/api/subscriptions"), request("/api/monitors/digest"),
+  ]);
   state.snapshot = snapshot;
   state.tasks = taskResult.status === "fulfilled" ? taskResult.value : {items: [], lists: [], priorities: []};
   state.calendar = calendarResult.status === "fulfilled" ? calendarResult.value : {items: []};
+  state.coding = codingResult.status === "fulfilled" ? codingResult.value : {items: []};
+  state.notes = noteResult.status === "fulfilled" ? noteResult.value : {items: []};
+  state.knowledge = knowledgeResult.status === "fulfilled" ? knowledgeResult.value : {items: []};
+  state.subscriptions = subscriptionResult.status === "fulfilled" ? subscriptionResult.value : {items: []};
+  state.digest = digestResult.status === "fulfilled" ? digestResult.value : {items: []};
   render(); showNotice("");
 }
 
@@ -51,7 +62,8 @@ function render() {
   renderToday(snapshot);
   renderTasks();
   renderCalendar();
-  renderInbox(snapshot);
+  renderCode();
+  renderMemory(snapshot);
   renderQuickOptions();
   setView(state.activeView);
 }
@@ -67,6 +79,30 @@ function renderToday(snapshot) {
   $("focus-move").onclick = () => focus && openTaskMove(focus);
   list("priorities", priorities, (item) => focusRow(findTask(field(item, "title", "text", "subject")) || {title: field(item, "title", "text", "subject")}), "На сегодня пока нет явных задач.");
   list("today-calendar", state.calendar.items.slice(0, 3), eventRow, "На ближайшие дни встреч нет.");
+  renderRadar(snapshot);
+}
+
+function renderRadar(snapshot) {
+  const subscriptions = (state.subscriptions.items || []).map((item) => ({
+    title: item.name, meta: `Списание ${formatDayTime(item.next_charge_at)} · ${item.amount} ${item.currency}`,
+  }));
+  const monitors = (snapshot.monitors || []).filter((item) => item.enabled !== false).map((item) => ({
+    title: field(item, "name", "source_type"), monitor: item,
+    meta: radarMonitorMeta(item),
+  }));
+  const deferred = state.digest.items?.length ? [{title: "Digest радара", meta: `${state.digest.items.length} обновл. ждут общего дайджеста`}] : [];
+  list("radar", [...subscriptions, ...monitors, ...deferred], (item) => {
+    const row = node("article", "work-row"); const copy = node("div", "row-copy");
+    copy.append(node("strong", "row-title", item.title), node("span", "row-meta", item.meta));
+    if (item.monitor?.id) { const actions = node("div", "row-actions"); actions.append(button("Тише", "row-button", () => openRadarSchedule(item.monitor))); row.append(copy, actions); }
+    else row.append(copy);
+    return row;
+  }, "На ближайшее ничего не требует внимания.");
+}
+
+function radarMonitorMeta(item) {
+  const config = item.source_config || {}; const quiet = text(config.quiet_hours);
+  return quiet ? `Тихо ${quiet} · изменения придут одним digest` : "Monitor включён: напишет только при изменении";
 }
 
 function focusRow(task) {
@@ -117,11 +153,40 @@ function eventRow(event) {
   row.append(when, copy, actions); return row;
 }
 
-function renderInbox(snapshot) {
+function renderCode() {
+  list("coding-jobs", state.coding.items || [], codingJobRow, "Кодовых задач пока нет. Напиши Hermes, что нужно разобрать.");
+}
+
+function codingJobRow(job) {
+  const row = node("article", "work-row code-row");
+  const copy = node("div", "row-copy");
+  const status = codingStatus(job.status);
+  copy.append(node("strong", "row-title", field(job, "prompt")), node("span", `row-meta ${status.tone}`, `${status.label} · ${job.mode === "research" ? "исследование" : "sandbox-код"}`));
+  const actions = node("div", "row-actions");
+  if (job.repository_url) actions.append(button("Проект", "row-button", () => openExternal(job.repository_url)));
+  if (job.result_text || job.last_error) actions.append(button("Отчёт", "row-button", () => openReport(job)));
+  row.append(copy, actions); return row;
+}
+
+function codingStatus(value) {
+  return {
+    queued: {label: "В очереди", tone: "warn"}, running: {label: "В работе", tone: "warn"},
+    succeeded: {label: "Готово", tone: "good"}, failed: {label: "Ошибка", tone: "danger"}, cancelled: {label: "Отменено", tone: "muted"},
+  }[value] || {label: "Неизвестно", tone: "muted"};
+}
+
+function openReport(job) {
+  $("report-title").textContent = `Задача #${job.id}`;
+  $("report-content").textContent = job.result_text || job.last_error || "Runner ещё не вернул отчёт.";
+  $("report-dialog").showModal();
+}
+
+function renderMemory(snapshot) {
   const reminders = snapshot.today?.reminders || [];
   $("reminder-count").textContent = reminders.length;
   list("reminders", reminders, reminderRow, "Активных напоминаний нет.");
-  list("notes", snapshot.notes || [], noteRow, "Заметок пока нет.");
+  list("notes", state.notes.items || [], noteRow, "Заметок пока нет.");
+  list("knowledge-sources", state.knowledge.items || [], knowledgeRow, "Добавь первую ссылку: JarHert сохранит только эту страницу.");
   const system = $("system"); system.replaceChildren();
   const status = snapshot.status || {}; const integrations = snapshot.integrations || {};
   system.append(statusRow("Gateway", status.gateway?.active ? "работает" : "нет связи", Boolean(status.gateway?.active)));
@@ -142,7 +207,53 @@ function reminderRow(item) {
 function noteRow(item) {
   const row = node("article", "work-row"); const copy = node("div", "row-copy");
   copy.append(node("strong", "row-title", field(item, "subject")), node("span", "row-meta", field(item, "content")));
-  row.append(copy, button("Править", "row-button", () => openNoteEditor(item))); return row;
+  const actions = node("div", "row-actions");
+  actions.append(button("История", "row-button", () => openNoteHistory(item)));
+  actions.append(button("Править", "row-button", () => openNoteEditor(item)));
+  row.append(copy, actions); return row;
+}
+
+function knowledgeRow(item) {
+  const row = node("article", "work-row"); const copy = node("div", "row-copy");
+  copy.append(node("strong", "row-title", field(item, "title", "url")), node("span", "row-meta", [item.project, `${item.snapshot_count || 0} верс.`].filter(Boolean).join(" · ")));
+  const actions = node("div", "row-actions");
+  actions.append(button("Открыть", "row-button", () => openExternal(item.url)));
+  row.append(copy, actions); return row;
+}
+
+async function openNoteHistory(item) {
+  try {
+    const history = await request(`/api/notes/${item.id}/history`);
+    $("history-title").textContent = field(item, "subject");
+    list("history-content", history.items || [], (revision) => node("div", "preview-row", `${formatDayTime(revision.changed_at)} · ${field(revision, "content")}`), "Правок пока не было.");
+    $("history-dialog").showModal();
+  } catch (error) { showNotice(friendlyError(error)); }
+}
+
+function openKnowledgeClip() {
+  state.clip = null; $("clip-url").value = ""; $("clip-project").value = ""; $("clip-preview").replaceChildren(); $("clip-execute").hidden = true; $("clip-preview-action").hidden = false; $("clip-dialog").showModal();
+}
+
+async function previewKnowledgeClip(event) {
+  event.preventDefault(); const control = $("clip-preview-action"); control.disabled = true;
+  try {
+    const clip = await request("/api/knowledge/clips/preview", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({request_id: requestId(), url: $("clip-url").value.trim(), project: $("clip-project").value.trim()})});
+    state.clip = clip; list("clip-preview", clip.preview || [], (line) => node("div", "preview-row", line)); $("clip-execute").hidden = false; haptic("impactOccurred", "light");
+  } catch (error) { showNotice(friendlyError(error)); haptic("notification", "error"); }
+  finally { control.disabled = false; }
+}
+
+async function executeKnowledgeClip() {
+  if (!state.clip) return; const control = $("clip-execute"); control.disabled = true;
+  try {
+    await request("/api/knowledge/clips/execute", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({request_id: state.clip.request_id, url: state.clip.url, project: state.clip.project || "", clip_token: state.clip.clip_token})});
+    $("clip-dialog").close(); state.clip = null; showNotice("Ссылка сохранена в базу знаний"); haptic("notification", "success"); await refresh();
+  } catch (error) { showNotice(friendlyError(error)); haptic("notification", "error"); }
+  finally { control.disabled = false; }
+}
+
+function openRadarSchedule(item) {
+  state.edit = {kind: "monitor", item}; setupEdit("Тихие часы", "Изменения в это время попадут в один digest."); $("edit-field-name").textContent = "Тихие часы"; $("edit-value").hidden = false; $("edit-value").value = item.source_config?.quiet_hours || ""; $("edit-dialog").showModal();
 }
 
 function statusRow(label, value, good) {
@@ -157,7 +268,7 @@ function findTask(title) { return (state.tasks.items || []).find((item) => item.
 function formatDayTime(value) { if (!value) return "без времени"; const date = new Date(value); return Number.isNaN(date.getTime()) ? text(value) : date.toLocaleString("ru-RU", {weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit"}); }
 function formatTime(value) { const date = new Date(value); return Number.isNaN(date.getTime()) ? text(value) : date.toLocaleTimeString("ru-RU", {hour: "2-digit", minute: "2-digit"}); }
 function toLocalDateTime(value) { const date = new Date(value); if (Number.isNaN(date.getTime())) return ""; return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
-function toIso(value) { const date = new Date(value); return Number.isNaN(date) ? "" : date.toISOString(); }
+function toIso(value) { const date = new Date(value); return Number.isNaN(date.getTime()) ? "" : date.toISOString(); }
 function workModeLabel(mode) { const value = field(mode, "name", "mode").toLowerCase(); return {fast: "Быстро", think: "Думаю", code: "Код"}[value] || "Быстро"; }
 
 function setView(view) {
@@ -172,6 +283,18 @@ function renderQuickOptions() {
   (state.tasks.lists || ["Inbox", "Today"]).forEach((name) => list.append(new Option(name, name)));
   const priority = $("quick-priority"); priority.replaceChildren(); priority.append(new Option("Без приоритета", ""));
   (state.tasks.priorities || []).forEach((name) => priority.append(new Option(name, name)));
+}
+
+function scheduleNoteSearch(value) {
+  state.noteQuery = value.trim();
+  window.clearTimeout(state.noteSearchTimer);
+  state.noteSearchTimer = window.setTimeout(async () => {
+    try {
+      const url = state.noteQuery ? `/api/notes?query=${encodeURIComponent(state.noteQuery)}` : "/api/notes";
+      state.notes = await request(url);
+      renderMemory(state.snapshot || {});
+    } catch (error) { showNotice(friendlyError(error)); }
+  }, 180);
 }
 
 function openQuick(type = "task") { state.quickType = type; updateQuickForm(); $("quick-dialog").showModal(); }
@@ -234,6 +357,7 @@ async function saveEdit(event) {
   try {
     if (kind === "reminder") { const remindAt = toIso($("edit-date").value); if (!remindAt) throw new Error("Укажи время"); await request(`/api/reminders/${item.id}/reschedule`, {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({remind_at: remindAt, recurrence: $("edit-recurrence").value})}); $("edit-dialog").close(); showNotice("Напоминание обновлено"); await refresh(); }
     else if (kind === "note") { const content = $("edit-value").value.trim(); if (!content) throw new Error("Текст заметки пустой"); await request(`/api/notes/${item.id}`, {method: "PUT", headers: {"content-type": "application/json"}, body: JSON.stringify({content})}); $("edit-dialog").close(); showNotice("Заметка обновлена"); await refresh(); }
+    else if (kind === "monitor") { const quietHours = $("edit-value").value.trim(); if (quietHours && !/^\d{2}:\d{2}-\d{2}:\d{2}$/.test(quietHours)) throw new Error("Формат: 23:00-08:00"); await request(`/api/monitors/${item.id}/schedule`, {method: "PUT", headers: {"content-type": "application/json"}, body: JSON.stringify({quiet_hours: quietHours, timezone: item.source_config?.timezone || "Europe/Moscow"})}); $("edit-dialog").close(); showNotice(quietHours ? "Радар перейдёт в digest в тихие часы" : "Тихие часы отключены"); await refresh(); }
     else { let action; if (kind === "task.move") action = {type: kind, payload: {title: item.title, target_list: $("edit-choice").value}}; if (kind === "task.priority") action = {type: kind, payload: {title: item.title, priority: $("edit-choice").value}}; if (kind === "calendar.move") { const start = toIso($("edit-date").value); const end = toIso($("edit-end").value); if (!start || !end || end <= start) throw new Error("Укажи корректное время"); action = {type: kind, payload: {title: item.title, start, end}}; } $("edit-dialog").close(); await preparePlan([action]); }
   } catch (error) { haptic("notification", "error"); showNotice(friendlyError(error)); }
   finally { control.disabled = false; }
@@ -261,6 +385,8 @@ function init() {
   $("quick-form").addEventListener("submit", (event) => { event.preventDefault(); try { const action = quickAction(); $("quick-dialog").close(); preparePlan([action]); } catch (error) { showNotice(friendlyError(error)); } });
   $("edit-form").addEventListener("submit", saveEdit); $("dialog-cancel").addEventListener("click", () => $("edit-dialog").close());
   $("plan-form").addEventListener("submit", executePlan); $("plan-cancel").addEventListener("click", cancelPlan);
+  $("note-search").addEventListener("input", (event) => scheduleNoteSearch(event.target.value));
+  $("knowledge-add").addEventListener("click", openKnowledgeClip); $("clip-form").addEventListener("submit", previewKnowledgeClip); $("clip-execute").addEventListener("click", executeKnowledgeClip); $("clip-cancel").addEventListener("click", () => $("clip-dialog").close());
   $("open-trello").addEventListener("click", () => openExternal(state.tasks.board_url || "https://trello.com/")); $("open-calendar").addEventListener("click", () => openExternal("https://calendar.google.com/"));
   startTelegramSession();
 }

@@ -26,6 +26,8 @@ class FakeDashboardAPI:
         self.edited_notes: list[dict[str, object]] = []
         self.created_plans: list[dict[str, object]] = []
         self.executed_plans: list[int] = []
+        self.archived_urls: list[dict[str, object]] = []
+        self.monitor_schedules: list[dict[str, object]] = []
 
     def personal_today(self):
         return {
@@ -60,7 +62,32 @@ class FakeDashboardAPI:
         return {"id": note_id, "subject": "OAuth", "content": content, "project": "Hub_ML"}
 
     def monitor_list(self):
-        return {"items": [{"name": "GitHub", "enabled": True}]}
+        return {
+            "items": [
+                {
+                    "id": 5,
+                    "name": "GitHub",
+                    "enabled": True,
+                    "source_config": {"quiet_hours": "23:00-08:00", "timezone": "Europe/Moscow"},
+                }
+            ]
+        }
+
+    def monitor_digest(self):
+        return {"items": [{"monitor": "GitHub"}], "item_ids": [4]}
+
+    def monitor_schedule_update(self, *, monitor_id: int, quiet_hours: str | None, timezone_name: str):
+        payload = {"monitor_id": monitor_id, "quiet_hours": quiet_hours, "timezone_name": timezone_name}
+        self.monitor_schedules.append(payload)
+        return {
+            "id": monitor_id,
+            "name": "GitHub",
+            "enabled": True,
+            "source_config": {
+                "quiet_hours": quiet_hours,
+                "timezone": timezone_name,
+            },
+        }
 
     def project_context_list(self):
         return {"items": [{"name": "Hub_ML"}]}
@@ -94,6 +121,49 @@ class FakeDashboardAPI:
 
     def action_plan_cancel(self, *, plan_id: int):
         return {"id": plan_id, "status": "cancelled", "actions": []}
+
+    def coding_job_list(self, *, limit: int = 20):
+        assert limit == 20
+        return {
+            "items": [
+                {
+                    "id": 12,
+                    "mode": "coding",
+                    "prompt": "Убрать лишний рендер PDF страницы",
+                    "repository_url": "https://github.com/example/reader",
+                    "status": "succeeded",
+                    "result_text": "Нашёл лишний рендер. 14 тестов прошли.",
+                    "last_error": None,
+                }
+            ]
+        }
+
+    def note_search(self, *, query: str, project: str | None = None, limit: int = 50):
+        assert query == "OAuth"
+        assert project is None
+        assert limit == 50
+        return {"items": self.memory_block_list()["items"]}
+
+    def note_history(self, *, note_id: int):
+        assert note_id == 4
+        return {"items": [{"id": 3, "note_id": 4, "content": "Старый текст", "changed_at": "2026-07-11T12:00:00+00:00"}]}
+
+    def knowledge_list_sources(self, *, project: str | None = None, limit: int = 50):
+        assert project is None
+        assert limit == 50
+        return {"items": [{"id": 2, "url": "https://docs.example.test/oauth", "title": "OAuth guide", "project": "Hub_ML", "snapshot_count": 2}]}
+
+    def knowledge_archive_url(self, *, url: str, project: str | None = None):
+        payload = {"url": url, "project": project}
+        self.archived_urls.append(payload)
+        return {"id": 9, "url": url, "title": "Saved page", "project": project, "snapshot_count": 1, "changed": True}
+
+    def subscription_list(self, *, status: str = "active"):
+        assert status == "active"
+        return {
+            "items": [{"id": 8, "name": "VDS", "amount": "20", "currency": "USD", "next_charge_at": "2026-07-15T09:00:00+00:00"}],
+            "monthly_totals": {"USD": "20"},
+        }
 
 
 def _init_data(*, user_id: int = OWNER_ID, auth_date: int | None = None, tamper: bool = False) -> str:
@@ -216,6 +286,89 @@ def test_dashboard_exposes_operational_trello_and_calendar_views() -> None:
     assert calendar.json()["items"][0]["title"] == "Созвон"
 
 
+def test_dashboard_exposes_code_desk_notes_and_saved_knowledge() -> None:
+    app_client, _ = client()
+    sign_in(app_client)
+
+    coding = app_client.get("/api/coding/jobs")
+    notes = app_client.get("/api/notes", params={"query": "OAuth"})
+    history = app_client.get("/api/notes/4/history")
+    knowledge = app_client.get("/api/knowledge/sources")
+
+    assert coding.status_code == 200
+    assert coding.json()["items"][0]["status"] == "succeeded"
+    assert notes.status_code == 200
+    assert notes.json()["items"][0]["subject"] == "OAuth"
+    assert history.status_code == 200
+    assert history.json()["items"][0]["content"] == "Старый текст"
+    assert knowledge.status_code == 200
+    assert knowledge.json()["items"][0]["snapshot_count"] == 2
+
+
+def test_dashboard_exposes_personal_radar_without_calendar_mutations() -> None:
+    app_client, _ = client()
+    sign_in(app_client)
+
+    radar = app_client.get("/api/subscriptions")
+
+    assert radar.status_code == 200
+    assert radar.json()["items"] == [
+        {"id": 8, "name": "VDS", "amount": "20", "currency": "USD", "next_charge_at": "2026-07-15T09:00:00+00:00"}
+    ]
+
+
+def test_dashboard_radar_exposes_digest_and_changes_quiet_hours_only_after_session(tmp_path) -> None:
+    app_client, dashboard_api = client()
+    sign_in(app_client)
+
+    digest = app_client.get("/api/monitors/digest")
+    changed = app_client.put(
+        "/api/monitors/5/schedule",
+        json={"quiet_hours": "22:30-08:30", "timezone": "Europe/Moscow"},
+    )
+
+    assert digest.status_code == 200
+    assert digest.json()["item_ids"] == [4]
+    assert changed.status_code == 200
+    assert dashboard_api.monitor_schedules == [
+        {"monitor_id": 5, "quiet_hours": "22:30-08:30", "timezone_name": "Europe/Moscow"}
+    ]
+
+    blocked_client, blocked_api = client()
+    assert blocked_client.put("/api/monitors/5/schedule", json={"quiet_hours": "22:30-08:30"}).status_code == 401
+    assert blocked_api.monitor_schedules == []
+
+
+def test_dashboard_archives_knowledge_clip_only_after_its_preview_token() -> None:
+    app_client, dashboard_api = client()
+    sign_in(app_client)
+    payload = {
+        "request_id": "knowledge-clip-001",
+        "url": "https://docs.example.test/oauth",
+        "project": "Hub_ML",
+    }
+
+    preview = app_client.post("/api/knowledge/clips/preview", json=payload)
+    blocked = app_client.post("/api/knowledge/clips/execute", json=payload)
+    saved = app_client.post(
+        "/api/knowledge/clips/execute",
+        json={**payload, "clip_token": preview.json()["clip_token"]},
+    )
+
+    assert preview.status_code == 200
+    assert preview.json()["preview"] == ["Сохранить страницу в базу знаний", "Проект: Hub_ML"]
+    assert blocked.status_code == 403
+    assert saved.status_code == 200
+    assert dashboard_api.archived_urls == [{"url": "https://docs.example.test/oauth", "project": "Hub_ML"}]
+
+
+def test_dashboard_personal_views_require_a_telegram_session() -> None:
+    app_client, _ = client()
+
+    for path in ("/api/coding/jobs", "/api/notes", "/api/notes/4/history", "/api/knowledge/sources", "/api/subscriptions"):
+        assert app_client.get(path).status_code == 401
+
+
 def test_dashboard_creates_one_preview_plan_then_executes_only_after_explicit_confirmation() -> None:
     app_client, dashboard_api = client()
     sign_in(app_client)
@@ -282,6 +435,9 @@ def test_dashboard_page_uses_telegram_webapp_and_external_assets_only() -> None:
     assert "script-src 'self' https://telegram.org" in response.headers["content-security-policy"]
     assert 'id="quick-add"' in response.text
     assert 'id="plan-dialog"' in response.text
+    assert 'id="view-code"' in response.text
+    assert 'id="note-search"' in response.text
+    assert 'id="knowledge-sources"' in response.text
 
 
 def test_dashboard_styles_keep_hidden_loading_panel_out_of_the_layout() -> None:
