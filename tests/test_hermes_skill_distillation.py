@@ -134,3 +134,20 @@ def test_native_api_returns_reviewable_skill_after_three_feedback_events(tmp_pat
     assert results[2]["confirmation_count"] == 3
     assert "# Утренний план" in results[2]["skill_markdown"]
     assert api.skill_candidates(ready_only=True)["items"] == [results[2]]
+
+
+def test_native_api_marks_only_ready_candidate_as_staged(tmp_path) -> None:
+    api = NativeToolsAPI(database_path=tmp_path / "personal-os.sqlite3")
+    for index in range(3):
+        api.skill_feedback(
+            workflow_key="morning-plan",
+            title="Утренний план",
+            steps=STEPS,
+            idempotency_key=f"telegram-feedback-stage-{index}",
+            useful=True,
+        )
+
+    staged = api.skill_mark_staged(workflow_key="morning-plan")
+
+    assert staged["status"] == "staged"
+    assert api.skill_candidates(ready_only=True) == {"items": []}

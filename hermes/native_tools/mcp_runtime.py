@@ -476,6 +476,12 @@ def skill_candidates(ready_only: bool = True) -> dict[str, object]:
 
 
 @mcp.tool()
+def skill_mark_staged(workflow_key: str) -> dict[str, object]:
+    """Mark a candidate staged only after the native skill write approval reported success."""
+    return api.skill_mark_staged(workflow_key=workflow_key)
+
+
+@mcp.tool()
 def memory_block_upsert(
     block_type: MemoryBlockType,
     subject: str,

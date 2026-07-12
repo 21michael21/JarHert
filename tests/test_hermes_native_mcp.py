@@ -228,6 +228,7 @@ def test_profile_uses_native_mcp_instead_of_terminal_allowlist() -> None:
     assert "action_plan_status" in config
     assert "action_plan_pause_confirmed" in config
     assert "action_plan_resume_confirmed" in config
+    assert "skill_mark_staged" in config
     assert "telegram_text_export_confirmed" in config
     assert "contact_add" in config
     assert "contact_list" in config

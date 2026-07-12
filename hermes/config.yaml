@@ -94,6 +94,7 @@ mcp_servers:
         - trip_cancel_confirmed
         - skill_feedback
         - skill_candidates
+        - skill_mark_staged
         - memory_block_upsert
         - memory_block_list
         - note_search

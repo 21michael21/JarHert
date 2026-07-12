@@ -359,6 +359,10 @@ class NativeToolsAPI:
         items = self._skills().list_candidates(ready_only=ready_only)
         return {"items": [_value_payload(item) for item in items]}
 
+    def skill_mark_staged(self, *, workflow_key: str) -> dict[str, Any]:
+        self._capabilities().require("skill.feedback")
+        return _value_payload(self._skills().mark_staged(workflow_key))
+
     def memory_block_upsert(self, **payload: Any) -> dict[str, Any]:
         self._capabilities().require("memory.write")
         return _value_payload(self._personal_os().upsert_memory_block(**payload))
