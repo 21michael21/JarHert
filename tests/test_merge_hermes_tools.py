@@ -79,7 +79,7 @@ def test_merge_adds_managed_local_stt_without_overwriting_live_model(tmp_path: P
     target = tmp_path / "target.yaml"
     source.write_text(
         "model:\n  provider: openai-api\nstt:\n  enabled: true\n  echo_transcripts: false\n"
-        "  provider: local\n  local:\n    model: base\n",
+        "  provider: local\n  local:\n    model: small\n",
         encoding="utf-8",
     )
     target.write_text(
@@ -92,7 +92,7 @@ def test_merge_adds_managed_local_stt_without_overwriting_live_model(tmp_path: P
     updated = target.read_text(encoding="utf-8")
     assert "provider: openai-codex" in updated
     assert "default: gpt-5.4-mini" in updated
-    assert "stt:\n  enabled: true\n  echo_transcripts: false\n  provider: local\n  local:\n    model: base\n" in updated
+    assert "stt:\n  enabled: true\n  echo_transcripts: false\n  provider: local\n  local:\n    model: small\n" in updated
 
 
 def test_merge_keeps_live_stt_when_it_already_exists(tmp_path: Path) -> None:

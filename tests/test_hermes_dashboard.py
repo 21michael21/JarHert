@@ -138,6 +138,16 @@ class FakeDashboardAPI:
             ]
         }
 
+    def coding_job_enqueue(self, *, mode: str, prompt: str, idempotency_key: str):
+        assert mode == "coding"
+        return {
+            "id": 22,
+            "mode": mode,
+            "prompt": prompt,
+            "status": "queued",
+            "idempotency_key": idempotency_key,
+        }
+
     def note_search(self, *, query: str, project: str | None = None, limit: int = 50):
         assert query == "OAuth"
         assert project is None
@@ -392,6 +402,33 @@ def test_dashboard_creates_one_preview_plan_then_executes_only_after_explicit_co
     assert dashboard_api.executed_plans == [41]
 
 
+def test_dashboard_previews_coding_job_before_adding_it_to_the_queue() -> None:
+    app_client, _ = client()
+    sign_in(app_client)
+    payload = {
+        "request_id": "coding-task-001",
+        "mode": "coding",
+        "prompt": "PDF reader hangs while turning pages",
+    }
+
+    preview = app_client.post("/api/coding/jobs/preview", json=payload)
+    blocked = app_client.post("/api/coding/jobs/execute", json=payload)
+    queued = app_client.post(
+        "/api/coding/jobs/execute",
+        json={**payload, "coding_token": preview.json()["coding_token"]},
+    )
+
+    assert preview.status_code == 200
+    assert preview.json()["preview"] == [
+        "Поставить кодовую задачу в очередь",
+        "Runner работает в sandbox и ничего не деплоит.",
+    ]
+    assert blocked.status_code == 403
+    assert queued.status_code == 200
+    assert queued.json()["status"] == "queued"
+    assert queued.json()["idempotency_key"].startswith(f"dashboard:coding:{OWNER_ID}:coding-task-001")
+
+
 def test_dashboard_cancel_requires_the_plan_token() -> None:
     app_client, _ = client()
     sign_in(app_client)
@@ -452,6 +489,10 @@ def test_dashboard_has_a_touch_first_command_center_and_preserves_navigation_sta
     assert 'id="last-sync"' in page
     assert 'aria-live="polite"' in page
     assert 'aria-label="Обновить данные"' in page
+    assert 'id="coding-add"' in page
+    assert 'id="coding-dialog"' in page
+    assert 'id="quick-list-field"' not in page
+    assert 'id="quick-priority-field"' not in page
     assert "history.replaceState" in script
     assert "aria-current" in script
 

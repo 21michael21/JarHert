@@ -2,7 +2,7 @@ const $ = (id) => document.getElementById(id);
 const telegram = window.Telegram?.WebApp;
 const state = {
   activeView: "today", snapshot: null, tasks: {items: [], lists: [], priorities: []}, calendar: {items: []},
-  coding: {items: []}, notes: {items: []}, knowledge: {items: []}, subscriptions: {items: []}, digest: {items: []}, noteQuery: "", quickType: "task", edit: null, plan: null, clip: null, lastUpdatedAt: null,
+  coding: {items: []}, notes: {items: []}, knowledge: {items: []}, subscriptions: {items: []}, digest: {items: []}, noteQuery: "", quickType: "task", edit: null, plan: null, codingDraft: null, clip: null, lastUpdatedAt: null,
 };
 const VIEWS = new Set(["today", "tasks", "calendar", "code", "memory"]);
 
@@ -68,7 +68,6 @@ function render() {
   renderCalendar();
   renderCode();
   renderMemory(snapshot);
-  renderQuickOptions();
   setView(state.activeView);
 }
 
@@ -83,7 +82,7 @@ function renderToday(snapshot) {
   $("focus-done").onclick = () => focus && preparePlan([{type: "task.done", payload: {title: focus.title}}]);
   $("focus-move").onclick = () => focus && openTaskMove(focus);
   list("priorities", priorities, (item) => focusRow(findTask(field(item, "title", "text", "subject")) || {title: field(item, "title", "text", "subject")}), "На сегодня пока нет явных задач.");
-  list("today-calendar", state.calendar.items.slice(0, 3), eventRow, "На ближайшие дни встреч нет.");
+  list("today-calendar", state.calendar.items.slice(0, 3), compactEventRow, "На ближайшие дни встреч нет.");
   renderOverview(snapshot);
   renderRadar(snapshot);
 }
@@ -180,8 +179,18 @@ function eventRow(event) {
   row.append(when, copy, actions); return row;
 }
 
+function compactEventRow(event) {
+  const row = node("article", "timeline-row compact-row");
+  const when = node("time", "timeline-time", formatDayTime(event.start));
+  const copy = node("div", "row-copy");
+  copy.append(node("strong", "row-title", event.title), node("span", "row-meta", event.end ? `до ${formatTime(event.end)}` : "Весь день"));
+  row.append(when, copy);
+  row.addEventListener("click", () => setView("calendar"));
+  return row;
+}
+
 function renderCode() {
-  list("coding-jobs", state.coding.items || [], codingJobRow, "Кодовых задач пока нет. Напиши Hermes, что нужно разобрать.");
+  list("coding-jobs", state.coding.items || [], codingJobRow, "Кодовых задач пока нет. Добавь первую одной фразой.");
 }
 
 function codingJobRow(job) {
@@ -312,13 +321,6 @@ function setView(view, {syncHistory = true} = {}) {
   telegram?.BackButton?.hide();
 }
 
-function renderQuickOptions() {
-  const list = $("quick-list"); list.replaceChildren();
-  (state.tasks.lists || ["Inbox", "Today"]).forEach((name) => list.append(new Option(name, name)));
-  const priority = $("quick-priority"); priority.replaceChildren(); priority.append(new Option("Без приоритета", ""));
-  (state.tasks.priorities || []).forEach((name) => priority.append(new Option(name, name)));
-}
-
 function scheduleNoteSearch(value) {
   state.noteQuery = value.trim();
   window.clearTimeout(state.noteSearchTimer);
@@ -335,9 +337,14 @@ function openQuick(type = "task") { state.quickType = type; updateQuickForm(); $
 function updateQuickForm() {
   const type = state.quickType;
   document.querySelectorAll("[data-quick-type]").forEach((item) => item.classList.toggle("is-active", item.dataset.quickType === type));
-  const labels = {task: ["Новая задача", "Что сделать"], event: ["Новая встреча", "Название"], reminder: ["Новое напоминание", "О чём напомнить"], note: ["Новая заметка", "Запиши мысль"]};
+  const labels = {
+    task: ["Новая задача", "Что сделать", "Задача попадёт в Inbox без приоритета. Это можно изменить позже."],
+    event: ["Новая встреча", "Название", "Выбери время ниже — всё остальное можно поправить потом."],
+    reminder: ["Новое напоминание", "О чём напомнить", "Выбери время ниже. Повтор можно настроить в разделе «Память»."],
+    note: ["Новая заметка", "Запиши мысль", "Сохраним в личный Inbox, чтобы не потерять."],
+  };
   $("quick-title").textContent = labels[type][0]; $("quick-label").textContent = labels[type][1];
-  $("quick-list-field").hidden = type !== "task"; $("quick-priority-field").hidden = type !== "task";
+  $("quick-help").textContent = labels[type][2];
   $("quick-start-field").hidden = !["event", "reminder"].includes(type); $("quick-end-field").hidden = type !== "event";
   $("quick-start-label").textContent = type === "event" ? "Начало" : "Когда";
 }
@@ -345,7 +352,7 @@ function updateQuickForm() {
 function quickAction() {
   const content = $("quick-text").value.trim(); const type = state.quickType;
   if (!content) throw new Error("Заполни поле");
-  if (type === "task") return {type: "task.create", payload: {title: content, list_name: $("quick-list").value || "Inbox", priority: $("quick-priority").value || null}};
+  if (type === "task") return {type: "task.create", payload: {title: content}};
   if (type === "event") { const start = toIso($("quick-start").value); const end = toIso($("quick-end").value); if (!start || !end || end <= start) throw new Error("Укажи корректное время встречи"); return {type: "calendar.create", payload: {title: content, start, end}}; }
   if (type === "reminder") { const remindAt = toIso($("quick-start").value); if (!remindAt) throw new Error("Укажи время напоминания"); return {type: "reminder.create", payload: {text: content, remind_at: remindAt}}; }
   return {type: "note.save", payload: {subject: "Inbox", content}};
@@ -354,19 +361,44 @@ function quickAction() {
 async function preparePlan(actions) {
   try {
     const plan = await request("/api/plans", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({request_id: requestId(), actions})});
-    state.plan = plan; renderPlan(plan); $("plan-dialog").showModal();
+    state.plan = plan; state.codingDraft = null; $("plan-execute").textContent = "Применить"; renderPlan(plan); $("plan-dialog").showModal();
   } catch (error) { showNotice(friendlyError(error)); haptic("notification", "error"); }
 }
 
 function renderPlan(plan) { list("plan-preview", plan.preview || [], (line) => node("div", "preview-row", line), "В плане нет действий."); }
 async function executePlan(event) {
-  event.preventDefault(); if (!state.plan) return; const control = $("plan-execute"); control.disabled = true;
-  try { await request(`/api/plans/${state.plan.id}/execute`, {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({plan_token: state.plan.plan_token})}); $("quick-text").value = ""; $("plan-dialog").close(); state.plan = null; haptic("notification", "success"); showNotice("Готово"); await refresh(); }
+  event.preventDefault(); if (!state.plan && !state.codingDraft) return; const control = $("plan-execute"); control.disabled = true;
+  try {
+    if (state.codingDraft) {
+      await request("/api/coding/jobs/execute", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(state.codingDraft)});
+      $("coding-prompt").value = "";
+      showNotice("Кодовая задача в очереди");
+    } else {
+      await request(`/api/plans/${state.plan.id}/execute`, {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({plan_token: state.plan.plan_token})});
+      $("quick-text").value = "";
+      showNotice("Готово");
+    }
+    $("plan-dialog").close(); state.plan = null; state.codingDraft = null; haptic("notification", "success"); await refresh();
+  }
   catch (error) { haptic("notification", "error"); showNotice(friendlyError(error)); }
   finally { control.disabled = false; }
 }
 
+function openCoding() { $("coding-dialog").showModal(); window.setTimeout(() => $("coding-prompt").focus(), 0); }
+async function previewCoding(event) {
+  event.preventDefault(); const control = $("coding-form").querySelector('button[type="submit"]'); const prompt = $("coding-prompt").value.trim();
+  if (!prompt) { showNotice("Опиши, что нужно сделать"); return; }
+  control.disabled = true;
+  try {
+    const draft = await request("/api/coding/jobs/preview", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({request_id: requestId(), mode: "coding", prompt})});
+    state.codingDraft = {request_id: draft.request_id, mode: draft.mode, prompt: draft.prompt, coding_token: draft.coding_token};
+    state.plan = null; $("plan-execute").textContent = "Поставить в очередь"; renderPlan(draft); $("coding-dialog").close(); $("plan-dialog").showModal();
+  } catch (error) { haptic("notification", "error"); showNotice(friendlyError(error)); }
+  finally { control.disabled = false; }
+}
+
 async function cancelPlan() {
+  if (state.codingDraft) { state.codingDraft = null; $("plan-dialog").close(); return; }
   const plan = state.plan;
   if (!plan) { $("plan-dialog").close(); return; }
   const control = $("plan-cancel"); control.disabled = true;
@@ -417,6 +449,7 @@ function init() {
   $("quick-add").addEventListener("click", () => openQuick()); $("quick-cancel").addEventListener("click", () => $("quick-dialog").close());
   document.querySelectorAll("[data-quick-type]").forEach((item) => item.addEventListener("click", () => { state.quickType = item.dataset.quickType; updateQuickForm(); }));
   $("quick-form").addEventListener("submit", (event) => { event.preventDefault(); try { const action = quickAction(); $("quick-dialog").close(); preparePlan([action]); } catch (error) { showNotice(friendlyError(error)); } });
+  $("coding-add").addEventListener("click", openCoding); $("coding-cancel").addEventListener("click", () => $("coding-dialog").close()); $("coding-form").addEventListener("submit", previewCoding);
   $("edit-form").addEventListener("submit", saveEdit); $("dialog-cancel").addEventListener("click", () => $("edit-dialog").close());
   $("plan-form").addEventListener("submit", executePlan); $("plan-cancel").addEventListener("click", cancelPlan);
   $("note-search").addEventListener("input", (event) => scheduleNoteSearch(event.target.value));

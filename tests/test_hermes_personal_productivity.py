@@ -203,6 +203,7 @@ def test_due_reminders_are_delivered_once_and_recurring_item_advances(tmp_path: 
 def test_hermes_profile_exposes_productivity_tools_and_natural_workflows() -> None:
     config = (ROOT / "hermes" / "config.yaml").read_text(encoding="utf-8")
     soul = (ROOT / "hermes" / "SOUL.md").read_text(encoding="utf-8")
+    voice_skill = (ROOT / "hermes" / "skills" / "voice-inbox" / "SKILL.md").read_text(encoding="utf-8")
     skill = (ROOT / "hermes" / "skills" / "personal-operating-center" / "SKILL.md").read_text(
         encoding="utf-8"
     )
@@ -218,6 +219,9 @@ def test_hermes_profile_exposes_productivity_tools_and_natural_workflows() -> No
     ):
         assert f"- {tool}" in config
     assert "что у меня сегодня" in soul.lower()
+    assert "model: small" in config
+    assert "не проси пользователя переписывать голосовое" in soul.lower()
+    assert "не проси пользователя переписывать голосовое" in voice_skill.lower()
     assert "разгрузи голову" in skill.lower()
     assert "выбери три" in skill.lower()
 

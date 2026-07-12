@@ -16,8 +16,13 @@ text.
    `contact`, `project`, and timezone-aware `due_at` only when stated.
 4. Use one `mcp_jarhert_native_action_plan_confirm_execute` call for the entire
    transcript and one idempotency key for that Telegram voice message.
-5. If a missing time changes a meeting or deadline, ask one question before
-   creating the plan. Otherwise continue with a reasonable non-destructive item.
+5. If the transcript is noisy, keep every clear non-destructive item and ask
+   one short question only for a missing detail that changes the action. Do not
+   guess deadlines, but do not discard the whole inbox because one fragment is
+   unclear.
+6. Не проси пользователя переписывать голосовое, перечислять пункты по шаблону
+   или присылать второе сообщение ради форматирования. Покажи один понятный plan
+   из того, что удалось разобрать.
 
 The tool result is the source of truth. Report succeeded and failed items once;
 never claim a side effect from the proposed plan alone.

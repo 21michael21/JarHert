@@ -26,6 +26,7 @@ SESSION_SECONDS = 12 * 60 * 60
 TELEGRAM_AUTH_MAX_AGE_SECONDS = 60 * 60
 TELEGRAM_AUTH_FUTURE_SKEW_SECONDS = 5 * 60
 CLIP_TOKEN_SECONDS = 15 * 60
+CODING_TOKEN_SECONDS = 15 * 60
 
 
 @dataclass(frozen=True)
@@ -137,6 +138,59 @@ def create_app(
     async def coding_jobs(request: Request) -> JSONResponse:
         require_user(request)
         return JSONResponse(_call_read(lambda: dashboard_api.coding_job_list(limit=20)))
+
+    @app.post("/api/coding/jobs/preview")
+    async def preview_coding_job(request: Request) -> JSONResponse:
+        user_id = require_user(request)
+        payload = await _request_payload(request)
+        request_id = _request_id(payload.get("request_id"))
+        prompt = _required_text(payload.get("prompt"), label="Кодовая задача", limit=3_000)
+        mode = _coding_mode(payload.get("mode"))
+        return JSONResponse(
+            {
+                "request_id": request_id,
+                "mode": mode,
+                "prompt": prompt,
+                "preview": [
+                    "Поставить кодовую задачу в очередь",
+                    "Runner работает в sandbox и ничего не деплоит.",
+                ],
+                "coding_token": _new_coding_token(
+                    user_id=user_id,
+                    request_id=request_id,
+                    mode=mode,
+                    prompt=prompt,
+                    secret=config.session_secret,
+                    clock=clock,
+                ),
+            }
+        )
+
+    @app.post("/api/coding/jobs/execute")
+    async def execute_coding_job(request: Request) -> JSONResponse:
+        user_id = require_user(request)
+        payload = await _request_payload(request)
+        request_id = _request_id(payload.get("request_id"))
+        prompt = _required_text(payload.get("prompt"), label="Кодовая задача", limit=3_000)
+        mode = _coding_mode(payload.get("mode"))
+        _require_coding_token(
+            payload.get("coding_token"),
+            user_id=user_id,
+            request_id=request_id,
+            mode=mode,
+            prompt=prompt,
+            secret=config.session_secret,
+            clock=clock,
+        )
+        return JSONResponse(
+            _call_write(
+                lambda: dashboard_api.coding_job_enqueue(
+                    mode=mode,
+                    prompt=prompt,
+                    idempotency_key=f"dashboard:coding:{user_id}:{request_id}",
+                )
+            )
+        )
 
     @app.get("/api/notes")
     async def notes(request: Request, query: str = "", project: str | None = None) -> JSONResponse:
@@ -495,6 +549,51 @@ def _require_clip_token(
         raise HTTPException(status_code=403, detail="knowledge clip confirmation is not valid")
 
 
+def _new_coding_token(
+    *,
+    user_id: int,
+    request_id: str,
+    mode: str,
+    prompt: str,
+    secret: str,
+    clock: Callable[[], float],
+) -> str:
+    expires_at = int(clock()) + CODING_TOKEN_SECONDS
+    digest = hashlib.sha256(f"{mode}\n{prompt}".encode("utf-8")).hexdigest()
+    payload = f"dashboard-coding.{int(user_id)}.{expires_at}.{request_id}.{digest}"
+    signature = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{payload}.{signature}"
+
+
+def _require_coding_token(
+    token: Any,
+    *,
+    user_id: int,
+    request_id: str,
+    mode: str,
+    prompt: str,
+    secret: str,
+    clock: Callable[[], float],
+) -> None:
+    if not isinstance(token, str):
+        raise HTTPException(status_code=403, detail="coding job confirmation is required")
+    parts = token.split(".")
+    if len(parts) != 6 or parts[0] != "dashboard-coding" or not parts[1].isdigit() or not parts[2].isdigit():
+        raise HTTPException(status_code=403, detail="coding job confirmation is not valid")
+    if int(parts[1]) != int(user_id) or int(parts[2]) < int(clock()) or parts[3] != request_id:
+        raise HTTPException(status_code=403, detail="coding job confirmation is not valid")
+    expected = _new_coding_token(
+        user_id=user_id,
+        request_id=request_id,
+        mode=mode,
+        prompt=prompt,
+        secret=secret,
+        clock=lambda: int(parts[2]) - CODING_TOKEN_SECONDS,
+    )
+    if not hmac.compare_digest(token, expected):
+        raise HTTPException(status_code=403, detail="coding job confirmation is not valid")
+
+
 def _positive_id(value: int) -> int:
     if int(value) <= 0:
         raise HTTPException(status_code=422, detail="invalid id")
@@ -520,6 +619,13 @@ def _request_id(value: Any) -> str:
     if not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", clean):
         raise HTTPException(status_code=422, detail="invalid request id")
     return clean
+
+
+def _coding_mode(value: Any) -> str:
+    mode = str(value or "coding").strip().casefold()
+    if mode != "coding":
+        raise HTTPException(status_code=422, detail="unsupported coding mode")
+    return mode
 
 
 def _call_write(operation: Callable[[], dict[str, Any]]) -> dict[str, Any]:
@@ -600,7 +706,7 @@ def _dashboard_page() -> str:
     </section>
     <section id="view-tasks" class="view" hidden><div class="section-head"><div><p class="eyebrow">TRELLO</p><h2>Задачи</h2><p id="tasks-summary" class="section-copy muted"></p></div><button id="open-trello" class="text-button" type="button">Открыть Trello</button></div><div id="task-filters" class="filter-row" aria-label="Фильтр задач"></div><div id="task-list" class="work-list"></div></section>
     <section id="view-calendar" class="view" hidden><div class="section-head"><div><p class="eyebrow">7 ДНЕЙ</p><h2>Календарь</h2><p id="calendar-summary" class="section-copy muted"></p></div><button id="open-calendar" class="text-button" type="button">Открыть Calendar</button></div><div id="calendar-list" class="timeline"></div></section>
-    <section id="view-code" class="view" hidden><div class="section-head"><div><p class="eyebrow">CODE DESK</p><h2>Работа с кодом</h2></div></div><p class="muted section-copy">Задачи исполняются в отдельном sandbox: без deploy и без доступа к секретам.</p><div id="coding-jobs" class="work-list"></div></section>
+    <section id="view-code" class="view" hidden><div class="section-head"><div><p class="eyebrow">CODE DESK</p><h2>Работа с кодом</h2><p class="muted section-copy">Коротко опиши проблему. Runner подготовит diff и тесты, но ничего не деплоит сам.</p></div><button id="coding-add" class="primary compact-primary" type="button">Новая задача</button></div><div id="coding-jobs" class="work-list"></div></section>
     <section id="view-memory" class="view" hidden>
       <section class="section"><div class="section-head"><div><p class="eyebrow">НАПОМИНАНИЯ</p><h2>Ближайшее</h2></div><span id="reminder-count" class="count-pill">0</span></div><div id="reminders" class="work-list"></div></section>
       <section class="section"><div class="section-head"><div><p class="eyebrow">ЗАМЕТКИ</p><h2>Живая память</h2></div></div><label class="search-field" for="note-search"><span>Поиск по заметкам</span><input id="note-search" type="search" placeholder="OAuth, Hub_ML, идея..." autocomplete="off"></label><div id="notes" class="work-list"></div></section>
@@ -609,9 +715,10 @@ def _dashboard_page() -> str:
     </section>
   </section>
 </main>
-<button id="quick-add" class="quick-add" type="button" aria-label="Создать задачу, встречу, напоминание или заметку"><span aria-hidden="true">+</span><span>Добавить</span></button>
+<button id="quick-add" class="quick-add" type="button" aria-label="Быстро добавить задачу, встречу, напоминание или заметку"><span aria-hidden="true">+</span><span>Добавить</span></button>
 <nav id="bottom-nav" class="bottom-nav" aria-label="Навигация"><button class="nav-button is-active" data-view="today" type="button" aria-current="page">Сегодня</button><button class="nav-button" data-view="tasks" type="button">Задачи</button><button class="nav-button" data-view="calendar" type="button">План</button><button class="nav-button" data-view="code" type="button">Код</button><button class="nav-button" data-view="memory" type="button">Память</button></nav>
-<dialog id="quick-dialog"><form id="quick-form"><p class="eyebrow">БЫСТРОЕ ДОБАВЛЕНИЕ</p><h2 id="quick-title">Новая задача</h2><div class="quick-types"><button class="type-button is-active" data-quick-type="task" type="button">Задача</button><button class="type-button" data-quick-type="event" type="button">Встреча</button><button class="type-button" data-quick-type="reminder" type="button">Напоминание</button><button class="type-button" data-quick-type="note" type="button">Заметка</button></div><label><span id="quick-label">Что сделать</span><textarea id="quick-text" rows="3" maxlength="1000" required></textarea></label><label id="quick-list-field"><span>Колонка</span><select id="quick-list"></select></label><label id="quick-priority-field"><span>Приоритет</span><select id="quick-priority"></select></label><label id="quick-start-field" hidden><span id="quick-start-label">Когда</span><input id="quick-start" type="datetime-local"></label><label id="quick-end-field" hidden><span>До</span><input id="quick-end" type="datetime-local"></label><div class="dialog-actions"><button id="quick-cancel" class="secondary" type="button">Отмена</button><button class="primary" type="submit">К preview</button></div></form></dialog>
+<dialog id="quick-dialog"><form id="quick-form"><p class="eyebrow">ДОБАВИТЬ</p><h2 id="quick-title">Новая задача</h2><div class="quick-types" aria-label="Тип записи"><button class="type-button is-active" data-quick-type="task" type="button">Задача</button><button class="type-button" data-quick-type="event" type="button">Встреча</button><button class="type-button" data-quick-type="reminder" type="button">Напомнить</button><button class="type-button" data-quick-type="note" type="button">Заметка</button></div><label><span id="quick-label">Что сделать</span><textarea id="quick-text" rows="3" maxlength="1000" placeholder="Напиши как есть" required></textarea></label><p id="quick-help" class="muted form-help">Задача попадёт в Inbox без приоритета. Это можно изменить позже.</p><label id="quick-start-field" hidden><span id="quick-start-label">Когда</span><input id="quick-start" type="datetime-local"></label><label id="quick-end-field" hidden><span>До</span><input id="quick-end" type="datetime-local"></label><div class="dialog-actions"><button id="quick-cancel" class="secondary" type="button">Отмена</button><button class="primary" type="submit">Продолжить</button></div></form></dialog>
+<dialog id="coding-dialog"><form id="coding-form"><p class="eyebrow">CODE DESK</p><h2>Поставить кодовую задачу</h2><p class="muted form-help">Опиши, что сломано или что нужно изменить. Нужен только один preview перед очередью.</p><label><span>Задача</span><textarea id="coding-prompt" rows="5" maxlength="3000" placeholder="PDF тупит при перелистывании: найди причину и подготовь фикс с тестами" required></textarea></label><div class="dialog-actions"><button id="coding-cancel" class="secondary" type="button">Отмена</button><button class="primary" type="submit">К preview</button></div></form></dialog>
 <dialog id="edit-dialog"><form id="edit-form"><p class="eyebrow" id="edit-eyebrow">КОРРЕКТИРОВКА</p><h2 id="edit-title">Изменить</h2><p id="edit-help" class="muted"></p><label id="edit-field-label"><span id="edit-field-name">Значение</span><input id="edit-date" type="datetime-local" hidden><input id="edit-end" type="datetime-local" hidden><select id="edit-choice" hidden></select><textarea id="edit-value" rows="5"></textarea></label><label id="recurrence-field" hidden><span>Повтор</span><select id="edit-recurrence"><option value="keep">Не менять</option><option value="none">Не повторять</option><option value="daily">Каждый день</option><option value="weekly">Каждую неделю</option><option value="monthly">Каждый месяц</option></select></label><div class="dialog-actions"><button id="dialog-cancel" class="secondary" type="button">Отмена</button><button id="dialog-save" class="primary" type="submit">К preview</button></div></form></dialog>
 <dialog id="plan-dialog"><form id="plan-form"><p class="eyebrow">ПРОВЕРЬ И ПОДТВЕРДИ</p><h2>План действий</h2><div id="plan-preview" class="preview-list"></div><p class="muted">Изменения применятся один раз после подтверждения.</p><div class="dialog-actions"><button id="plan-cancel" class="secondary" type="button">Отмена</button><button id="plan-execute" class="primary" type="submit">Применить</button></div></form></dialog>
 <dialog id="report-dialog"><form method="dialog"><p class="eyebrow">ОТЧЁТ RUNNER</p><h2 id="report-title">Работа</h2><pre id="report-content" class="report-content"></pre><div class="dialog-actions"><button id="report-close" class="primary" type="submit">Закрыть</button></div></form></dialog>

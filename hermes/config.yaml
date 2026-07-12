@@ -23,7 +23,8 @@ display:
       cleanup_progress: true
       notifications: important
 
-# Voice messages stay on the VPS: faster-whisper "base" is already cached
+# Voice messages stay on the VPS: faster-whisper "small" improves Russian
+# transcription while remaining within the personal 4 GB VPS profile.
 # there and does not use an API key.  Suppress a raw transcript echo so one
 # voice note produces one useful response rather than chat noise.
 stt:
@@ -31,7 +32,7 @@ stt:
   echo_transcripts: false
   provider: local
   local:
-    model: base
+    model: small
 
 skills:
   write_approval: true
