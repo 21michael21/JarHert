@@ -52,6 +52,48 @@ The managed source clone on the server is `/home/deploy/jarhert-profile` by
 default. It is pinned to the exact commit pushed to `origin/main`; the upstream
 Hermes Agent clone is never pulled or reset by this command.
 
+### Telegram Mini App: личный кабинет
+
+Кабинет — отдельный маленький процесс рядом с Hermes. Он показывает план дня,
+Trello, Calendar, активные напоминания, заметки, проекты и состояние профиля.
+Открывай его только из кнопки меню бота: сервер проверяет подписанный
+`Telegram.WebApp.initData`, не доверяет `initDataUnsafe` и создаёт короткую
+HTTP-only сессию только для ID из allowlist. Формат проверки соответствует
+[официальной схеме Telegram Mini Apps](https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app).
+
+В `.env` профиля на VPS добавь секрет, которого нет в Git:
+
+```bash
+JARHERT_DASHBOARD_SESSION_SECRET=<random-32-bytes-or-long-passphrase>
+# Необязательно: если отличается от TELEGRAM_ALLOWED_USERS
+JARHERT_DASHBOARD_ALLOWED_TG_USER_IDS=<your-telegram-user-id>
+```
+
+Сервис сознательно слушает только `127.0.0.1:8788`. Не открывай этот порт в
+firewall. Для отдельного VDS без существующего веб-сервера можно поставить
+управляемый Caddy reverse proxy, который откроет только 80/443 и получит TLS:
+
+```bash
+JARHERT_DASHBOARD_DOMAIN=your-public-domain \
+deploy/vps/install_dashboard_https.sh
+```
+
+После этого установи сервис и настрой кнопку меню без вывода bot token:
+
+```bash
+deploy/vps/install_dashboard_service.sh
+set -a; . ~/.hermes/profiles/jarhert/.env; set +a
+~/.hermes/hermes-agent/venv/bin/python \
+  ~/.hermes/profiles/jarhert/scripts/configure_dashboard_menu_button.py \
+  --url https://your-public-domain
+```
+
+`configure_dashboard_menu_button.py` создаёт кнопку `Кабинет` только для одного
+разрешённого владельца. Telegram открывает Mini App из меню, а не из обычного браузера. В кабинете можно
+явно перенести или отменить личное напоминание и отредактировать заметку.
+Изменения Trello и Google Calendar по-прежнему проходят через Hermes-план с
+явным подтверждением в Telegram — кабинет не делает скрытых внешних мутаций.
+
 ### Локальный голосовой inbox
 
 Профиль включает бесплатное локальное распознавание Telegram-голосовых через

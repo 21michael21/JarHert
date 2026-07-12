@@ -1,0 +1,17 @@
+[Unit]
+Description=JarHert authenticated Telegram Mini App
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/deploy/.hermes/profiles/jarhert
+EnvironmentFile=/home/deploy/.hermes/profiles/jarhert/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/deploy/.hermes/hermes-agent/venv/bin/python /home/deploy/.hermes/profiles/jarhert/scripts/run_dashboard.py
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+
+[Install]
+WantedBy=default.target

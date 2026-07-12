@@ -11,6 +11,14 @@ env_requires:
   - name: TELEGRAM_ALLOWED_USERS
     description: "Разрешённые Telegram user ID через запятую"
     required: true
+  - name: JARHERT_DASHBOARD_SESSION_SECRET
+    description: "Random secret for signed Telegram Mini App sessions; never commit it"
+    required: false
+    default: ""
+  - name: JARHERT_DASHBOARD_ALLOWED_TG_USER_IDS
+    description: "Optional stricter Telegram user allowlist for the personal Mini App"
+    required: false
+    default: ""
   - name: OPENROUTER_API_KEY
     description: "OpenRouter, если используется free/cheap provider"
     required: false
