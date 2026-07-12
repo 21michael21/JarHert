@@ -125,6 +125,69 @@ def test_plan_can_pause_resume_without_losing_pending_actions(tmp_path) -> None:
     assert resumed.actions[0].status == "pending"
 
 
+def test_dag_waits_for_dependencies_and_keeps_checkpoints(tmp_path) -> None:
+    class DagAdapter(FakeAdapter):
+        def save_note(self, **payload):
+            self.calls.append(("note.save", payload))
+            return "note_id=note-1"
+
+    store = ActionPlanStore(tmp_path / "dag.sqlite3")
+    nodes = [
+        {"key": "note", "type": "note.save", "payload": {"subject": "Идея", "content": "Собрать план"}},
+        {"key": "task", "type": "task.create", "payload": {"title": "Собрать план"}, "depends_on": ["note"]},
+    ]
+    plan = store.create_dag(nodes, idempotency_key="dag-1")
+    replay = store.create_dag(nodes, idempotency_key="dag-1")
+    store.approve(plan.id)
+
+    result = execute_plan(store, plan.id, DagAdapter())
+
+    assert replay.id == plan.id
+    assert result.status == "succeeded"
+    assert [action.node_key for action in result.actions] == ["note", "task"]
+    assert result.actions[1].depends_on_action_ids == (result.actions[0].id,)
+
+
+def test_dag_blocks_child_when_parent_fails(tmp_path) -> None:
+    class FailingAdapter(FakeAdapter):
+        def create_task(self, **payload):
+            raise RuntimeError("Trello unavailable")
+
+    store = ActionPlanStore(tmp_path / "dag-failed.sqlite3")
+    plan = store.create_dag(
+        [
+            {"key": "parent", "type": "task.create", "payload": {"title": "Parent"}},
+            {
+                "key": "child",
+                "type": "calendar.create",
+                "payload": {"title": "Child", "start": "2030-01-02 12:00", "end": "2030-01-02 12:30"},
+                "depends_on": ["parent"],
+            },
+        ],
+        idempotency_key="dag-failed",
+    )
+    store.approve(plan.id)
+
+    result = execute_plan(store, plan.id, FailingAdapter())
+
+    assert result.status == "failed"
+    assert [item.status for item in result.actions] == ["failed", "failed"]
+    assert "Зависимость" in str(result.actions[1].error)
+
+
+def test_dag_rejects_forward_dependency(tmp_path) -> None:
+    store = ActionPlanStore(tmp_path / "dag-invalid.sqlite3")
+
+    with pytest.raises(ActionPlanError, match="Зависимость"):
+        store.create_dag(
+            [
+                {"key": "child", "type": "task.create", "payload": {"title": "Child"}, "depends_on": ["parent"]},
+                {"key": "parent", "type": "task.create", "payload": {"title": "Parent"}},
+            ],
+            idempotency_key="dag-invalid",
+        )
+
+
 def test_external_actions_use_one_batch_and_keep_per_action_results(tmp_path) -> None:
     store = ActionPlanStore(tmp_path / "plans.sqlite3")
     plan = store.create(

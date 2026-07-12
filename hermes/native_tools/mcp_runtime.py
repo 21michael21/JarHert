@@ -806,6 +806,19 @@ async def action_plan_confirm_execute(
 
 
 @mcp.tool()
+async def action_plan_dag_confirm_execute(
+    nodes: list[dict[str, object]], idempotency_key: str, ctx: Context
+) -> dict[str, object]:
+    """Run a dependency-aware notes/tasks/calendar plan after one approval."""
+    payload = [dict(node) for node in nodes]
+    return await api.action_plan_dag_confirm_execute(
+        nodes=payload,
+        idempotency_key=idempotency_key,
+        confirmer=lambda preview: _confirm(ctx, f"Выполнить этот зависимый plan?\n{preview}"),
+    )
+
+
+@mcp.tool()
 def action_plan_status(plan_id: int) -> dict[str, object]:
     """Show persisted plan state and completed checkpoints without executing anything."""
     return api.action_plan_get(plan_id=plan_id)

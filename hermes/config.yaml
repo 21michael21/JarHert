@@ -64,6 +64,7 @@ mcp_servers:
         - task_list
         - calendar_list
         - action_plan_confirm_execute
+        - action_plan_dag_confirm_execute
         - action_plan_status
         - action_plan_pause_confirmed
         - action_plan_resume_confirmed

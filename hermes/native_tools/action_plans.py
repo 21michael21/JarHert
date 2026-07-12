@@ -31,8 +31,10 @@ EXTERNAL_ACTIONS = frozenset(action for action in ACTION_SCHEMAS if action.start
 class PlannedAction:
     id: int
     position: int
+    node_key: str
     action_type: str
     payload: dict[str, Any]
+    depends_on_action_ids: tuple[int, ...]
     status: str
     result: str | None
     result_meta: dict[str, str]
@@ -79,11 +81,55 @@ class ActionPlanStore:
                     payload.setdefault("idempotency_key", f"{key}:action:{position}")
                 connection.execute(
                     """
-                    INSERT INTO plan_actions(plan_id, position, action_type, payload_json, status)
-                    VALUES (?, ?, ?, ?, 'pending')
+                    INSERT INTO plan_actions(plan_id, position, node_key, action_type, payload_json, depends_on_json, status)
+                    VALUES (?, ?, ?, ?, ?, '[]', 'pending')
                     """,
-                    (plan_id, position, item["type"], _json(payload)),
+                    (plan_id, position, f"action-{position + 1}", item["type"], _json(payload)),
                 )
+            connection.commit()
+            return self._get(connection, plan_id)
+
+    def create_dag(self, nodes: list[dict[str, Any]], *, idempotency_key: str) -> ActionPlan:
+        """Create an ordered dependency graph without changing flat-plan semantics."""
+        key = _required(idempotency_key, "idempotency_key")[:180]
+        if not 1 <= len(nodes) <= 20:
+            raise ActionPlanError("Plan должен содержать от 1 до 20 nodes.")
+        normalized = _validate_nodes(nodes)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                "SELECT id FROM action_plans WHERE idempotency_key = ?", (key,)
+            ).fetchone()
+            if existing is not None:
+                connection.commit()
+                return self._get(connection, int(existing["id"]))
+            plan_id = int(
+                connection.execute(
+                    "INSERT INTO action_plans(status, idempotency_key) VALUES ('draft', ?)", (key,)
+                ).lastrowid
+            )
+            action_ids: dict[str, int] = {}
+            for position, item in enumerate(normalized):
+                payload = dict(item["payload"])
+                if item["type"] in {"commitment.create", "reminder.create"}:
+                    payload.setdefault("idempotency_key", f"{key}:node:{item['key']}")
+                action_id = int(
+                    connection.execute(
+                        """
+                        INSERT INTO plan_actions(plan_id, position, node_key, action_type, payload_json, depends_on_json, status)
+                        VALUES (?, ?, ?, ?, ?, ?, 'pending')
+                        """,
+                        (
+                            plan_id,
+                            position,
+                            item["key"],
+                            item["type"],
+                            _json(payload),
+                            _json([action_ids[parent] for parent in item["depends_on"]]),
+                        ),
+                    ).lastrowid
+                )
+                action_ids[item["key"]] = action_id
             connection.commit()
             return self._get(connection, plan_id)
 
@@ -161,6 +207,13 @@ class ActionPlanStore:
                 (_bounded(error, 500), action_id),
             )
 
+    def mark_blocked(self, action_id: int, error: str) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE plan_actions SET status = 'failed', error = ? WHERE id = ? AND status = 'pending'",
+                (_bounded(error, 500), action_id),
+            )
+
     def finish(self, plan_id: int) -> ActionPlan:
         plan = self.get(plan_id)
         statuses = {action.status for action in plan.actions}
@@ -203,8 +256,10 @@ class ActionPlanStore:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     plan_id INTEGER NOT NULL REFERENCES action_plans(id),
                     position INTEGER NOT NULL,
+                    node_key TEXT NOT NULL DEFAULT '',
                     action_type TEXT NOT NULL,
                     payload_json TEXT NOT NULL,
+                    depends_on_json TEXT NOT NULL DEFAULT '[]',
                     status TEXT NOT NULL,
                     result TEXT,
                     result_meta_json TEXT NOT NULL DEFAULT '{}',
@@ -213,6 +268,12 @@ class ActionPlanStore:
                 );
                 """
             )
+            columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(plan_actions)")}
+            if "node_key" not in columns:
+                connection.execute("ALTER TABLE plan_actions ADD COLUMN node_key TEXT NOT NULL DEFAULT ''")
+                connection.execute("UPDATE plan_actions SET node_key = 'action-' || (position + 1) WHERE node_key = ''")
+            if "depends_on_json" not in columns:
+                connection.execute("ALTER TABLE plan_actions ADD COLUMN depends_on_json TEXT NOT NULL DEFAULT '[]'")
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path, timeout=5)
@@ -229,23 +290,24 @@ def execute_plan(store: ActionPlanStore, plan_id: int, adapter: Any) -> ActionPl
     if plan.status != "approved":
         raise ActionPlanError("Plan должен быть подтверждён перед выполнением.")
     actions = list(plan.actions)
-    index = 0
-    while index < len(actions):
-        action = actions[index]
-        if action.status != "pending":
-            index += 1
-            continue
+    while True:
+        pending = [action for action in actions if action.status == "pending"]
+        if not pending:
+            return store.finish(plan_id)
+        statuses = {action.id: action.status for action in actions}
+        ready = [
+            action
+            for action in pending
+            if all(statuses.get(parent_id) == "succeeded" for parent_id in action.depends_on_action_ids)
+        ]
+        if not ready:
+            for action in pending:
+                store.mark_blocked(action.id, "Зависимость не завершилась успешно.")
+            return store.finish(plan_id)
+        action = ready[0]
         batch_handler = getattr(adapter, "execute_batch", None)
         if action.action_type in EXTERNAL_ACTIONS and callable(batch_handler):
-            batch = [action]
-            cursor = index + 1
-            while (
-                cursor < len(actions)
-                and actions[cursor].status == "pending"
-                and actions[cursor].action_type in EXTERNAL_ACTIONS
-            ):
-                batch.append(actions[cursor])
-                cursor += 1
+            batch = [item for item in ready if item.action_type in EXTERNAL_ACTIONS]
             for item in batch:
                 store.mark_running(item.id)
             try:
@@ -263,7 +325,7 @@ def execute_plan(store: ActionPlanStore, plan_id: int, adapter: Any) -> ActionPl
                         store.mark_succeeded(item.id, str(result.get("result") or "Готово."))
                     else:
                         store.mark_failed(item.id, str(result.get("error") or "Batch action failed"))
-            index = cursor
+            actions = list(store.get(plan_id).actions)
             continue
         store.mark_running(action.id)
         try:
@@ -272,8 +334,7 @@ def execute_plan(store: ActionPlanStore, plan_id: int, adapter: Any) -> ActionPl
             store.mark_failed(action.id, str(error) or type(error).__name__)
         else:
             store.mark_succeeded(action.id, result)
-        index += 1
-    return store.finish(plan_id)
+        actions = list(store.get(plan_id).actions)
 
 
 def _execute_action(adapter: Any, action_type: str, payload: dict[str, Any]) -> str:
@@ -307,10 +368,32 @@ def _validate_action(item: dict[str, Any]) -> dict[str, Any]:
     return {"type": action_type, "payload": payload}
 
 
+def _validate_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for node in nodes:
+        if not isinstance(node, dict):
+            raise ActionPlanError("Каждый node должен быть JSON-объектом.")
+        key = _required(str(node.get("key") or ""), "node key")
+        if key in seen:
+            raise ActionPlanError("Node keys должны быть уникальны.")
+        dependencies = node.get("depends_on") or []
+        if not isinstance(dependencies, list) or any(
+            not isinstance(item, str) or item not in seen for item in dependencies
+        ):
+            raise ActionPlanError("Зависимость node должна ссылаться на предыдущий node.")
+        action = _validate_action({"type": node.get("type"), "payload": node.get("payload")})
+        normalized.append({"key": key, **action, "depends_on": dependencies})
+        seen.add(key)
+    return normalized
+
+
 def _action_from_row(row: sqlite3.Row) -> PlannedAction:
     return PlannedAction(
-        id=int(row["id"]), position=int(row["position"]), action_type=row["action_type"],
-        payload=json.loads(row["payload_json"]), status=row["status"], result=row["result"],
+        id=int(row["id"]), position=int(row["position"]), node_key=str(row["node_key"]),
+        action_type=row["action_type"], payload=json.loads(row["payload_json"]),
+        depends_on_action_ids=tuple(int(value) for value in json.loads(row["depends_on_json"])),
+        status=row["status"], result=row["result"],
         result_meta=json.loads(row["result_meta_json"]), error=row["error"],
     )
 

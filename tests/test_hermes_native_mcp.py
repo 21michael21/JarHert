@@ -83,6 +83,35 @@ def test_native_api_cancelled_plan_has_no_side_effect(tmp_path: Path) -> None:
     assert result["actions"][0]["status"] == "pending"
 
 
+def test_native_api_executes_one_confirmed_dependency_plan(tmp_path: Path) -> None:
+    api = NativeToolsAPI(database_path=tmp_path / "personal.sqlite3", adapter_factory=FakeAdapter)
+    previews: list[str] = []
+
+    async def confirm(preview: str) -> bool:
+        previews.append(preview)
+        return True
+
+    result = asyncio.run(
+        api.action_plan_dag_confirm_execute(
+            nodes=[
+                {"key": "note", "type": "note.save", "payload": {"subject": "OAuth", "content": "Проверить refresh"}},
+                {
+                    "key": "task",
+                    "type": "task.create",
+                    "payload": {"title": "Проверить refresh"},
+                    "depends_on": ["note"],
+                },
+            ],
+            idempotency_key="telegram-update-dag-1",
+            confirmer=confirm,
+        )
+    )
+
+    assert result["status"] == "succeeded"
+    assert len(previews) == 1
+    assert result["actions"][1]["depends_on_action_ids"] == (result["actions"][0]["id"],)
+
+
 def test_native_api_export_requires_confirmation(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
@@ -195,6 +224,7 @@ def test_profile_uses_native_mcp_instead_of_terminal_allowlist() -> None:
     assert "${HERMES_HOME}/.venv/bin/python" in config
     assert "native_tools/mcp_runtime.py" in config
     assert "action_plan_confirm_execute" in config
+    assert "action_plan_dag_confirm_execute" in config
     assert "action_plan_status" in config
     assert "action_plan_pause_confirmed" in config
     assert "action_plan_resume_confirmed" in config

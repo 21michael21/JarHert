@@ -719,6 +719,25 @@ class NativeToolsAPI:
             store.approve(plan.id)
         return _plan_payload(execute_plan(store, plan.id, self._action_adapter()))
 
+    async def action_plan_dag_confirm_execute(
+        self,
+        *,
+        nodes: list[dict[str, Any]],
+        idempotency_key: str,
+        confirmer: Confirmer,
+    ) -> dict[str, Any]:
+        for node in nodes:
+            self._capabilities().require(str(node.get("type") or ""))
+        store = self._plans()
+        plan = store.create_dag(nodes, idempotency_key=idempotency_key)
+        if plan.status in {"succeeded", "partial", "failed"}:
+            return _plan_payload(plan)
+        if plan.status == "draft":
+            if not await confirmer(_plan_preview(plan)):
+                return _plan_payload(store.cancel(plan.id))
+            store.approve(plan.id)
+        return _plan_payload(execute_plan(store, plan.id, self._action_adapter()))
+
     def telegram_text_export(
         self,
         *,
