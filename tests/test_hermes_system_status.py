@@ -44,6 +44,11 @@ def test_system_status_reports_operational_facts_without_personal_content(tmp_pa
             INSERT INTO native_coding_jobs VALUES ('queued', 'pending');
             INSERT INTO native_coding_jobs VALUES ('running', 'delivered');
             INSERT INTO native_coding_jobs VALUES ('failed', 'pending');
+            CREATE TABLE personal_summary_deliveries (
+                id INTEGER PRIMARY KEY, summary_type TEXT, status TEXT, updated_at TEXT
+            );
+            INSERT INTO personal_summary_deliveries VALUES (1, 'daily', 'sent', '2030-01-01T08:00:00+00:00');
+            INSERT INTO personal_summary_deliveries VALUES (2, 'weekly', 'failed', '2030-01-01T18:00:00+00:00');
             """
         )
     backup = tmp_path / "backups"
@@ -74,6 +79,11 @@ def test_system_status_reports_operational_facts_without_personal_content(tmp_pa
         "failed": 1,
         "delivery_pending": 2,
     }
+    assert status["personal_summaries"] == {
+        "available": True,
+        "daily": {"status": "sent", "updated_at": "2030-01-01T08:00:00+00:00"},
+        "weekly": {"status": "failed", "updated_at": "2030-01-01T18:00:00+00:00"},
+    }
     assert status["resources"]["zombie_children"] == [124]
     assert status["resources"]["memory_used_percent"] == 75.0
     assert status["cron"]["jobs"] == 2
@@ -102,6 +112,7 @@ def test_system_status_marks_backup_unconfigured_without_reading_a_secret(tmp_pa
     assert status["backup"]["secret_file_mode"] is None
     assert status["provider"] == {"name": "unknown", "model": "unknown"}
     assert status["coding_queue"]["available"] is False
+    assert status["personal_summaries"]["available"] is False
 
 
 def test_profile_exposes_status_only_through_native_mcp() -> None:

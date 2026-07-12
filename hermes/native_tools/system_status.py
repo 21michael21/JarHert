@@ -41,6 +41,7 @@ def collect_system_status(
         "gateway": {"active": active, "main_pid": main_pid},
         "provider": _model_config(profile / "config.yaml"),
         "coding_queue": _coding_queue_status(database),
+        "personal_summaries": _personal_summary_status(database),
         "automation": {
             "watchdog_timer_active": _systemctl_active("hermes-watchdog.timer", command_runner),
             "backup_timer_active": _systemctl_active("hermes-backup.timer", command_runner),
@@ -146,6 +147,34 @@ def _coding_queue_status(database: Path) -> dict[str, int | bool]:
     for status in ("queued", "running", "failed"):
         result[status] = int(statuses.get(status, 0))
     result["delivery_pending"] = int(pending[0]) if pending else 0
+    return result
+
+
+def _personal_summary_status(database: Path) -> dict[str, dict[str, str | None] | bool]:
+    result: dict[str, dict[str, str | None] | bool] = {
+        "available": False,
+        "daily": {"status": None, "updated_at": None},
+        "weekly": {"status": None, "updated_at": None},
+    }
+    if not database.is_file():
+        return result
+    try:
+        with sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT summary_type, status, updated_at
+                FROM personal_summary_deliveries
+                WHERE id IN (
+                    SELECT MAX(id) FROM personal_summary_deliveries GROUP BY summary_type
+                )
+                """
+            ).fetchall()
+    except (OSError, sqlite3.Error):
+        return result
+    result["available"] = True
+    for summary_type, status, updated_at in rows:
+        if summary_type in {"daily", "weekly"}:
+            result[str(summary_type)] = {"status": str(status), "updated_at": str(updated_at)}
     return result
 
 
