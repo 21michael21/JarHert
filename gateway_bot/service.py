@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from assistant.admin_status_service import build_perf_status_text
 from assistant.action_queue import ActionStatus
-from assistant.input_router import UnifiedInput, normalize_input_text
+from assistant.input_router import InputKind, UnifiedInput, normalize_input_text
 from assistant.job_orchestration import compute_job_status
 from assistant.pipeline import AssistantPipeline
 from assistant.tool_result_ids import compact_result_meta
@@ -41,6 +41,7 @@ class GatewayService:
         *,
         idempotency_key: str = "",
         trace_id: str = "",
+        force_plan_preview: bool = False,
     ) -> AssistantReply:
         if not self.is_allowed(tg_user_id):
             return AssistantReply(
@@ -91,7 +92,13 @@ class GatewayService:
                 )
             return captured_feedback
         try:
-            reply = self.pipeline.handle_text(user, text, idempotency_key=idempotency_key, trace_id=trace_id)
+            reply = self.pipeline.handle_text(
+                user,
+                text,
+                idempotency_key=idempotency_key,
+                trace_id=trace_id,
+                force_plan_preview=force_plan_preview,
+            )
         except Exception:
             if idempotency_key and self.inbound_updates is not None:
                 self.inbound_updates.mark_failed(user_id, idempotency_key)
@@ -180,7 +187,16 @@ class GatewayService:
                 blocked_reason="input_needs_clarification",
                 trace_id=trace_id,
             )
-        return self.handle_text(tg_user_id, text, idempotency_key=idempotency_key, trace_id=trace_id)
+        reply = self.handle_text(
+            tg_user_id,
+            text,
+            idempotency_key=idempotency_key,
+            trace_id=trace_id,
+            force_plan_preview=inbound.kind == InputKind.VOICE,
+        )
+        if inbound.kind == InputKind.VOICE and not reply.suppress_delivery:
+            return replace(reply, text=_voice_preview_text(reply.text))
+        return reply
 
     def create_personal_export(self, tg_user_id: int):
         if not self.is_allowed(tg_user_id):
@@ -644,6 +660,13 @@ def _compact(value: str | None, *, limit: int = 120) -> str:
     if len(clean) <= limit:
         return clean
     return clean[: limit - 1].rstrip() + "…"
+
+
+def _voice_preview_text(reply_text: str) -> str:
+    clean = (reply_text or "").strip()
+    if not clean:
+        return "Голосовое разобрал, но план не собрал. Скажи чуть конкретнее."
+    return f"Голосовое разобрал. Проверь план:\n\n{clean}"
 
 
 def _reply_to_payload(reply: AssistantReply) -> dict:

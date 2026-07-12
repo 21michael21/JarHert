@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-from assistant.types import AssistantReply, Intent
+from assistant.input_router import InputKind, UnifiedInput
+from assistant.types import AssistantReply, Intent, ReplyButton
 from gateway_bot.blocking_executor import BoundedUserExecutor
 from gateway_bot.telegram_handlers import _process_voice
 
@@ -23,10 +24,18 @@ def test_voice_pipeline_downloads_then_transcribes_and_handles_in_one_user_queue
             return "поставь напоминание"
 
     class Service:
-        def handle_text(self, user_id, text, *, idempotency_key):
-            calls.append("handle_text")
-            assert (user_id, text, idempotency_key) == (1001, "поставь напоминание", "telegram:1:2")
-            return AssistantReply(text="Поставил.", intent=Intent.REMIND)
+        def handle_input(self, user_id, inbound, *, idempotency_key):
+            calls.append("handle_input")
+            assert (user_id, inbound, idempotency_key) == (
+                1001,
+                UnifiedInput(kind=InputKind.VOICE, text="поставь напоминание"),
+                "telegram:1:2",
+            )
+            return AssistantReply(
+                text="Нужно одно подтверждение для Job #3:\n1. Создать напоминание",
+                intent=Intent.AGENT_DO,
+                buttons=[[ReplyButton("Подтвердить всё", "ai:confirm_job:3")]],
+            )
 
     message = SimpleNamespace(
         from_user=SimpleNamespace(id=1001),
@@ -48,5 +57,7 @@ def test_voice_pipeline_downloads_then_transcribes_and_handles_in_one_user_queue
     finally:
         executor.close()
 
-    assert calls == ["download", "transcribe", "handle_text"]
-    assert reply.text == "Расшифровал: поставь напоминание\n\nПоставил."
+    assert calls == ["download", "transcribe", "handle_input"]
+    assert reply.text.startswith("Голосовое разобрал. Проверь план:")
+    assert "Расшифровал:" not in reply.text
+    assert reply.buttons[0][0].callback_data == "ai:confirm_job:3"

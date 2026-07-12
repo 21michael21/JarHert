@@ -360,7 +360,7 @@ async def _process_voice(
             idempotency_key=root_key,
             **trace_kwargs,
         )
-        return replace(reply, text=f"Расшифровал: {text}\n\n{reply.text}")
+        return replace(reply, text=_voice_reply_text(reply.text))
 
     return await blocking_executor.run_serialized(user_id, operation)
 
@@ -369,3 +369,11 @@ def _request_error_text(error: Exception) -> str:
     if isinstance(error, BlockingCallTimeout):
         return "Действие заняло слишком много времени. Попробуй ещё раз чуть позже."
     return "Не смог обработать сообщение. Попробуй ещё раз."
+
+
+def _voice_reply_text(reply_text: str) -> str:
+    clean = (reply_text or "").strip()
+    if clean.startswith("Голосовое разобрал."):
+        return clean
+    prefix = "Голосовое разобрал. Проверь план:" if clean.startswith("Нужно одно подтверждение") else "Голосовое разобрал."
+    return f"{prefix}\n\n{clean}" if clean else "Не смог разобрать голосовое. Попробуй короче или пришли текстом."

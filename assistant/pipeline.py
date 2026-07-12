@@ -47,6 +47,7 @@ class _PipelineRequestContext:
     perf: PerfRecorder
     trace_id: str
     idempotency_key: str = ""
+    force_plan_preview: bool = False
     extracted_actions: list[PlannedAction] = field(default_factory=list)
 
 
@@ -130,6 +131,7 @@ class AssistantPipeline:
         *,
         idempotency_key: str = "",
         trace_id: str = "",
+        force_plan_preview: bool = False,
     ) -> AssistantReply:
         recorder = PerfRecorder()
         trace_id = trace_id or new_trace_id()
@@ -137,6 +139,7 @@ class AssistantPipeline:
             perf=recorder,
             trace_id=trace_id,
             idempotency_key=idempotency_key,
+            force_plan_preview=force_plan_preview,
         )
         context_token = self._request_context.set(request_context)
         try:
@@ -225,6 +228,9 @@ class AssistantPipeline:
         natural_route = None
         if not (parsed.raw_text or "").strip().startswith("/"):
             natural_route = self._route_natural_text(user, parsed.raw_text)
+            request_context = self._request_context.get()
+            if natural_route.actions and request_context is not None and request_context.force_plan_preview:
+                return self._execute_natural_route(user, natural_route)
             if len(natural_route.actions) > 1:
                 return self._execute_natural_route(user, natural_route)
 
@@ -956,6 +962,7 @@ class AssistantPipeline:
             perf=self._perf,
             trace_id=self._current_trace_id,
             idempotency_key=self._current_idempotency_key,
+            force_plan_preview=bool(request_context and request_context.force_plan_preview),
         )
 
     def _queue_direct_action(

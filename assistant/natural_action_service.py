@@ -60,15 +60,17 @@ class NaturalActionService:
         perf: PerfRecorder,
         trace_id: str = "",
         idempotency_key: str = "",
+        force_plan_preview: bool = False,
     ) -> AssistantReply:
         if any(action.needs_confirmation for action in route.actions):
             return self.responses.clarification_question("natural_action_needs_clarification")
-        if self.action_queue is not None and any(is_heavy_action(action) for action in route.actions):
+        if self.action_queue is not None and (force_plan_preview or any(is_heavy_action(action) for action in route.actions)):
             return self.queue_route(
                 user,
                 route,
                 trace_id=trace_id,
                 idempotency_key=idempotency_key,
+                force_confirmation=force_plan_preview,
             )
         if self.action_queue is None and any(self._needs_approval(action) for action in route.actions):
             return self.responses.clarification_question("action_needs_confirmation")
@@ -138,6 +140,7 @@ class NaturalActionService:
         *,
         trace_id: str = "",
         idempotency_key: str = "",
+        force_confirmation: bool = False,
     ) -> AssistantReply:
         labels = [natural_action_label(action) for action in route.actions]
         goal = "; ".join(labels)
@@ -152,7 +155,7 @@ class NaturalActionService:
         self._log(user.user_id, "job_created", {"job_id": job.id, "goal": goal}, trace_id)
         pending_actions = []
         previous_action_id: int | None = None
-        job_needs_confirmation = any(self._needs_approval(action) for action in route.actions)
+        job_needs_confirmation = force_confirmation or any(self._needs_approval(action) for action in route.actions)
         for index, action in enumerate(route.actions, start=1):
             queued = self.action_queue.enqueue(
                 user_id=user.user_id,

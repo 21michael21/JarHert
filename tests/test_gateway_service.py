@@ -1,4 +1,5 @@
 from assistant.hermes_client import FakeHermesClient
+from assistant.input_router import InputKind, UnifiedInput
 from assistant.limits import DailyLimitStore
 from assistant.pipeline import AssistantPipeline
 from assistant.types import Intent
@@ -43,6 +44,32 @@ def test_gateway_service_blocks_user_not_in_allowlist() -> None:
     reply = service.handle_text(2002, "/ask привет")
     assert reply.blocked_reason == "user_not_allowed"
     assert "закрыт" in reply.text
+
+
+def test_voice_dump_always_becomes_one_confirmable_preview() -> None:
+    from assistant.action_queue import ActionStatus, InMemoryActionQueueStore
+    from assistant.agent_jobs import InMemoryAgentJobStore
+
+    queue = InMemoryActionQueueStore()
+    service = GatewayService(
+        pipeline=AssistantPipeline(
+            FakeHermesClient(),
+            DailyLimitStore(),
+            action_queue=queue,
+            agent_jobs=InMemoryAgentJobStore(),
+        )
+    )
+
+    reply = service.handle_input(
+        1001,
+        UnifiedInput(kind=InputKind.VOICE, text="поставь напоминание завтра в 12 заниматься ml"),
+        idempotency_key="telegram:voice:1",
+    )
+
+    assert reply.text.startswith("Голосовое разобрал. Проверь план:")
+    assert reply.buttons[0][0].callback_data.startswith("ai:confirm_job:")
+    assert queue.claim_next() is None
+    assert queue.list_for_user(1001)[0].status == ActionStatus.NEEDS_CONFIRMATION
 
 
 def test_gateway_service_allows_user_in_allowlist() -> None:
