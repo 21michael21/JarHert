@@ -93,11 +93,32 @@ def test_terminal_approval_timeout_is_not_reported_as_a_completed_coding_task() 
 
     worker = SandboxedHermesWorker(execute=execute, docker_available=lambda: True)
 
-    with pytest.raises(RuntimeError, match="\u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u0438"):
+    with pytest.raises(RuntimeError, match="terminal"):
         worker.run(
             SandboxTask(
                 mode="coding",
-                prompt="\u0418\u0441\u043f\u0440\u0430\u0432\u044c \u0442\u0435\u0441\u0442",
+                prompt="Исправь тест",
+                repository_url="https://github.com/example/project",
+            )
+        )
+
+
+def test_workspace_access_failure_is_not_reported_as_a_completed_coding_task() -> None:
+    def execute(argv, **_kwargs):
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout="The workspace is read-only, so I cannot clone or create files.",
+            stderr="",
+        )
+
+    worker = SandboxedHermesWorker(execute=execute, docker_available=lambda: True)
+
+    with pytest.raises(RuntimeError, match="workspace"):
+        worker.run(
+            SandboxTask(
+                mode="coding",
+                prompt="Исправь тест",
                 repository_url="https://github.com/example/project",
             )
         )

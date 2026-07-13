@@ -98,7 +98,7 @@ class SandboxedHermesWorker:
             )
         output = (result.stdout or "").strip()[:20_000]
         if _requires_terminal_approval(output):
-            raise RuntimeError("Sandbox worker остановился на terminal-подтверждении; job не выполнен.")
+            raise RuntimeError("Sandbox worker остановился без результата: terminal-подтверждение или workspace unavailable.")
         return SandboxResult(output=output, mode=task.mode)
 
     def preflight(self) -> None:
@@ -206,4 +206,7 @@ def _requires_terminal_approval(output: str) -> bool:
         or "timeout - denying command" in normalized
         or "разрешите выполнить" in normalized
         or "approve this command" in normalized
+        or "workspace is read-only" in normalized
+        or "workspace read-only" in normalized
+        or "рабочее пространство" in normalized and "только для чтения" in normalized
     )
