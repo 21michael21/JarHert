@@ -4,7 +4,10 @@ import argparse
 from pathlib import Path
 
 
-MANAGED_NATIVE_ENV_KEYS = ("HERMES_NATIVE_SEND_COMMAND",)
+MANAGED_NATIVE_ENV_KEYS = (
+    "HERMES_NATIVE_SEND_COMMAND",
+    "HERMES_OWNER_TELEGRAM_CHAT_ID",
+)
 
 
 def merge_native_tool_allowlist(source: Path, target: Path) -> list[str]:
