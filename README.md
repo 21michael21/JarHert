@@ -607,6 +607,18 @@ job после lease снова доступна следующему runner. С
 Команда проверяет private SSH queue, Docker и локальный профиль Hermes, но не
 забирает job, не запускает модель и не создаёт внешний эффект.
 
+Для одного явного живого canary через Telegram используй отдельный runner. Он
+создаёт job только для публичной `octocat/Hello-World`, ждёт один preview,
+запускает Mac sandbox и принимает итог, только если Telegram-ответ содержит
+имя canary-файла и реальный `diff`:
+
+```bash
+.venv/bin/python scripts/live_coding_job.py --allow-live \
+  --telethon-env /path/to/telethon.env \
+  --telethon-session /path/to/telegram.session \
+  --queue-ssh deploy@your-vps-host
+```
+
 Script-only Hermes cron забирает завершённые jobs и присылает короткий итог в
 чат владельца. Он не вызывает LLM и при временной ошибке Telegram вернёт
 результат в очередь на повторную доставку.
