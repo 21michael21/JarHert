@@ -2,7 +2,7 @@ const $ = (id) => document.getElementById(id);
 const telegram = window.Telegram?.WebApp;
 const state = {
   activeView: "today", snapshot: null, tasks: {items: [], lists: [], priorities: []}, calendar: {items: []},
-  coding: {items: []}, notes: {items: []}, knowledge: {items: []}, subscriptions: {items: []}, digest: {items: []}, noteQuery: "", quickType: "task", edit: null, plan: null, codingDraft: null, clip: null, lastUpdatedAt: null,
+  coding: {items: []}, notes: {items: []}, knowledge: {items: []}, subscriptions: {items: []}, digest: {items: []}, noteQuery: "", taskQuery: "", taskFilter: "Все", taskMenu: null, quickType: "task", edit: null, plan: null, codingDraft: null, clip: null, lastUpdatedAt: null,
 };
 const VIEWS = new Set(["today", "tasks", "calendar", "code", "memory"]);
 
@@ -134,31 +134,29 @@ function focusRow(task) {
 
 function renderTasks() {
   const allItems = state.tasks.items || [];
-  $("tasks-summary").textContent = allItems.length
-    ? `${allItems.length} ${plural(allItems.length, "задача", "задачи", "задач")} в списках`
-    : "Задач пока нет.";
-  const filters = $("task-filters"); filters.replaceChildren();
-  const choices = ["Все", ...(state.tasks.lists || [])];
-  choices.forEach((choice) => {
-    const active = (state.taskFilter || "Все") === choice;
-    const filterButton = button(choice, `filter-button${active ? " is-active" : ""}`, () => { state.taskFilter = choice; renderTasks(); });
-    filters.append(filterButton);
-  });
-  const items = allItems.filter((item) => !state.taskFilter || state.taskFilter === "Все" || item.list_name === state.taskFilter);
-  list("task-list", items, taskRow, "Задач в этой колонке нет.");
+  const filter = $("task-list-filter");
+  const choices = [...new Set(["Все", ...(state.tasks.lists || []).filter(Boolean)])];
+  if (!choices.includes(state.taskFilter)) state.taskFilter = "Все";
+  filter.replaceChildren(...choices.map((choice) => new Option(choice, choice, false, choice === state.taskFilter)));
+  filter.value = state.taskFilter;
+  const visible = allItems.filter((item) => (
+    (state.taskFilter === "Все" || item.list_name === state.taskFilter)
+    && taskMatchesQuery(item, state.taskQuery)
+  ));
+  $("tasks-summary").textContent = taskSummary(allItems.length, visible.length, state.taskQuery, state.taskFilter);
+  list("task-list", visible, taskRow, state.taskQuery ? "Ничего не нашлось. Попробуй другое слово." : "Задач в этом списке нет.");
 }
 
 function taskRow(task) {
   const row = node("article", "work-row task-row");
   const copy = node("div", "row-copy");
-  const title = node("strong", "row-title", task.title);
+  const title = node("strong", "row-title task-title", taskDisplayTitle(task));
+  title.title = task.title;
   const meta = node("span", "row-meta", taskMeta(task));
   copy.append(title, meta);
   const actions = node("div", "row-actions");
-  actions.append(button("Готово", "row-button", () => preparePlan([{type: "task.done", payload: {title: task.title}}])));
-  actions.append(button("Перенести", "row-button", () => openTaskMove(task)));
-  actions.append(button(task.priority || "Без приоритета", "priority-button", () => openTaskPriority(task), `Изменить приоритет: ${task.title}`));
-  if (task.url) actions.append(button("Открыть", "row-button", () => openExternal(task.url)));
+  actions.append(button("Готово", "row-button task-complete", () => preparePlan([{type: "task.done", payload: {title: task.title}}])));
+  actions.append(button("...", "task-menu-button", () => openTaskMenu(task), `Другие действия с задачей: ${task.title}`));
   row.append(copy, actions); return row;
 }
 
@@ -228,6 +226,8 @@ function renderMemory(snapshot) {
   system.append(statusRow("Gateway", status.gateway?.active ? "работает" : "нет связи", Boolean(status.gateway?.active)));
   system.append(statusRow("Trello", integrations.trello_ok ? "подключён" : "проверь", Boolean(integrations.trello_ok)));
   system.append(statusRow("Calendar", integrations.calendar_ok ? "подключён" : "проверь", Boolean(integrations.calendar_ok)));
+  const github = status.github_mcp || {};
+  system.append(statusRow("GitHub", githubMcpLabel(github.state), github.state === "ready"));
   system.append(statusRow("Backup", status.backup?.configured ? "настроен" : "проверь", Boolean(status.backup?.configured)));
 }
 
@@ -297,8 +297,38 @@ function statusRow(label, value, good) {
   const row = node("div", "status-row"); row.append(node("span", "", label), node("b", good ? "good" : "warn", value)); return row;
 }
 
+function githubMcpLabel(state) {
+  return {ready: "read-only готов", disabled: "выключен", needs_token: "нужен токен", missing_binary: "нужна установка"}[state] || "проверь";
+}
+
 function taskMeta(task) {
   return [task.list_name, task.priority, task.due ? `до ${formatDayTime(task.due)}` : ""].filter(Boolean).join(" · ") || "Без срока";
+}
+
+function taskMatchesQuery(task, query) {
+  const needle = text(query).toLocaleLowerCase("ru-RU");
+  if (!needle) return true;
+  return [task.title, task.list_name, task.priority, ...(task.labels || [])]
+    .filter(Boolean)
+    .join(" ")
+    .toLocaleLowerCase("ru-RU")
+    .includes(needle);
+}
+
+function taskSummary(total, visible, query, filter) {
+  if (!total) return "Задач пока нет.";
+  if (query || filter !== "Все") return `Показано ${visible} из ${total}`;
+  return `${total} ${plural(total, "задача", "задачи", "задач")} в списках`;
+}
+
+function taskDisplayTitle(task) {
+  const title = text(task.title);
+  try {
+    const url = new URL(title);
+    return `Ссылка: ${url.hostname.replace(/^www\./, "")}`;
+  } catch (_) {
+    return title;
+  }
 }
 
 function findTask(title) { return (state.tasks.items || []).find((item) => item.title === title); }
@@ -379,6 +409,8 @@ async function executePlan(event) {
     if (state.codingDraft) {
       await request("/api/coding/jobs/execute", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(state.codingDraft)});
       $("coding-prompt").value = "";
+      $("coding-repository").value = "";
+      $("coding-sources").value = "";
       showNotice("Кодовая задача в очереди");
     } else {
       await request(`/api/plans/${state.plan.id}/execute`, {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({plan_token: state.plan.plan_token})});
@@ -391,14 +423,43 @@ async function executePlan(event) {
   finally { control.disabled = false; }
 }
 
-function openCoding() { $("coding-dialog").showModal(); window.setTimeout(() => $("coding-prompt").focus(), 0); }
+function openCoding() { state.codingDraft = null; updateCodingForm(); $("coding-dialog").showModal(); window.setTimeout(() => $("coding-prompt").focus(), 0); }
+function updateCodingForm() {
+  const research = $("coding-mode").value === "research";
+  $("coding-repository-field").hidden = research;
+  $("coding-sources-field").hidden = !research;
+  $("coding-prompt").placeholder = research
+    ? "Какая гипотеза? Например: PDF тормозит из-за двойного рендера"
+    : "PDF тупит при перелистывании: найди причину и подготовь фикс с тестами";
+}
+function codingRequestPayload() {
+  const mode = $("coding-mode").value;
+  const prompt = $("coding-prompt").value.trim();
+  if (!prompt) throw new Error("Опиши, что нужно проверить");
+  if (mode === "research") {
+    const sourceUrls = $("coding-sources").value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+    if (!sourceUrls.length) throw new Error("Добавь хотя бы одну HTTPS ссылку");
+    return {request_id: requestId(), mode, prompt, source_urls: sourceUrls};
+  }
+  const repositoryUrl = $("coding-repository").value.trim();
+  if (!repositoryUrl) throw new Error("Добавь GitHub-репозиторий");
+  return {request_id: requestId(), mode, prompt, repository_url: repositoryUrl};
+}
 async function previewCoding(event) {
-  event.preventDefault(); const control = $("coding-form").querySelector('button[type="submit"]'); const prompt = $("coding-prompt").value.trim();
-  if (!prompt) { showNotice("Опиши, что нужно сделать"); return; }
+  event.preventDefault(); const control = $("coding-form").querySelector('button[type="submit"]');
+  let payload;
+  try { payload = codingRequestPayload(); } catch (error) { showNotice(friendlyError(error)); return; }
   control.disabled = true;
   try {
-    const draft = await request("/api/coding/jobs/preview", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({request_id: requestId(), mode: "coding", prompt})});
-    state.codingDraft = {request_id: draft.request_id, mode: draft.mode, prompt: draft.prompt, coding_token: draft.coding_token};
+    const draft = await request("/api/coding/jobs/preview", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(payload)});
+    state.codingDraft = {
+      request_id: draft.request_id,
+      mode: draft.mode,
+      prompt: draft.prompt,
+      repository_url: draft.repository_url,
+      source_urls: draft.source_urls,
+      coding_token: draft.coding_token,
+    };
     state.plan = null; $("plan-execute").textContent = "Поставить в очередь"; renderPlan(draft); $("coding-dialog").close(); $("plan-dialog").showModal();
   } catch (error) { haptic("notification", "error"); showNotice(friendlyError(error)); }
   finally { control.disabled = false; }
@@ -416,6 +477,13 @@ async function cancelPlan() {
 
 function openTaskMove(task) { openChoiceEditor("task.move", task, "Переместить задачу", "Куда", state.tasks.lists || []); }
 function openTaskPriority(task) { openChoiceEditor("task.priority", task, "Приоритет задачи", "Приоритет", state.tasks.priorities || []); }
+function openTaskMenu(task) {
+  state.taskMenu = task;
+  $("task-menu-title").textContent = taskDisplayTitle(task);
+  $("task-menu-open").hidden = !task.url;
+  $("task-menu-dialog").showModal();
+}
+function closeTaskMenu() { $("task-menu-dialog").close(); }
 function openChoiceEditor(kind, item, title, label, choices) {
   state.edit = {kind, item}; setupEdit(title, taskMeta(item)); $("edit-field-name").textContent = label; $("edit-choice").hidden = false; $("edit-choice").replaceChildren(); choices.forEach((value) => $("edit-choice").append(new Option(value, value, false, value === item.priority || value === item.list_name))); $("edit-dialog").showModal();
 }
@@ -457,9 +525,14 @@ function init() {
   $("quick-add").addEventListener("click", () => openQuick()); $("quick-cancel").addEventListener("click", () => $("quick-dialog").close());
   document.querySelectorAll("[data-quick-type]").forEach((item) => item.addEventListener("click", () => { state.quickType = item.dataset.quickType; updateQuickForm(); }));
   $("quick-form").addEventListener("submit", (event) => { event.preventDefault(); try { const action = quickAction(); $("quick-dialog").close(); preparePlan([action]); } catch (error) { showNotice(friendlyError(error)); } });
-  $("coding-add").addEventListener("click", openCoding); $("coding-cancel").addEventListener("click", () => $("coding-dialog").close()); $("coding-form").addEventListener("submit", previewCoding);
+  $("coding-add").addEventListener("click", openCoding); $("coding-cancel").addEventListener("click", () => $("coding-dialog").close()); $("coding-mode").addEventListener("change", updateCodingForm); $("coding-form").addEventListener("submit", previewCoding);
   $("edit-form").addEventListener("submit", saveEdit); $("dialog-cancel").addEventListener("click", () => $("edit-dialog").close());
   $("plan-form").addEventListener("submit", executePlan); $("plan-cancel").addEventListener("click", cancelPlan);
+  $("task-search").addEventListener("input", (event) => { state.taskQuery = event.target.value; renderTasks(); });
+  $("task-list-filter").addEventListener("change", (event) => { state.taskFilter = event.target.value; renderTasks(); });
+  $("task-menu-move").addEventListener("click", () => { const task = state.taskMenu; closeTaskMenu(); if (task) openTaskMove(task); });
+  $("task-menu-priority").addEventListener("click", () => { const task = state.taskMenu; closeTaskMenu(); if (task) openTaskPriority(task); });
+  $("task-menu-open").addEventListener("click", () => { const task = state.taskMenu; closeTaskMenu(); if (task?.url) openExternal(task.url); });
   $("note-search").addEventListener("input", (event) => scheduleNoteSearch(event.target.value));
   $("knowledge-add").addEventListener("click", openKnowledgeClip); $("clip-form").addEventListener("submit", previewKnowledgeClip); $("clip-execute").addEventListener("click", executeKnowledgeClip); $("clip-cancel").addEventListener("click", () => $("clip-dialog").close());
   $("open-trello").addEventListener("click", () => openExternal(state.tasks.board_url || "https://trello.com/")); $("open-calendar").addEventListener("click", () => openExternal("https://calendar.google.com/"));

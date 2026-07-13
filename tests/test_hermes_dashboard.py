@@ -29,6 +29,7 @@ class FakeDashboardAPI:
         self.executed_plans: list[int] = []
         self.archived_urls: list[dict[str, object]] = []
         self.monitor_schedules: list[dict[str, object]] = []
+        self.coding_requests: list[dict[str, object]] = []
 
     def personal_today(self):
         return {
@@ -143,12 +144,30 @@ class FakeDashboardAPI:
             ]
         }
 
-    def coding_job_enqueue(self, *, mode: str, prompt: str, idempotency_key: str):
-        assert mode == "coding"
+    def coding_job_enqueue(
+        self,
+        *,
+        mode: str,
+        prompt: str,
+        idempotency_key: str,
+        repository_url: str | None = None,
+        source_urls: list[str] | None = None,
+    ):
+        self.coding_requests.append(
+            {
+                "mode": mode,
+                "prompt": prompt,
+                "idempotency_key": idempotency_key,
+                "repository_url": repository_url,
+                "source_urls": source_urls or [],
+            }
+        )
         return {
             "id": 22,
             "mode": mode,
             "prompt": prompt,
+            "repository_url": repository_url,
+            "source_urls": source_urls or [],
             "status": "queued",
             "idempotency_key": idempotency_key,
         }
@@ -408,12 +427,13 @@ def test_dashboard_creates_one_preview_plan_then_executes_only_after_explicit_co
 
 
 def test_dashboard_previews_coding_job_before_adding_it_to_the_queue() -> None:
-    app_client, _ = client()
+    app_client, dashboard_api = client()
     sign_in(app_client)
     payload = {
         "request_id": "coding-task-001",
         "mode": "coding",
         "prompt": "PDF reader hangs while turning pages",
+        "repository_url": "https://github.com/example/reader",
     }
 
     preview = app_client.post("/api/coding/jobs/preview", json=payload)
@@ -426,12 +446,49 @@ def test_dashboard_previews_coding_job_before_adding_it_to_the_queue() -> None:
     assert preview.status_code == 200
     assert preview.json()["preview"] == [
         "Поставить кодовую задачу в очередь",
+        "Репозиторий: https://github.com/example/reader",
         "Runner работает в sandbox и ничего не деплоит.",
     ]
     assert blocked.status_code == 403
     assert queued.status_code == 200
     assert queued.json()["status"] == "queued"
     assert queued.json()["idempotency_key"].startswith(f"dashboard:coding:{OWNER_ID}:coding-task-001")
+    assert dashboard_api.coding_requests == [
+        {
+            "mode": "coding",
+            "prompt": "PDF reader hangs while turning pages",
+            "idempotency_key": f"dashboard:coding:{OWNER_ID}:coding-task-001",
+            "repository_url": "https://github.com/example/reader",
+            "source_urls": [],
+        }
+    ]
+
+
+def test_dashboard_previews_source_bounded_hypothesis_before_queueing_it() -> None:
+    app_client, dashboard_api = client()
+    sign_in(app_client)
+    payload = {
+        "request_id": "research-task-001",
+        "mode": "research",
+        "prompt": "Проверь гипотезу о причинах тормозов PDF",
+        "source_urls": ["https://github.com/example/reader/issues"],
+    }
+
+    preview = app_client.post("/api/coding/jobs/preview", json=payload)
+    queued = app_client.post(
+        "/api/coding/jobs/execute",
+        json={**payload, "coding_token": preview.json()["coding_token"]},
+    )
+
+    assert preview.status_code == 200
+    assert preview.json()["preview"] == [
+        "Проверить гипотезу по источникам",
+        "Источники: 1",
+        "Runner работает в sandbox и ничего не деплоит.",
+    ]
+    assert queued.status_code == 200
+    assert dashboard_api.coding_requests[0]["mode"] == "research"
+    assert dashboard_api.coding_requests[0]["source_urls"] == ["https://github.com/example/reader/issues"]
 
 
 def test_dashboard_deletes_note_only_for_an_authenticated_telegram_session() -> None:
@@ -513,6 +570,23 @@ def test_dashboard_has_a_touch_first_command_center_and_preserves_navigation_sta
     assert 'id="quick-project-field"' in page
     assert "history.replaceState" in script
     assert "aria-current" in script
+
+
+def test_dashboard_tasks_and_code_desk_keep_mobile_actions_clear_and_compact() -> None:
+    app_client, _ = client()
+
+    page = app_client.get("/").text
+    script = (Path(__file__).parents[1] / "hermes" / "native_tools" / "dashboard_assets" / "dashboard.js").read_text()
+    stylesheet = (Path(__file__).parents[1] / "hermes" / "native_tools" / "dashboard_assets" / "dashboard.css").read_text()
+
+    assert 'id="task-search"' in page
+    assert 'id="task-list-filter"' in page
+    assert 'id="task-menu-dialog"' in page
+    assert "не коммитит и не деплоит" in page
+    assert "function taskMatchesQuery" in script
+    assert "function openTaskMenu" in script
+    assert ".task-menu-button" in stylesheet
+    assert "-webkit-line-clamp: 3" in stylesheet
 
 
 def test_dashboard_styles_keep_hidden_loading_panel_out_of_the_layout() -> None:
