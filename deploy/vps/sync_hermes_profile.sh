@@ -35,9 +35,11 @@ SOURCE_DIR="$3"
 PROFILE_DIR="$4"
 HERMES_PYTHON="$5"
 SYNC_CONFIG="$6"
+HERMES_SOURCE_DIR="${HERMES_SOURCE_DIR:-$(cd "$(dirname "$HERMES_PYTHON")/../.." && pwd)}"
 
 [[ -d "$PROFILE_DIR" ]] || { echo "Hermes profile is missing: $PROFILE_DIR" >&2; exit 2; }
 [[ -x "$HERMES_PYTHON" ]] || { echo "Hermes Python is missing: $HERMES_PYTHON" >&2; exit 2; }
+[[ -f "$HERMES_SOURCE_DIR/pyproject.toml" ]] || { echo "Hermes source is missing: $HERMES_SOURCE_DIR" >&2; exit 2; }
 
 if [[ ! -d "$SOURCE_DIR/.git" ]]; then
   git clone "$GIT_URL" "$SOURCE_DIR"
@@ -92,6 +94,11 @@ else
 fi
 
 HERMES_HOME="$PROFILE_DIR" "$HERMES_PYTHON" "$PROFILE_DIR/scripts/bootstrap_native_deps.py"
+# JarHert's native MCP is part of the running gateway, not the profile venv.
+# Install the gateway's pinned optional extra only when the SDK is absent.
+if ! "$HERMES_PYTHON" -c 'import mcp' >/dev/null 2>&1; then
+  "$HERMES_PYTHON" -m pip install "$HERMES_SOURCE_DIR[mcp]"
+fi
 # This value is consumed both by a shell and Hermes' dotenv parser. Shell-style
 # backslash escaping would make dotenv treat the complete command as one executable.
 sed -i '/^HERMES_NATIVE_SEND_COMMAND=/d' "$PROFILE_DIR/.env"
