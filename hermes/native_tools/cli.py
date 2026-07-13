@@ -258,7 +258,10 @@ def run_command(args: argparse.Namespace) -> Any:
             return distiller.mark_staged(args.workflow_key)
     if args.command == "sandbox" and args.sandbox_command == "run":
         worker = SandboxedHermesWorker(
-            profile_binary=os.getenv("HERMES_PROFILE_BIN", "jarhert")
+            profile_binary=os.getenv(
+                "HERMES_CODING_PROFILE_BIN",
+                "jarhert-coding",
+            )
         )
         return worker.run(
             SandboxTask(

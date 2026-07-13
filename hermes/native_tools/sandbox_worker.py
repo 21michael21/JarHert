@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -31,12 +32,16 @@ class SandboxedHermesWorker:
     def __init__(
         self,
         *,
-        profile_binary: str = "jarhert",
+        profile_binary: str | None = None,
         execute: Execute = subprocess.run,
         docker_available: Callable[[], bool] | None = None,
         allowed_research_hosts: set[str] | None = None,
     ) -> None:
-        self.profile_binary = profile_binary
+        # A normal JarHert profile may deliberately use the local terminal for
+        # conversational work. Coding jobs must never inherit that choice.
+        self.profile_binary = profile_binary or os.getenv(
+            "HERMES_CODING_PROFILE_BIN", "jarhert-coding"
+        )
         self.execute = execute
         self.docker_available = docker_available or _docker_available
         self.allowed_research_hosts = {
@@ -49,6 +54,7 @@ class SandboxedHermesWorker:
         if not self.docker_available():
             raise RuntimeError("Docker sandbox недоступен; запуск на host запрещён.")
         prompt = _build_prompt(task, self.allowed_research_hosts)
+        self._assert_docker_profile()
         toolsets = "coding" if task.mode == "coding" else "web,skills"
         argv = [
             self.profile_binary,
@@ -103,6 +109,7 @@ class SandboxedHermesWorker:
         """Check Docker and the local profile CLI without starting an agent turn."""
         if not self.docker_available():
             raise RuntimeError("Docker sandbox недоступен; запуск на host запрещён.")
+        self._assert_docker_profile()
         try:
             result = self.execute(
                 [self.profile_binary, "--help"],
@@ -115,6 +122,25 @@ class SandboxedHermesWorker:
             raise RuntimeError("Hermes profile CLI недоступен для coding runner.") from error
         if result.returncode != 0:
             raise RuntimeError("Hermes profile CLI недоступен для coding runner.")
+
+    def _assert_docker_profile(self) -> None:
+        """Reject a profile whose config would override the sandbox to local."""
+        try:
+            result = self.execute(
+                [self.profile_binary, "status"],
+                timeout=15,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise RuntimeError("Не удалось проверить backend coding-профиля.") from error
+        status = f"{result.stdout or ''}\n{result.stderr or ''}"
+        if result.returncode != 0 or not re.search(r"Backend:\s*docker\b", status, re.IGNORECASE):
+            raise RuntimeError(
+                "Coding-профиль должен быть настроен с terminal.backend=docker; "
+                "host fallback запрещён."
+            )
 
 
 def _build_prompt(task: SandboxTask, allowed_hosts: set[str]) -> str:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import socket
 import sys
 import threading
@@ -46,7 +47,7 @@ def run_once(*, client, worker, worker_id: str) -> bool:
             source_urls=tuple(payload.get("source_urls") or []),
         ))
     except Exception as error:
-        client.fail(job_id, worker_id, type(error).__name__)
+        client.fail(job_id, worker_id, _queue_failure_reason(error))
     else:
         client.complete(job_id, worker_id, result.output)
     finally:
@@ -62,6 +63,17 @@ def _heartbeat_loop(client, job_id: int, worker_id: str, stop: threading.Event) 
             client.heartbeat(job_id, worker_id)
         except Exception:
             return
+
+
+def _queue_failure_reason(error: Exception) -> str:
+    """Keep actionable worker diagnostics without persisting credentials."""
+    detail = str(error).strip() or type(error).__name__
+    detail = re.sub(
+        r"(?i)\b(?:sk|gh[pousr])[-_][A-Za-z0-9_-]+\b",
+        "<redacted>",
+        detail,
+    )
+    return detail[:500]
 
 
 def main() -> int:

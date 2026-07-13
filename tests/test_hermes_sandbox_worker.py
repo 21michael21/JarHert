@@ -10,8 +10,10 @@ from hermes.native_tools.sandbox_worker import SandboxTask, SandboxedHermesWorke
 def test_coding_task_runs_same_hermes_profile_with_docker_backend() -> None:
     calls: list[tuple[list[str], dict[str, str], int]] = []
 
-    def execute(argv, *, env, timeout, **_kwargs):
+    def execute(argv, *, env=None, timeout, **_kwargs):
         calls.append((argv, env, timeout))
+        if argv[-1] == "status":
+            return subprocess.CompletedProcess(argv, 0, stdout="Terminal Backend\nBackend: docker\n", stderr="")
         return subprocess.CompletedProcess(argv, 0, stdout="done\n", stderr="")
 
     worker = SandboxedHermesWorker(
@@ -30,7 +32,7 @@ def test_coding_task_runs_same_hermes_profile_with_docker_backend() -> None:
     )
 
     assert result.output == "done"
-    argv, env, timeout = calls[0]
+    argv, env, timeout = calls[1]
     assert argv[:2] == ["jarhert", "-z"]
     assert "--yolo" in argv
     assert argv[argv.index("--toolsets") + 1] == "coding"
@@ -44,6 +46,12 @@ def test_coding_task_runs_same_hermes_profile_with_docker_backend() -> None:
     assert env["TERMINAL_CONTAINER_PERSISTENT"] == "false"
     assert env["TERMINAL_DOCKER_PERSIST_ACROSS_PROCESSES"] == "false"
     assert timeout == 900
+
+
+def test_coding_worker_uses_dedicated_docker_profile_by_default() -> None:
+    worker = SandboxedHermesWorker(docker_available=lambda: True)
+
+    assert worker.profile_binary == "jarhert-coding"
 
 
 def test_non_github_or_non_https_repository_is_rejected() -> None:
@@ -84,6 +92,8 @@ def test_worker_refuses_to_fall_back_to_host_when_docker_is_missing() -> None:
 
 def test_terminal_approval_timeout_is_not_reported_as_a_completed_coding_task() -> None:
     def execute(argv, **_kwargs):
+        if argv[-1] == "status":
+            return subprocess.CompletedProcess(argv, 0, stdout="Backend: docker", stderr="")
         return subprocess.CompletedProcess(
             argv,
             0,
@@ -105,6 +115,8 @@ def test_terminal_approval_timeout_is_not_reported_as_a_completed_coding_task() 
 
 def test_workspace_access_failure_is_not_reported_as_a_completed_coding_task() -> None:
     def execute(argv, **_kwargs):
+        if argv[-1] == "status":
+            return subprocess.CompletedProcess(argv, 0, stdout="Backend: docker", stderr="")
         return subprocess.CompletedProcess(
             argv,
             0,
@@ -129,12 +141,25 @@ def test_sandbox_preflight_checks_cli_without_starting_an_agent_turn() -> None:
 
     def execute(argv, **kwargs):
         calls.append((argv, kwargs))
+        if argv[-1] == "status":
+            return subprocess.CompletedProcess(argv, 0, stdout="Backend: docker", stderr="")
         return subprocess.CompletedProcess(argv, 0, stdout="usage", stderr="")
 
     worker = SandboxedHermesWorker(profile_binary="jarhert", execute=execute, docker_available=lambda: True)
     worker.preflight()
 
-    assert calls[0][0] == ["jarhert", "--help"]
+    assert calls[0][0] == ["jarhert", "status"]
+    assert calls[1][0] == ["jarhert", "--help"]
+
+
+def test_sandbox_rejects_profile_that_would_run_commands_on_host() -> None:
+    def execute(argv, **_kwargs):
+        return subprocess.CompletedProcess(argv, 0, stdout="Backend: local", stderr="")
+
+    worker = SandboxedHermesWorker(execute=execute, docker_available=lambda: True)
+
+    with pytest.raises(RuntimeError, match="terminal.backend=docker"):
+        worker.preflight()
 
 
 def test_research_mode_uses_only_declared_sources() -> None:
@@ -142,6 +167,8 @@ def test_research_mode_uses_only_declared_sources() -> None:
 
     def execute(argv, **_kwargs):
         captured.append(argv)
+        if argv[-1] == "status":
+            return subprocess.CompletedProcess(argv, 0, stdout="Backend: docker", stderr="")
         return subprocess.CompletedProcess(argv, 0, stdout="report", stderr="")
 
     worker = SandboxedHermesWorker(
@@ -157,7 +184,7 @@ def test_research_mode_uses_only_declared_sources() -> None:
         )
     )
 
-    prompt = captured[0][captured[0].index("-z") + 1]
+    prompt = captured[1][captured[1].index("-z") + 1]
     assert "docs.python.org/3/library/sqlite3.html" in prompt
     assert "не используй другие источники" in prompt.lower()
 
@@ -182,8 +209,10 @@ def _prompt_for(task: SandboxTask) -> str:
 
     def execute(argv, **_kwargs):
         captured.append(argv)
+        if argv[-1] == "status":
+            return subprocess.CompletedProcess(argv, 0, stdout="Backend: docker", stderr="")
         return subprocess.CompletedProcess(argv, 0, stdout="done", stderr="")
 
     worker = SandboxedHermesWorker(execute=execute, docker_available=lambda: True)
     worker.run(task)
-    return captured[0][captured[0].index("-z") + 1]
+    return captured[1][captured[1].index("-z") + 1]

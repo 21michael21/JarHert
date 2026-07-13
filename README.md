@@ -326,9 +326,10 @@ resulting `SKILL.md` is staged through `skill_manage`, because
 ### Sandboxed coding and research
 
 The main chat keeps the local backend so ordinary Personal OS commands stay
-lightweight. Coding and bounded research use `personal-os sandbox run`, which
-starts the same `jarhert` profile with `TERMINAL_ENV=docker`. There is no second
-bot or second agent identity.
+lightweight. Coding and bounded research use a dedicated local
+`jarhert-coding` profile with `terminal.backend=docker`. There is no second bot
+or second agent identity, and the runner rejects a profile configured for host
+terminal access.
 
 The Docker workspace is ephemeral and limited to 1 CPU, 2 GB RAM, and 4 GB
 disk. No environment variables are forwarded into it. Coding accepts a GitHub
@@ -585,6 +586,7 @@ SSH-ключ.
 На Mac из checkout JarHert:
 
 ```bash
+.venv/bin/python scripts/setup_coding_profile.py
 .venv/bin/python scripts/coding_runner.py \
   --queue-ssh deploy@your-vps-host \
   --worker-id mac-main
