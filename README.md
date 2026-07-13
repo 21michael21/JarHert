@@ -2,7 +2,8 @@
 
 > Migration direction: Hermes Agent becomes the only production Telegram
 > runtime. The Python gateway documented below is legacy during the migration
-> and must not run beside `hermes gateway` with the same bot token. The native
+> and must not run beside `hermes gateway` with the same bot token. By default
+> `TELEGRAM_GATEWAY_OWNER=hermes` blocks its polling startup. The native
 > profile, skills, and ownership boundary are in
 > `docs/adr/0002-hermes-native-personal-os.md`.
 
@@ -47,6 +48,37 @@ terminal, file access, browser automation, code execution, computer use,
 delegation and built-in cron. Telegram keeps the native JarHert MCP tools,
 skills, memory and web search. Task and Calendar mutations therefore go through
 the single approval-plan path; coding stays in the separate sandbox runner.
+
+### GitHub research: official MCP, read-only
+
+Чтобы Hermes мог по ссылке на профиль или репозиторий посмотреть публичные
+репозитории, CI, issues, PR и code-security, подключи официальный
+[GitHub MCP Server](https://github.com/github/github-mcp-server) отдельно от
+JarHert. Это не даёт боту права на push, создание PR или изменение репозитория:
+в профиль намеренно внесены только `repos`, `issues`, `pull_requests`,
+`actions`, `users`, `code_security` и флаг `--read-only`.
+
+На VPS положи официальный `github-mcp-server` в
+`~/.hermes/profiles/jarhert/bin/github-mcp-server`, выдай ему права на запуск и
+создай fine-grained GitHub token только на чтение нужных репозиториев. В
+`~/.hermes/profiles/jarhert/.env` добавь, не печатая токен в терминал или чат:
+
+```bash
+GITHUB_MCP_ENABLED=true
+GITHUB_PERSONAL_ACCESS_TOKEN=<fine-grained-read-only-token>
+```
+
+Официальный binary можно собрать на VPS отдельной командой. Она не включает MCP
+и не читает token:
+
+```bash
+JARHERT_VPS=deploy@your-vps-host deploy/vps/install_github_mcp_readonly.sh
+```
+
+Затем включи блок `github_readonly` в живом `config.yaml` Hermes и
+перезапусти только Hermes gateway. Вкладка `Память → Система` покажет один из
+статусов: `read-only готов`, `нужен токен`, `нужна установка` или
+`выключен`. Этот health-check не вызывает GitHub и не расходует токены модели.
 
 The managed source clone on the server is `/home/deploy/jarhert-profile` by
 default. It is pinned to the exact commit pushed to `origin/main`; the upstream
@@ -166,6 +198,24 @@ python ~/.hermes/profiles/jarhert/scripts/configure_backup_secret.py
 
 The helper asks twice, rejects weak or malformed values, refuses to overwrite
 an existing file unless `--replace` is explicit, and never echoes the phrase.
+
+Ночная консолидация памяти работает отдельно от модели: она собирает только
+подтверждённые preferences, проекты, обещания и договорённости в компактные
+scope-блоки. Сырые заметки и случайные реплики туда не попадают. После обычной
+синхронизации профиля установи один раз таймеры:
+
+```bash
+JARHERT_VPS=deploy@your-vps-host deploy/vps/install_personal_summary_timers.sh
+```
+
+Проверить без ожидания ночи можно безопасно: запуск дважды должен дать сначала
+`updated`, затем `no_change` и ничего не отправит в Telegram.
+
+```bash
+HERMES_HOME=~/.hermes/profiles/jarhert \
+~/.hermes/profiles/jarhert/.venv/bin/python \
+~/.hermes/profiles/jarhert/scripts/consolidate_memory.py
+```
 
 Create an archive and immediately prove it can be restored without touching the
 live profile:
@@ -369,7 +419,9 @@ are not accepted by this source adapter.
 
 Keep credentials in `~/.hermes/.env`. Use Hermes Telegram pairing or an
 explicit allowlist. Do not copy a token into this repository and do not start
-the legacy `gateway_bot` once `hermes gateway` owns the bot token.
+the legacy `gateway_bot` once `hermes gateway` owns the bot token. To run the
+legacy gateway intentionally for local migration work, first stop Hermes and
+set `TELEGRAM_GATEWAY_OWNER=legacy`; never leave both processes running.
 
 Отдельный Telegram AI-помощник на базе Hermes Agent.
 
@@ -454,7 +506,11 @@ Natural UX 2.0 поддерживает более свободные форму
 
 Бот разложит это на отдельные Trello-карточки. Если у пункта есть время, он добавит календарный блок на 30 минут. По умолчанию список Trello — `Today`, проект — `Personal`, приоритет — `P3`.
 
-Голосовые сообщения расшифровываются через `OPENAI_TRANSCRIBE_MODEL`, затем выполняются как обычный текст. Например голосом можно сказать: `напомни через 30 минут позвонить`.
+Голосовые сообщения расшифровываются через `OPENAI_TRANSCRIBE_MODEL`, затем Voice Inbox v2 без лишнего LLM-вызова выделяет ясные встречи, напоминания, задачи и заметки в один preview. Вопрос или недостающий получатель не отменяют остальные понятные пункты: бот уточнит их короткой строкой рядом с планом. Встреча с указанным только началом получает видимый в preview интервал 60 минут.
+
+Например, из одного голосового можно сказать: `завтра в 13:00 встреча, через неделю в тот же день ещё одна; напомни в 18:00 проверить ML; сохрани идею про inbox`. Бот предложит один plan, а не серию отдельных вопросов.
+
+`VOICE_TRANSCRIBE_TIMEOUT_SECONDS=20` ограничивает один запрос к облачному STT: зависший вызов не должен удерживать новые голосовые. Если старый вызов всё-таки завис, следующий запрос быстро сообщит об этом вместо ожидания до его завершения.
 
 ## Google Docs для идей
 
@@ -682,6 +738,8 @@ After=network-online.target
 User=jarhert
 WorkingDirectory=/opt/jarhert
 EnvironmentFile=/opt/jarhert/.env
+# Только для отдельного legacy-only сервера. С Hermes gateway этот unit не запускай.
+Environment=TELEGRAM_GATEWAY_OWNER=legacy
 ExecStart=/opt/jarhert/.venv/bin/python -m gateway_bot.telegram_app
 Restart=always
 RestartSec=5
@@ -725,6 +783,8 @@ cd /opt/jarhert
 cp .env.example .env
 # заполни BOT_TOKEN
 # опционально: ALLOWED_TG_USER_IDS=123456789
+# этот путь только для legacy-only запуска: Hermes gateway должен быть остановлен
+TELEGRAM_GATEWAY_OWNER=legacy
 .venv/bin/pip install -e ".[dev]"
 scripts/run_local_bot.sh
 ```

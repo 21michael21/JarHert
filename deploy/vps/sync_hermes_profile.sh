@@ -109,3 +109,9 @@ systemctl --user is-active --quiet hermes-gateway-jarhert.service
 "$HERMES_PYTHON" -m hermes_cli.main --profile jarhert skills list >/dev/null
 echo "profile_sync=ok commit=$COMMIT rollback=$ROLLBACK_DIR"
 REMOTE_SCRIPT
+
+RETIRE_LEGACY_GATEWAY="${RETIRE_LEGACY_GATEWAY:-0}" \
+LEGACY_GATEWAY_UNIT="${LEGACY_GATEWAY_UNIT:-}" \
+JARHERT_VPS="$REMOTE" \
+HERMES_PROFILE_DIR="$PROFILE_DIR" \
+"$ROOT/deploy/vps/verify_single_telegram_gateway.sh"

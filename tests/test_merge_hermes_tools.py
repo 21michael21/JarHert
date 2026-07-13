@@ -139,3 +139,24 @@ def test_merge_keeps_existing_live_display_choices(tmp_path: Path) -> None:
 
     assert merge_profile_config(source, target) == []
     assert target.read_text(encoding="utf-8") == "display:\n  busy_ack_enabled: true\n"
+
+
+def test_merge_adds_disabled_read_only_github_mcp_without_touching_live_model(tmp_path: Path) -> None:
+    source = tmp_path / "source.yaml"
+    target = tmp_path / "target.yaml"
+    source.write_text(
+        "model:\n  provider: openai-api\nmcp_servers:\n"
+        "  github_readonly:\n"
+        "    command: github-mcp-server\n"
+        "    args:\n      - stdio\n      - --read-only\n"
+        "    enabled: false\n",
+        encoding="utf-8",
+    )
+    target.write_text("model:\n  provider: openai-codex\n  default: gpt-5.4-mini\n", encoding="utf-8")
+
+    assert merge_profile_config(source, target) == ["mcp:github_readonly"]
+    updated = target.read_text(encoding="utf-8")
+    assert "provider: openai-codex" in updated
+    assert "github_readonly:" in updated
+    assert "--read-only" in updated
+    assert "enabled: false" in updated

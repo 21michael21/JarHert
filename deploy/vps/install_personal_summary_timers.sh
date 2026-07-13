@@ -10,6 +10,8 @@ units=(
   hermes-daily-brief.timer
   hermes-weekly-review.service
   hermes-weekly-review.timer
+  hermes-memory-consolidation.service
+  hermes-memory-consolidation.timer
 )
 
 ssh "$REMOTE" "mkdir -p '$REMOTE_UNITS_DIR'"
@@ -18,6 +20,6 @@ for unit in "${units[@]}"; do
 done
 ssh "$REMOTE" '
   systemctl --user daemon-reload
-  systemctl --user enable --now hermes-daily-brief.timer hermes-weekly-review.timer
-  systemctl --user is-active hermes-daily-brief.timer hermes-weekly-review.timer
+  systemctl --user enable --now hermes-daily-brief.timer hermes-weekly-review.timer hermes-memory-consolidation.timer
+  systemctl --user is-active hermes-daily-brief.timer hermes-weekly-review.timer hermes-memory-consolidation.timer
 '

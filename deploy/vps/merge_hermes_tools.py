@@ -35,6 +35,8 @@ def merge_profile_config(source: Path, target: Path) -> list[str]:
         merged.extend(f"env:{key}" for key in merge_native_env(source, target, MANAGED_NATIVE_ENV_KEYS))
     except ValueError:
         pass
+    if merge_optional_readonly_mcp(source, target, server_name="github_readonly"):
+        merged.append("mcp:github_readonly")
     source_lines = source.read_text(encoding="utf-8").splitlines(keepends=True)
     target_lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
     stt_block = _top_level_block(source_lines, "stt")
@@ -53,6 +55,23 @@ def merge_profile_config(source: Path, target: Path) -> list[str]:
         target.write_text("".join(target_lines) + separator + "".join(display_block), encoding="utf-8")
         merged.append("display")
     return merged
+
+
+def merge_optional_readonly_mcp(source: Path, target: Path, *, server_name: str) -> bool:
+    """Add one disabled, version-owned optional MCP block without changing live model choices."""
+    source_lines = source.read_text(encoding="utf-8").splitlines(keepends=True)
+    target_lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
+    source_block = _mcp_server_block(source_lines, server_name)
+    if source_block is None or _mcp_server_block(target_lines, server_name) is not None:
+        return False
+    insertion_index = _mcp_servers_end(target_lines)
+    if insertion_index is None:
+        separator = "" if not target_lines or target_lines[-1].endswith("\n\n") else "\n"
+        target.write_text("".join(target_lines) + separator + "mcp_servers:\n" + "".join(source_block), encoding="utf-8")
+        return True
+    target_lines[insertion_index:insertion_index] = source_block
+    target.write_text("".join(target_lines), encoding="utf-8")
+    return True
 
 
 def merge_native_env(source: Path, target: Path, keys: tuple[str, ...]) -> list[str]:
@@ -138,6 +157,37 @@ def _native_env_block(lines: list[str]) -> tuple[dict[str, str], int, str]:
     if in_env:
         return values, len(lines), item_prefix
     raise ValueError("jarhert_native MCP env block was not found")
+
+
+def _mcp_server_block(lines: list[str], server_name: str) -> list[str] | None:
+    in_servers = False
+    start: int | None = None
+    marker = f"  {server_name}:"
+    for index, line in enumerate(lines):
+        if line.startswith("mcp_servers:"):
+            in_servers = True
+            continue
+        if not in_servers:
+            continue
+        if line and not line.startswith((" ", "\t", "\n", "\r")):
+            break
+        if line.startswith(marker):
+            start = index
+            continue
+        if start is not None and line.startswith("  ") and not line.startswith("    ") and line.strip():
+            return lines[start:index]
+    return lines[start:] if start is not None else None
+
+
+def _mcp_servers_end(lines: list[str]) -> int | None:
+    in_servers = False
+    for index, line in enumerate(lines):
+        if line.startswith("mcp_servers:"):
+            in_servers = True
+            continue
+        if in_servers and line and not line.startswith((" ", "\t", "\n", "\r")):
+            return index
+    return len(lines) if in_servers else None
 
 
 def _top_level_block(lines: list[str], key: str) -> list[str] | None:

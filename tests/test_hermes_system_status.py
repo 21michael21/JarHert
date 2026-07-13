@@ -72,6 +72,8 @@ def test_system_status_reports_operational_facts_without_personal_content(tmp_pa
     assert status["gateway"] == {"active": True, "main_pid": 123}
     assert status["automation"] == {"watchdog_timer_active": True, "backup_timer_active": True}
     assert status["provider"] == {"name": "openai-codex", "model": "gpt-5-nano"}
+    assert status["github_mcp"]["state"] == "disabled"
+    assert status["github_mcp"]["read_only"] is True
     assert status["coding_queue"] == {
         "available": True,
         "queued": 1,
@@ -111,6 +113,7 @@ def test_system_status_marks_backup_unconfigured_without_reading_a_secret(tmp_pa
     assert status["backup"]["configured"] is False
     assert status["backup"]["secret_file_mode"] is None
     assert status["provider"] == {"name": "unknown", "model": "unknown"}
+    assert status["github_mcp"]["state"] == "disabled"
     assert status["coding_queue"]["available"] is False
     assert status["personal_summaries"]["available"] is False
 

@@ -147,6 +147,25 @@ mcp_servers:
       resources: false
       prompts: false
 
+  # Optional official GitHub MCP Server. It stays disabled until the owner has
+  # installed the binary and added a fine-grained read-only token to .env.
+  github_readonly:
+    command: "${HERMES_HOME}/bin/github-mcp-server"
+    args:
+      - stdio
+      - --read-only
+      - --toolsets
+      - repos,issues,pull_requests,actions,users,code_security
+    env:
+      GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+    enabled: false
+    timeout: 90
+    connect_timeout: 20
+    supports_parallel_tool_calls: false
+    tools:
+      resources: false
+      prompts: false
+
 terminal:
   docker_image: "nikolaik/python-nodejs:python3.11-nodejs20"
   docker_forward_env: []

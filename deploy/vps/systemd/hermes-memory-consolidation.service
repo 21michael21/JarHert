@@ -1,0 +1,9 @@
+[Unit]
+Description=JarHert nightly personal-memory consolidation
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/.hermes/profiles/jarhert
+Environment=HERMES_HOME=%h/.hermes/profiles/jarhert
+EnvironmentFile=%h/.hermes/profiles/jarhert/.env
+ExecStart=%h/.hermes/profiles/jarhert/.venv/bin/python %h/.hermes/profiles/jarhert/scripts/consolidate_memory.py

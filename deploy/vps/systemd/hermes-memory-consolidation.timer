@@ -1,0 +1,10 @@
+[Unit]
+Description=Run JarHert memory consolidation nightly
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+Persistent=true
+Unit=hermes-memory-consolidation.service
+
+[Install]
+WantedBy=timers.target

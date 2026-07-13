@@ -9,6 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from .github_mcp import github_mcp_status
 from .operations import ARCHIVE_PREFIX, ARCHIVE_SUFFIX, parse_meminfo, zombie_processes
 
 
@@ -40,6 +41,7 @@ def collect_system_status(
     return {
         "gateway": {"active": active, "main_pid": main_pid},
         "provider": _model_config(profile / "config.yaml"),
+        "github_mcp": github_mcp_status(profile_home=profile),
         "coding_queue": _coding_queue_status(database),
         "personal_summaries": _personal_summary_status(database),
         "automation": {
