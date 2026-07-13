@@ -32,10 +32,17 @@ def test_coding_task_runs_same_hermes_profile_with_docker_backend() -> None:
     assert result.output == "done"
     argv, env, timeout = calls[0]
     assert argv[:2] == ["jarhert", "chat"]
-    assert "--yolo" not in argv
+    assert "--yolo" in argv
+    assert argv[argv.index("--toolsets") + 1] == "coding"
     assert "sandboxed-coding" in argv
     assert env["TERMINAL_ENV"] == "docker"
     assert env["TERMINAL_DOCKER_FORWARD_ENV"] == "[]"
+    assert env["TERMINAL_DOCKER_VOLUMES"] == "[]"
+    assert env["TERMINAL_DOCKER_ENV"] == "{}"
+    assert env["TERMINAL_DOCKER_EXTRA_ARGS"] == "[]"
+    assert env["TERMINAL_DOCKER_MOUNT_CWD_TO_WORKSPACE"] == "false"
+    assert env["TERMINAL_CONTAINER_PERSISTENT"] == "false"
+    assert env["TERMINAL_DOCKER_PERSIST_ACROSS_PROCESSES"] == "false"
     assert timeout == 900
 
 
@@ -71,6 +78,27 @@ def test_worker_refuses_to_fall_back_to_host_when_docker_is_missing() -> None:
                 mode="coding",
                 prompt="test",
                 repository_url="https://github.com/example/project.git",
+            )
+        )
+
+
+def test_terminal_approval_timeout_is_not_reported_as_a_completed_coding_task() -> None:
+    def execute(argv, **_kwargs):
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout="\u23f1 Timeout \u2014 denying command\n\u0420\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u0435 \u0432\u044b\u043f\u043e\u043b\u043d\u0438\u0442\u044c clone?",
+            stderr="",
+        )
+
+    worker = SandboxedHermesWorker(execute=execute, docker_available=lambda: True)
+
+    with pytest.raises(RuntimeError, match="\u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u0438"):
+        worker.run(
+            SandboxTask(
+                mode="coding",
+                prompt="\u0418\u0441\u043f\u0440\u0430\u0432\u044c \u0442\u0435\u0441\u0442",
+                repository_url="https://github.com/example/project",
             )
         )
 

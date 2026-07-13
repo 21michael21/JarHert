@@ -49,6 +49,7 @@ class SandboxedHermesWorker:
         if not self.docker_available():
             raise RuntimeError("Docker sandbox недоступен; запуск на host запрещён.")
         prompt = _build_prompt(task, self.allowed_research_hosts)
+        toolsets = "coding" if task.mode == "coding" else "web,skills"
         argv = [
             self.profile_binary,
             "chat",
@@ -56,7 +57,7 @@ class SandboxedHermesWorker:
             "-q",
             prompt,
             "--toolsets",
-            "coding,web,skills",
+            toolsets,
             "--skills",
             "sandboxed-coding",
             "--source",
@@ -64,11 +65,22 @@ class SandboxedHermesWorker:
             "--max-turns",
             "40",
         ]
+        if task.mode == "coding":
+            # Commands are pre-approved only inside this forced, ephemeral Docker backend.
+            # The worker clears all configurable mounts and forwarded environment variables.
+            argv.append("--yolo")
         environment = os.environ.copy()
         environment.update(
             {
                 "TERMINAL_ENV": "docker",
                 "TERMINAL_DOCKER_FORWARD_ENV": "[]",
+                "TERMINAL_DOCKER_VOLUMES": "[]",
+                "TERMINAL_DOCKER_ENV": "{}",
+                "TERMINAL_DOCKER_EXTRA_ARGS": "[]",
+                "TERMINAL_DOCKER_MOUNT_CWD_TO_WORKSPACE": "false",
+                "TERMINAL_DOCKER_RUN_AS_HOST_USER": "false",
+                "TERMINAL_CONTAINER_PERSISTENT": "false",
+                "TERMINAL_DOCKER_PERSIST_ACROSS_PROCESSES": "false",
                 "HERMES_SANDBOX_TASK": "1",
             }
         )
@@ -84,7 +96,10 @@ class SandboxedHermesWorker:
             raise RuntimeError(
                 f"Sandbox worker завершился с кодом {result.returncode}. Проверь Hermes logs."
             )
-        return SandboxResult(output=(result.stdout or "").strip()[:20_000], mode=task.mode)
+        output = (result.stdout or "").strip()[:20_000]
+        if _requires_terminal_approval(output):
+            raise RuntimeError("Sandbox worker остановился на terminal-подтверждении; job не выполнен.")
+        return SandboxResult(output=output, mode=task.mode)
 
     def preflight(self) -> None:
         """Check Docker and the local profile CLI without starting an agent turn."""
@@ -182,3 +197,13 @@ def _docker_available() -> bool:
     except (OSError, subprocess.TimeoutExpired):
         return False
     return result.returncode == 0
+
+
+def _requires_terminal_approval(output: str) -> bool:
+    normalized = output.lower()
+    return (
+        "timeout — denying command" in normalized
+        or "timeout - denying command" in normalized
+        or "разрешите выполнить" in normalized
+        or "approve this command" in normalized
+    )
