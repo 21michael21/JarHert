@@ -244,3 +244,11 @@ def test_profile_uses_native_mcp_instead_of_terminal_allowlist() -> None:
     assert "mcp_jarhert_native_monitor_add_github_releases" in monitor_skill
     assert "native_tools/cli.py" not in contact_skill
     assert "native_tools/cli.py" not in monitor_skill
+
+
+def test_coding_confirmation_is_owned_by_one_native_mcp_prompt() -> None:
+    soul = (ROOT / "hermes" / "SOUL.md").read_text(encoding="utf-8")
+    skill = (ROOT / "hermes" / "skills" / "sandboxed-coding" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "Не пиши отдельный preview от себя" in soul
+    assert "Do not compose a separate preview in chat" in skill

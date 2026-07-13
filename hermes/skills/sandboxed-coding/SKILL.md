@@ -13,6 +13,9 @@ a separately authorised Mac runner claims it over SSH and runs the sandbox.
 Use `mcp_jarhert_native_coding_job_list` to report the actual queue/result,
 not an imagined completion.
 
+For a clear coding or research request, call
+`mcp_jarhert_native_coding_job_enqueue_confirmed` directly. Do not compose a separate preview in chat. The native tool owns the one approval prompt.
+
 ## Launch
 
 Coding accepts only a public GitHub HTTPS repository:
