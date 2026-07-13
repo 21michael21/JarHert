@@ -17,12 +17,21 @@ except ModuleNotFoundError:  # pragma: no cover - exercised by import smoke with
     Bot = None  # type: ignore[assignment]
 
 
+def ensure_legacy_gateway_owner(owner: str) -> None:
+    if owner.strip().lower() != "legacy":
+        raise RuntimeError(
+            "Hermes owns Telegram by default. Refusing to start the legacy polling gateway with this bot token. "
+            "Set TELEGRAM_GATEWAY_OWNER=legacy only for an intentional legacy-only setup."
+        )
+
+
 async def run_polling() -> None:
     ensure_aiogram()
     if Bot is None:
         raise RuntimeError("aiogram is not installed. Run: .venv/bin/pip install -e '.[dev]'")
     if not settings.bot_token:
         raise RuntimeError("BOT_TOKEN is required to run Telegram polling")
+    ensure_legacy_gateway_owner(settings.telegram_gateway_owner)
 
     logging.basicConfig(level=logging.INFO)
     bot = Bot(token=settings.bot_token)

@@ -6,6 +6,9 @@ from pathlib import Path
 from hermes.native_tools.mcp_api import NativeToolsAPI
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 class FakeTaskCalendarAdapter:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, object]]] = []
@@ -98,3 +101,15 @@ def test_commitment_can_be_completed_and_no_longer_appears_open(tmp_path: Path) 
 
     assert completed["status"] == "done"
     assert api.commitment_list(contact="Илья", status="open") == {"items": []}
+
+
+def test_voice_skill_keeps_clear_calendar_items_and_does_not_hallucinate_the_question() -> None:
+    soul = (ROOT / "hermes" / "SOUL.md").read_text(encoding="utf-8")
+    skill = (ROOT / "hermes" / "skills" / "voice-inbox" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "через неделю" in soul.lower()
+    assert "60 минут" in soul.lower()
+    assert "вопрос" in skill.lower()
+    assert "год или ссылку" in skill.lower()
+    assert '"actions"' in skill
+    assert '"followups"' in skill

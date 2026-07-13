@@ -18,16 +18,29 @@ class BlockingCallTimeout(TimeoutError):
     pass
 
 
+class BlockingCallBusy(RuntimeError):
+    pass
+
+
 class BoundedUserExecutor:
     """Run blocking work off the event loop with global and per-user limits."""
 
-    def __init__(self, *, max_concurrency: int, timeout_seconds: float) -> None:
+    def __init__(
+        self,
+        *,
+        max_concurrency: int,
+        timeout_seconds: float,
+        late_result_grace_seconds: float = 1.0,
+    ) -> None:
         if max_concurrency < 1:
             raise ValueError("max_concurrency must be positive")
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
+        if late_result_grace_seconds <= 0:
+            raise ValueError("late_result_grace_seconds must be positive")
         self.max_concurrency = max_concurrency
         self.timeout_seconds = timeout_seconds
+        self.late_result_grace_seconds = late_result_grace_seconds
         self._executor = ThreadPoolExecutor(
             max_workers=max_concurrency,
             thread_name_prefix="jarhert-blocking",
@@ -121,7 +134,9 @@ class BoundedUserExecutor:
             self._timed_out.pop(user_id, None)
             return
         try:
-            await asyncio.shield(pending)
+            await asyncio.wait_for(asyncio.shield(pending), timeout=self.late_result_grace_seconds)
+        except asyncio.TimeoutError as exc:
+            raise BlockingCallBusy("previous blocking call is still running") from exc
         except Exception:
             pass
         finally:

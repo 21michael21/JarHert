@@ -1,3 +1,5 @@
+import pytest
+
 from assistant.hermes_client import FakeHermesClient
 from assistant.input_router import InputKind, UnifiedInput
 from assistant.limits import DailyLimitStore
@@ -70,6 +72,45 @@ def test_voice_dump_always_becomes_one_confirmable_preview() -> None:
     assert reply.buttons[0][0].callback_data.startswith("ai:confirm_job:")
     assert queue.claim_next() is None
     assert queue.list_for_user(1001)[0].status == ActionStatus.NEEDS_CONFIRMATION
+
+
+def test_voice_inbox_v2_queues_all_clear_items_once_and_keeps_followups_short() -> None:
+    from assistant.action_queue import ActionStatus, InMemoryActionQueueStore
+    from assistant.action_schema import ActionType
+    from assistant.agent_jobs import InMemoryAgentJobStore
+
+    queue = InMemoryActionQueueStore()
+    service = GatewayService(
+        pipeline=AssistantPipeline(
+            FakeHermesClient(),
+            DailyLimitStore(),
+            action_queue=queue,
+            agent_jobs=InMemoryAgentJobStore(),
+        )
+    )
+
+    reply = service.handle_input(
+        1001,
+        UnifiedInput(
+            kind=InputKind.VOICE,
+            text=(
+                "Мне нужно отправить расписание на завтра: у меня встреча в 13:00. "
+                "Через неделю у меня встреча в 13:00 в этот же день. "
+                "Ещё оцени фильм «Пленница»."
+            ),
+        ),
+        idempotency_key="telegram:voice:multi-1",
+    )
+
+    actions = queue.list_for_user(1001)
+    assert [action.type for action in reversed(actions)] == [
+        ActionType.CALENDAR_CREATE,
+        ActionType.CALENDAR_CREATE,
+    ]
+    assert all(action.status == ActionStatus.NEEDS_CONFIRMATION for action in actions)
+    assert reply.buttons[0][0].callback_data.startswith("ai:confirm_job:")
+    assert "Кому отправить расписание на завтра?" in reply.text
+    assert "год или ссылку" in reply.text
 
 
 def test_gateway_service_allows_user_in_allowlist() -> None:
@@ -560,6 +601,15 @@ def test_telegram_app_imports_without_aiogram_runtime() -> None:
     assert telegram_app.create_dispatcher is telegram_handlers.create_dispatcher
     assert telegram_app.start_background_workers is telegram_workers.start_background_workers
     assert telegram_callbacks.handle_callback_data
+
+
+def test_legacy_polling_refuses_to_share_telegram_with_hermes() -> None:
+    from gateway_bot.telegram_app import ensure_legacy_gateway_owner
+
+    with pytest.raises(RuntimeError, match="Hermes owns Telegram"):
+        ensure_legacy_gateway_owner("hermes")
+
+    ensure_legacy_gateway_owner("legacy")
 
 
 def test_handle_local_text_preserves_process_state(tmp_path) -> None:

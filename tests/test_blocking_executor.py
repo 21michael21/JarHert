@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from gateway_bot.blocking_executor import BlockingCallTimeout, BoundedUserExecutor
+from gateway_bot.blocking_executor import BlockingCallBusy, BlockingCallTimeout, BoundedUserExecutor
 
 
 def test_global_concurrency_is_bounded_without_serializing_other_users() -> None:
@@ -81,8 +81,12 @@ def test_timeout_is_reported_to_caller() -> None:
         executor.close()
 
 
-def test_same_user_waits_for_timed_out_call_before_starting_next_one() -> None:
-    executor = BoundedUserExecutor(max_concurrency=1, timeout_seconds=0.02)
+def test_same_user_gets_fast_busy_error_after_a_timed_out_call() -> None:
+    executor = BoundedUserExecutor(
+        max_concurrency=1,
+        timeout_seconds=0.02,
+        late_result_grace_seconds=0.01,
+    )
     first_started = threading.Event()
     release_first = threading.Event()
     order: list[str] = []
@@ -97,18 +101,19 @@ def test_same_user_waits_for_timed_out_call_before_starting_next_one() -> None:
         order.append("second")
         return "second"
 
-    async def scenario() -> str:
+    async def scenario() -> None:
         with pytest.raises(BlockingCallTimeout):
             await executor.run_blocking(5, first)
         assert await asyncio.to_thread(first_started.wait, 0.5)
-        second_task = asyncio.create_task(executor.run_blocking(5, second))
-        await asyncio.sleep(0.03)
+        with pytest.raises(BlockingCallBusy):
+            await asyncio.wait_for(executor.run_blocking(5, second), timeout=0.1)
         assert order == ["first-start"]
         release_first.set()
-        return await second_task
+        await asyncio.sleep(0.03)
+        assert await executor.run_blocking(5, second) == "second"
 
     try:
-        assert asyncio.run(scenario()) == "second"
+        asyncio.run(scenario())
         assert order == ["first-start", "first-end", "second"]
     finally:
         executor.close()

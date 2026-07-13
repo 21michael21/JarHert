@@ -42,6 +42,9 @@ class Settings:
     build_time: str = os.getenv("BUILD_TIME", "unknown")
     database_url: str = os.getenv("DATABASE_URL", "sqlite:///./data/ai_brooch.sqlite3")
     bot_token: str = os.getenv("BOT_TOKEN", "")
+    # Hermes is the production Telegram gateway. The legacy Python polling
+    # process must opt in explicitly so the same token is never claimed twice.
+    telegram_gateway_owner: str = os.getenv("TELEGRAM_GATEWAY_OWNER", "hermes").strip().lower()
     assistant_service_token: str = os.getenv("ASSISTANT_SERVICE_TOKEN", "")
     admin_tg_user_ids: set[int] = None  # type: ignore[assignment]
     allowed_tg_user_ids: set[int] = None  # type: ignore[assignment]
@@ -101,6 +104,7 @@ class Settings:
     hf_max_output_tokens: int = int(os.getenv("HF_MAX_OUTPUT_TOKENS", "500"))
     hermes_cli_estimated_cost_micro_usd: int = int(os.getenv("HERMES_CLI_ESTIMATED_COST_MICRO_USD", "1000"))
     openai_transcribe_model: str = os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
+    voice_transcribe_timeout_seconds: float = float(os.getenv("VOICE_TRANSCRIBE_TIMEOUT_SECONDS", "20"))
     voice_max_bytes: int = int(os.getenv("VOICE_MAX_BYTES", "10485760"))
     telegram_blocking_max_concurrency: int = int(os.getenv("TELEGRAM_BLOCKING_MAX_CONCURRENCY", "4"))
     telegram_blocking_timeout_seconds: float = float(os.getenv("TELEGRAM_BLOCKING_TIMEOUT_SECONDS", "60"))

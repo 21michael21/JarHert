@@ -9,6 +9,17 @@ Use when Telegram provides a voice transcript containing several thoughts or
 actions. Do not transcribe audio inside this skill; the gateway already provides
 text.
 
+Before selecting tools, build an internal JSON plan. Never show this JSON to the
+user and never execute it directly:
+
+```json
+{"actions": [{"type": "calendar.create", "payload": {}}], "followups": ["short clarification"]}
+```
+
+`actions` contains every clear side effect in transcript order. `followups`
+contains only missing details or questions that cannot be answered safely. One
+unclear thought must not discard or delay the other clear actions.
+
 1. Preserve the user's wording. Do not invent deadlines, contacts, or projects.
 2. Map useful items to only these actions: `note.save`, `commitment.create`,
    `reminder.create`, `task.create`, and `calendar.create`.
@@ -26,6 +37,19 @@ text.
 7. Для длинного dump или нескольких смысловых пунктов добавь в тот же plan
    `note.save` с subject `Голосовой черновик` и исходной расшифровкой в content.
    Не пересказывай её и не создавай такой черновик для одной короткой команды.
+8. Если в transcript смешаны действия и вопрос, не теряй вопрос. Ясные действия
+   собирай в один plan, а на вопрос отвечай отдельно и только по проверяемым
+   данным. Для фильма, книги или другого объекта с неоднозначным названием спроси
+   год или ссылку вместо догадки.
+9. Встреча с указанным только началом получает длительность 60 минут, которую
+   нужно показать в preview. «Через неделю в этот же день» связывай с ближайшей
+   ранее явно названной датой и временем, только когда связь однозначна.
+10. Если не назван получатель для отправки расписания или сообщения, не исполняй
+    отправку. Остальные ясные пункты оставь в plan и задай один короткий вопрос
+    только об адресате.
+11. Если actions не пуст, передай их одним `action_plan_confirm_execute` и покажи
+    один human preview. После preview добавь followups двумя-тремя короткими
+    строками. Не превращай один voice dump в цепочку уточнений.
 
 The tool result is the source of truth. Report succeeded and failed items once;
 never claim a side effect from the proposed plan alone.

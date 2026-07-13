@@ -38,6 +38,7 @@ from assistant.task_command_center import TaskCommandCenter, TaskCommandError
 from assistant.tool_registry import ToolContext, ToolExecutionResult, _format_reminder_reply, build_default_tool_registry
 from assistant.tracing import new_trace_id
 from assistant.types import AssistantReply, Intent, UserContext
+from assistant.voice_inbox import parse_voice_inbox
 from reminders.parser import parse_reminder
 from reminders.store import InMemoryReminderStore
 
@@ -133,6 +134,42 @@ class AssistantPipeline:
         trace_id: str = "",
         force_plan_preview: bool = False,
     ) -> AssistantReply:
+        return self._handle_request(
+            user,
+            text,
+            idempotency_key=idempotency_key,
+            trace_id=trace_id,
+            force_plan_preview=force_plan_preview,
+            voice_inbox=False,
+        )
+
+    def handle_voice_inbox(
+        self,
+        user: UserContext,
+        text: str,
+        *,
+        idempotency_key: str = "",
+        trace_id: str = "",
+    ) -> AssistantReply:
+        return self._handle_request(
+            user,
+            text,
+            idempotency_key=idempotency_key,
+            trace_id=trace_id,
+            force_plan_preview=True,
+            voice_inbox=True,
+        )
+
+    def _handle_request(
+        self,
+        user: UserContext,
+        text: str,
+        *,
+        idempotency_key: str,
+        trace_id: str,
+        force_plan_preview: bool,
+        voice_inbox: bool,
+    ) -> AssistantReply:
         recorder = PerfRecorder()
         trace_id = trace_id or new_trace_id()
         request_context = _PipelineRequestContext(
@@ -144,7 +181,7 @@ class AssistantPipeline:
         context_token = self._request_context.set(request_context)
         try:
             with recorder.track("total_response"):
-                reply = self._handle_text(user, text)
+                reply = self._handle_voice_inbox(user, text) if voice_inbox else self._handle_text(user, text)
             reply = replace(reply, perf_ms=recorder.snapshot_ms(), trace_id=reply.trace_id or trace_id)
             turn = self.conversation_turns.add(
                 user_id=user.user_id,
@@ -155,6 +192,24 @@ class AssistantPipeline:
             return replace(reply, conversation_turn_id=getattr(turn, "id", None))
         finally:
             self._request_context.reset(context_token)
+
+    def _handle_voice_inbox(self, user: UserContext, text: str) -> AssistantReply:
+        with self._perf.track("voice_inbox_parse"):
+            parsed = parse_voice_inbox(text)
+        if not parsed.handled:
+            return self._handle_text(user, text)
+        if parsed.actions:
+            reply = self._execute_natural_route(
+                user,
+                NaturalRoute(actions=list(parsed.actions), fallback_to_ai=False, reason="voice_inbox_v2"),
+            )
+        else:
+            reply = AssistantReply(text="", intent=Intent.ASK, trace_id=self._current_trace_id)
+        if not parsed.followups:
+            return reply
+        followups = "\n".join(f"• {item}" for item in parsed.followups)
+        prefix = f"{reply.text}\n\n" if reply.text else ""
+        return replace(reply, text=f"{prefix}Ещё:\n{followups}")
 
     def rewrite_shorter(
         self,

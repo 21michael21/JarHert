@@ -10,7 +10,7 @@ from assistant.transcription import OpenAITranscriber, TranscriptionError
 from assistant.tracing import new_trace_id
 from assistant.types import AssistantReply, Intent
 from backend.stores import SqlDeliveryOutboxStore
-from gateway_bot.blocking_executor import BlockingCallTimeout, get_shared_executor
+from gateway_bot.blocking_executor import BlockingCallBusy, BlockingCallTimeout, get_shared_executor
 from gateway_bot.deferred_work import DeferredWork
 from gateway_bot.main import get_gateway_service, get_session_factory, settings
 from gateway_bot.telegram_callbacks import buttons_to_payload, handle_callback_data
@@ -53,7 +53,7 @@ def create_dispatcher():
         api_key=settings.openai_api_key,
         model=settings.openai_transcribe_model,
         base_url=settings.openai_base_url,
-        timeout_seconds=settings.hermes_timeout_seconds,
+        timeout_seconds=settings.voice_transcribe_timeout_seconds,
     )
     blocking_executor = get_shared_executor(
         max_concurrency=settings.telegram_blocking_max_concurrency,
@@ -235,7 +235,7 @@ def create_dispatcher():
                 root_key=root_key,
                 trace_id=trace_id,
             ),
-            accepted_text=None,
+            accepted_text="Голосовое взял. Собираю один понятный план.",
             trace_id=trace_id,
         )
 
@@ -366,6 +366,8 @@ async def _process_voice(
 
 
 def _request_error_text(error: Exception) -> str:
+    if isinstance(error, BlockingCallBusy):
+        return "Предыдущее сообщение ещё зависло в обработке. Я не буду держать тебя в ожидании: попробуй снова через минуту."
     if isinstance(error, BlockingCallTimeout):
         return "Действие заняло слишком много времени. Попробуй ещё раз чуть позже."
     return "Не смог обработать сообщение. Попробуй ещё раз."
