@@ -52,9 +52,7 @@ class SandboxedHermesWorker:
         toolsets = "coding" if task.mode == "coding" else "web,skills"
         argv = [
             self.profile_binary,
-            "chat",
-            "-Q",
-            "-q",
+            "-z",
             prompt,
             "--toolsets",
             toolsets,

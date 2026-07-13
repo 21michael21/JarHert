@@ -31,7 +31,7 @@ def test_coding_task_runs_same_hermes_profile_with_docker_backend() -> None:
 
     assert result.output == "done"
     argv, env, timeout = calls[0]
-    assert argv[:2] == ["jarhert", "chat"]
+    assert argv[:2] == ["jarhert", "-z"]
     assert "--yolo" in argv
     assert argv[argv.index("--toolsets") + 1] == "coding"
     assert "sandboxed-coding" in argv
@@ -157,7 +157,7 @@ def test_research_mode_uses_only_declared_sources() -> None:
         )
     )
 
-    prompt = captured[0][captured[0].index("-q") + 1]
+    prompt = captured[0][captured[0].index("-z") + 1]
     assert "docs.python.org/3/library/sqlite3.html" in prompt
     assert "не используй другие источники" in prompt.lower()
 
@@ -186,4 +186,4 @@ def _prompt_for(task: SandboxTask) -> str:
 
     worker = SandboxedHermesWorker(execute=execute, docker_available=lambda: True)
     worker.run(task)
-    return captured[0][captured[0].index("-q") + 1]
+    return captured[0][captured[0].index("-z") + 1]
