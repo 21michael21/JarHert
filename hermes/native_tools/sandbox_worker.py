@@ -132,6 +132,10 @@ def _build_prompt(task: SandboxTask, allowed_hosts: set[str]) -> str:
         return (
             "Работай только внутри Docker workspace. Клонируй репозиторий "
             f"{repository} в /workspace/task. Задача: {user_prompt}\n"
+            "/workspace и /workspace/task доступны для записи внутри одноразового Docker контейнера. "
+            "Первым инструментом используй terminal: проверь pwd и создай /workspace/task. "
+            "Не выдавай план или пример diff за выполненную работу: сначала получи фактический результат "
+            "terminal, затем верни настоящий diff и вывод проверки. "
             "Сначала изучи код, затем сделай отдельную ветку, минимальный diff и тесты. "
             "Не читай host-файлы, не ищи credentials, не push, не merge и не deploy. "
             "Верни итог, проверки и diff summary."
@@ -209,4 +213,7 @@ def _requires_terminal_approval(output: str) -> bool:
         or "workspace is read-only" in normalized
         or "workspace read-only" in normalized
         or "рабочее пространство" in normalized and "только для чтения" in normalized
+        or "cannot write to the docker workspace" in normalized
+        or "не могу клонировать репозиторий или создавать" in normalized
+        or "не могу клонировать и создавать" in normalized
     )

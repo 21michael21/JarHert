@@ -160,3 +160,30 @@ def test_research_mode_uses_only_declared_sources() -> None:
     prompt = captured[0][captured[0].index("-q") + 1]
     assert "docs.python.org/3/library/sqlite3.html" in prompt
     assert "не используй другие источники" in prompt.lower()
+
+
+def test_coding_prompt_requires_terminal_evidence_from_a_writable_workspace() -> None:
+    prompt = _prompt_for(
+        SandboxTask(
+            mode="coding",
+            prompt="Добавь тест",
+            repository_url="https://github.com/example/project",
+        )
+    )
+
+    normalized = prompt.lower()
+    assert "/workspace и /workspace/task доступны для записи" in normalized
+    assert "первым инструментом используй terminal" in normalized
+    assert "не выдавай план или пример diff за выполненную работу" in normalized
+
+
+def _prompt_for(task: SandboxTask) -> str:
+    captured: list[list[str]] = []
+
+    def execute(argv, **_kwargs):
+        captured.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="done", stderr="")
+
+    worker = SandboxedHermesWorker(execute=execute, docker_available=lambda: True)
+    worker.run(task)
+    return captured[0][captured[0].index("-q") + 1]
