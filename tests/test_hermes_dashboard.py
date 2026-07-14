@@ -128,8 +128,9 @@ class FakeDashboardAPI:
     def action_plan_cancel(self, *, plan_id: int):
         return {"id": plan_id, "status": "cancelled", "actions": []}
 
-    def coding_job_list(self, *, limit: int = 20):
+    def coding_job_list(self, *, limit: int = 20, include_result: bool = False):
         assert limit == 20
+        assert include_result is True
         return {
             "items": [
                 {

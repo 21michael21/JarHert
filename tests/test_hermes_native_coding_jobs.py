@@ -65,7 +65,41 @@ def test_native_api_queues_previewed_coding_work_from_fast_mode_and_lists_result
     assert api.coding_job_list() == {"items": []}
     queued = api.coding_job_enqueue(mode="coding", prompt="Добавь тест", idempotency_key="telegram:102:coding")
     assert queued["status"] == "queued"
-    assert api.coding_job_list()["items"] == [queued]
+    summary = api.coding_job_list()["items"]
+    assert summary == [{
+        "id": queued["id"],
+        "mode": "coding",
+        "prompt": "Добавь тест",
+        "repository_url": None,
+        "status": "queued",
+        "result_text": None,
+        "last_error": None,
+        "delivery_status": "pending",
+        "created_at": queued["created_at"],
+        "updated_at": queued["updated_at"],
+    }]
+
+
+def test_native_api_keeps_coding_list_compact_but_can_return_one_full_report(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HERMES_OWNER_TELEGRAM_CHAT_ID", "566055009")
+    api = NativeToolsAPI(database_path=tmp_path / "personal-os.sqlite3")
+    queued = api.coding_job_enqueue(
+        mode="coding",
+        prompt="Проверь " + "важную деталь " * 200,
+        idempotency_key="telegram:105:coding",
+    )
+    store = NativeCodingJobStore(tmp_path / "personal-os.sqlite3")
+    store.claim_next(worker_id="mac")
+    store.complete(queued["id"], worker_id="mac", result_text="Полный отчёт: " + "diff " * 2_000)
+
+    summary = api.coding_job_list()["items"][0]
+
+    assert summary["id"] == queued["id"]
+    assert summary["status"] == "succeeded"
+    assert len(summary["prompt"]) <= 320
+    assert len(summary["result_text"]) <= 480
+    assert "idempotency_key" not in summary
+    assert api.coding_job_get(job_id=queued["id"])["result_text"].startswith("Полный отчёт")
 
 
 def test_completed_native_job_is_claimed_once_for_telegram_delivery(tmp_path) -> None:

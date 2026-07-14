@@ -137,7 +137,7 @@ def create_app(
     @app.get("/api/coding/jobs")
     async def coding_jobs(request: Request) -> JSONResponse:
         require_user(request)
-        return JSONResponse(_call_read(lambda: dashboard_api.coding_job_list(limit=20)))
+        return JSONResponse(_call_read(lambda: dashboard_api.coding_job_list(limit=20, include_result=True)))
 
     @app.post("/api/coding/jobs/preview")
     async def preview_coding_job(request: Request) -> JSONResponse:

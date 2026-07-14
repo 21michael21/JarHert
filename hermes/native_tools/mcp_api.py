@@ -688,12 +688,17 @@ class NativeToolsAPI:
             idempotency_key=idempotency_key,
         ))
 
-    def coding_job_list(self, *, limit: int = 20) -> dict[str, Any]:
+    def coding_job_list(self, *, limit: int = 20, include_result: bool = False) -> dict[str, Any]:
         self._capabilities().require("coding.read")
-        tg_user_id = int(os.getenv("HERMES_OWNER_TELEGRAM_CHAT_ID", "0") or 0)
-        if tg_user_id <= 0:
-            raise RuntimeError("HERMES_OWNER_TELEGRAM_CHAT_ID is required")
-        return {"items": [_value_payload(item) for item in self._coding_jobs().list_for_user(tg_user_id, limit=limit)]}
+        tg_user_id = self._coding_owner_id()
+        items = self._coding_jobs().list_for_user(tg_user_id, limit=limit)
+        if include_result:
+            return {"items": [_value_payload(item) for item in items]}
+        return {"items": [_coding_job_summary(item) for item in items]}
+
+    def coding_job_get(self, *, job_id: int) -> dict[str, Any]:
+        self._capabilities().require("coding.read")
+        return _value_payload(self._coding_jobs().get_for_user(job_id, tg_user_id=self._coding_owner_id()))
 
     def capability_decision(self, *, capability: str) -> dict[str, Any]:
         return _value_payload(self._capabilities().decide(capability))
@@ -853,6 +858,12 @@ class NativeToolsAPI:
     def _coding_jobs(self) -> NativeCodingJobStore:
         return NativeCodingJobStore(self.database_path)
 
+    def _coding_owner_id(self) -> int:
+        tg_user_id = int(os.getenv("HERMES_OWNER_TELEGRAM_CHAT_ID", "0") or 0)
+        if tg_user_id <= 0:
+            raise RuntimeError("HERMES_OWNER_TELEGRAM_CHAT_ID is required")
+        return tg_user_id
+
     def _sync_subscriptions(self) -> None:
         if self.subscription_sync is None:
             return
@@ -986,3 +997,26 @@ def _value_payload(value: Any) -> Any:
     if hasattr(value, "__dataclass_fields__"):
         return {name: _value_payload(getattr(value, name)) for name in value.__dataclass_fields__}
     return value
+
+
+def _coding_job_summary(job: Any) -> dict[str, Any]:
+    """Keep routine status checks small; the full report is fetched explicitly."""
+    return {
+        "id": job.id,
+        "mode": job.mode,
+        "prompt": _short_text(job.prompt, 320),
+        "repository_url": job.repository_url,
+        "status": job.status,
+        "result_text": _short_text(job.result_text, 480),
+        "last_error": _short_text(job.last_error, 240),
+        "delivery_status": job.delivery_status,
+        "created_at": job.created_at,
+        "updated_at": job.updated_at,
+    }
+
+
+def _short_text(value: str | None, limit: int) -> str | None:
+    if value is None:
+        return None
+    clean = " ".join(value.split())
+    return clean if len(clean) <= limit else f"{clean[:limit - 1].rstrip()}…"

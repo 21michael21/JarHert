@@ -149,6 +149,16 @@ class NativeCodingJobStore:
             ).fetchall()
         return [_from_row(row) for row in rows]
 
+    def get_for_user(self, job_id: int, *, tg_user_id: int) -> NativeCodingJob:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM native_coding_jobs WHERE id = ? AND tg_user_id = ?",
+                (int(job_id), _positive(tg_user_id, "Telegram user id")),
+            ).fetchone()
+        if row is None:
+            raise LookupError("Coding job not found.")
+        return _from_row(row)
+
     def claim_completed_for_delivery(
         self,
         *,

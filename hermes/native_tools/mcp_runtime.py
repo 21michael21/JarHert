@@ -819,8 +819,14 @@ async def coding_job_enqueue_confirmed(
 
 @mcp.tool()
 def coding_job_list(limit: Annotated[int, Field(ge=1, le=100)] = 20) -> dict[str, object]:
-    """List native coding and research jobs, including their bounded final result."""
+    """List compact coding and research statuses. Fetch one report by id only when needed."""
     return api.coding_job_list(limit=limit)
+
+
+@mcp.tool()
+def coding_job_get(job_id: Annotated[int, Field(gt=0)]) -> dict[str, object]:
+    """Fetch the complete report for one of your coding or research jobs."""
+    return api.coding_job_get(job_id=job_id)
 
 
 @mcp.tool()
