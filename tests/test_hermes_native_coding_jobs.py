@@ -72,7 +72,7 @@ def test_native_api_queues_previewed_coding_work_from_fast_mode_and_lists_result
         "prompt": "Добавь тест",
         "repository_url": None,
         "status": "queued",
-        "result_text": None,
+        "result_summary": None,
         "last_error": None,
         "delivery_status": "pending",
         "created_at": queued["created_at"],
@@ -96,8 +96,9 @@ def test_native_api_keeps_coding_list_compact_but_can_return_one_full_report(tmp
 
     assert summary["id"] == queued["id"]
     assert summary["status"] == "succeeded"
-    assert len(summary["prompt"]) <= 320
-    assert len(summary["result_text"]) <= 480
+    assert len(summary["prompt"]) <= 180
+    assert len(summary["result_summary"]) <= 160
+    assert "result_text" not in summary
     assert "idempotency_key" not in summary
     assert api.coding_job_get(job_id=queued["id"])["result_text"].startswith("Полный отчёт")
 
