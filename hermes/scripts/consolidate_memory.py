@@ -12,5 +12,4 @@ from native_tools.mcp_api import NativeToolsAPI, personal_os_database_path
 
 
 result = NativeToolsAPI(database_path=personal_os_database_path()).memory_consolidate()
-if result["status"] == "updated":
-    print(f"memory consolidated scopes={result['scopes']} facts={result['facts']}")
+print(f"memory consolidation status={result['status']} scopes={result['scopes']} facts={result['facts']}")
