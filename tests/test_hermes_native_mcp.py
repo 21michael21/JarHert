@@ -162,7 +162,7 @@ def test_native_api_export_requires_confirmation(tmp_path: Path) -> None:
 
     assert result["message_count"] == 3
     assert result["expires_at"]
-    assert result["attachment"]["directive"].startswith("MEDIA:")
+    assert result["attachment"]["directive"].startswith("[[as_document]]\nMEDIA:")
     assert calls == [{"peer": "@example", "output_format": "txt", "limit": 10}]
 
 
@@ -205,7 +205,7 @@ def test_native_api_downloads_chat_files_only_after_one_confirmation(tmp_path: P
 
     assert result["status"] == "ok"
     assert result["expires_at"]
-    assert result["items"][0]["attachment"]["directive"].startswith("MEDIA:")
+    assert result["items"][0]["attachment"]["directive"].startswith("[[as_document]]\nMEDIA:")
     assert calls == [{"peer": "@example", "file_limit": 3, "scan_limit": 100, "message_ids": None}]
 
 

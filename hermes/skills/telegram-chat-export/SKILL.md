@@ -22,7 +22,8 @@ reply, on separate plain-text lines. It sends the TXT/JSONL as a Telegram
 document. Do not replace it with an empty “вот выгрузка” sentence or invent a
 path. Mention `message_count`, `truncated` if true, and the expiry time.
 
-The directive has the form `MEDIA:<path>` followed by `[[as_document]]`.
+The directive has `[[as_document]]` on the first line and `MEDIA:<path>` on
+the second line. Copy it unchanged.
 
 Exports remain in the dedicated directory for 48 hours by default, then the
 cleanup timer removes them.

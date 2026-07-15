@@ -1186,7 +1186,7 @@ def _document_attachment(path: Path) -> dict[str, str]:
     value = str(path)
     return {
         "path": value,
-        "directive": f"MEDIA:{value}\n[[as_document]]",
+        "directive": f"[[as_document]]\nMEDIA:{value}",
     }
 
 
