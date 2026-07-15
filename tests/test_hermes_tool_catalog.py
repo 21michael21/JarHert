@@ -12,6 +12,7 @@ from hermes.native_tools.tool_catalog import (
     ToolBundle,
     active_tool_bundles,
     configured_tool_names,
+    discover_tool_specs,
     tool_names_for_active_bundles,
     validate_tool_catalog,
 )
@@ -88,6 +89,22 @@ def test_unexpanded_optional_bundle_environment_uses_the_default_surface() -> No
     assert set(tool_names_for_active_bundles("${HERMES_TOOL_BUNDLES}")) == {
         spec.name for spec in TOOL_CATALOG
     }
+
+
+def test_tool_discovery_returns_small_relevant_contracts() -> None:
+    items = discover_tool_specs("перенеси задачу в Trello", limit=4)
+
+    assert len(items) <= 4
+    assert {item.name for item in items} >= {"task_list", "action_plan_confirm_execute"}
+    assert all(item.bundle in {ToolBundle.PLANNING, ToolBundle.OPERATIONS} for item in items)
+
+
+def test_tool_discovery_can_focus_one_bundle_without_hiding_catalog_entries() -> None:
+    items = discover_tool_specs("код", bundle=ToolBundle.CODE, limit=8)
+
+    assert items
+    assert {item.bundle for item in items} == {ToolBundle.CODE}
+    assert {item.name for item in items} >= {"coding_job_enqueue_confirmed", "coding_job_list"}
 
 
 def test_runtime_registers_only_the_selected_tool_bundles() -> None:

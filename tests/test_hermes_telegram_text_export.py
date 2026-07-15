@@ -10,6 +10,9 @@ import pytest
 
 from hermes.native_tools.telegram_text_export import (
     ExportMessage,
+    FileDownloadResult,
+    TelegramFileDownloader,
+    TelegramFileMessage,
     TelegramExportError,
     TelegramTextExporter,
     cleanup_expired_exports,
@@ -34,6 +37,20 @@ class FakeClient:
             yield message
 
 
+class FakeFileClient(FakeClient):
+    def __init__(self, files, *, accessible=True) -> None:
+        super().__init__([], accessible=accessible)
+        self.files = files
+
+    async def iter_file_messages(self, entity, *, scan_limit):
+        for item in self.files[:scan_limit]:
+            yield item
+
+    async def download_file(self, file_message, destination):
+        destination.write_bytes(file_message.source)
+        return len(file_message.source)
+
+
 def message(number: int, text: str) -> ExportMessage:
     return ExportMessage(
         message_id=number,
@@ -42,6 +59,17 @@ def message(number: int, text: str) -> ExportMessage:
         sender_name=f"User {number}",
         text=text,
         reply_to_message_id=None,
+    )
+
+
+def file_message(number: int, name: str, content: bytes) -> TelegramFileMessage:
+    return TelegramFileMessage(
+        message_id=number,
+        date=datetime(2030, 1, number, 12, tzinfo=timezone.utc),
+        name=name,
+        size_bytes=len(content),
+        mime_type="application/octet-stream",
+        source=content,
     )
 
 
@@ -108,6 +136,28 @@ def test_export_stops_at_size_cap_without_partial_file(tmp_path) -> None:
     assert not list(tmp_path.glob("*.part"))
 
 
+def test_file_download_keeps_small_documents_temporarily_and_skips_large_ones(tmp_path) -> None:
+    downloader = TelegramFileDownloader(output_dir=tmp_path)
+    small = file_message(10, "plan.txt", b"read me")
+    oversized = file_message(11, "large.bin", b"X" * (20 * 1024 * 1024 + 1))
+
+    result = asyncio.run(
+        downloader.download(
+            FakeFileClient([small, oversized]),
+            peer="@test_chat",
+            file_limit=5,
+            scan_limit=20,
+        )
+    )
+
+    assert len(result.items) == 1
+    assert result.items[0].path.read_bytes() == b"read me"
+    assert result.items[0].path.name.startswith("telegram_file_10_")
+    assert result.skipped_oversized == 1
+    assert result.expires_at > datetime.now(timezone.utc) + timedelta(hours=47)
+    assert not list(tmp_path.glob("*.part"))
+
+
 def test_limit_is_bounded(tmp_path) -> None:
     exporter = TelegramTextExporter(output_dir=tmp_path)
 
@@ -118,11 +168,12 @@ def test_limit_is_bounded(tmp_path) -> None:
 def test_cleanup_removes_only_expired_telegram_exports(tmp_path) -> None:
     now = datetime(2030, 1, 3, 12, tzinfo=timezone.utc)
     old_export = tmp_path / "chat_20300101_110000.txt"
+    old_download = tmp_path / "telegram_file_8_20300101_110000_notes.pdf"
     fresh_export = tmp_path / "chat_20300103_110000.jsonl"
     unrelated = tmp_path / "keep-me.txt"
     linked_target = tmp_path / "outside.txt"
     linked_export = tmp_path / "linked_20300101_110000.txt"
-    for path in (old_export, fresh_export, unrelated):
+    for path in (old_export, old_download, fresh_export, unrelated):
         path.write_text("text", encoding="utf-8")
     linked_target.write_text("must remain", encoding="utf-8")
     linked_export.symlink_to(linked_target)
@@ -133,8 +184,9 @@ def test_cleanup_removes_only_expired_telegram_exports(tmp_path) -> None:
 
     removed = cleanup_expired_exports(tmp_path, now=now)
 
-    assert removed == 1
+    assert removed == 2
     assert not old_export.exists()
+    assert not old_download.exists()
     assert fresh_export.exists()
     assert unrelated.exists()
     assert linked_export.is_symlink()
@@ -176,3 +228,7 @@ def test_skill_returns_the_export_as_a_telegram_document() -> None:
     assert "[[as_document]]" in skill
     assert "telegram_text_export_excerpt" in skill
     assert "queue_analysis_confirmed" in skill
+    assert "Не читай экспорт автоматически" in skill
+    assert "не отказывайся читать" in skill
+    assert "последние N" in skill
+    assert "весь чат" in skill

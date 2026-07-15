@@ -6,7 +6,7 @@ import pytest
 
 from hermes.native_tools.mcp_api import NativeToolsAPI
 from hermes.native_tools.task_calendar import TaskCalendarHealth
-from hermes.native_tools.telegram_text_export import ExportResult
+from hermes.native_tools.telegram_text_export import ExportResult, FileDownloadItem, FileDownloadResult
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,6 +64,22 @@ def test_native_api_plan_round_trip_and_health_redaction(tmp_path: Path) -> None
     assert completed["status"] == "succeeded"
     assert completed["actions"][0]["result_meta"] == {"trello_card_id": "abc123"}
     assert previews == ["1. task.create: MCP canary"]
+
+
+def test_native_api_exposes_compact_plan_trace_and_tool_discovery(tmp_path: Path) -> None:
+    api = NativeToolsAPI(database_path=tmp_path / "personal.sqlite3", adapter_factory=FakeAdapter)
+    plan = api.action_plan_create(
+        actions=[{"type": "task.create", "payload": {"title": "Проверить релиз"}}],
+        idempotency_key="trace-and-catalog",
+    )
+
+    trace = api.action_plan_trace(plan_id=plan["id"])
+    catalog = api.tool_catalog_discover(query="задача", limit=4)
+
+    assert trace["next"] == {"key": "action-1", "type": "task.create", "title": "Проверить релиз"}
+    assert trace["pending"] == 1
+    assert 1 <= len(catalog["items"]) <= 4
+    assert all("input_contract" in item and "output_contract" in item for item in catalog["items"])
 
 
 def test_native_api_cancelled_plan_has_no_side_effect(tmp_path: Path) -> None:
@@ -146,7 +162,51 @@ def test_native_api_export_requires_confirmation(tmp_path: Path) -> None:
 
     assert result["message_count"] == 3
     assert result["expires_at"]
+    assert result["attachment"]["directive"].startswith("MEDIA:")
     assert calls == [{"peer": "@example", "output_format": "txt", "limit": 10}]
+
+
+def test_native_api_downloads_chat_files_only_after_one_confirmation(tmp_path: Path) -> None:
+    calls: list[dict[str, object]] = []
+
+    def downloader(**kwargs: object) -> FileDownloadResult:
+        calls.append(kwargs)
+        path = tmp_path / "telegram_file_1_20300101_120000_report.txt"
+        path.write_text("report", encoding="utf-8")
+        return FileDownloadResult(
+            peer=str(kwargs["peer"]),
+            title="Chat",
+            items=(
+                FileDownloadItem(
+                    message_id=1,
+                    path=path,
+                    name=path.name,
+                    size_bytes=path.stat().st_size,
+                    mime_type="text/plain",
+                ),
+            ),
+            skipped_oversized=0,
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=48),
+        )
+
+    api = NativeToolsAPI(database_path=tmp_path / "personal.sqlite3", file_downloader=downloader)
+
+    with pytest.raises(ValueError, match="подтверждение"):
+        api.telegram_file_download(peer="@example", confirmed=False)
+
+    async def confirm(preview: str) -> bool:
+        return "@example" in preview
+
+    result = asyncio.run(
+        api.telegram_file_download_confirmed(
+            peer="@example", file_limit=3, scan_limit=100, confirmer=confirm
+        )
+    )
+
+    assert result["status"] == "ok"
+    assert result["expires_at"]
+    assert result["items"][0]["attachment"]["directive"].startswith("MEDIA:")
+    assert calls == [{"peer": "@example", "file_limit": 3, "scan_limit": 100, "message_ids": None}]
 
 
 def test_native_api_can_queue_explicit_export_analysis_and_keeps_raw_text_off_the_summary(tmp_path: Path, monkeypatch) -> None:

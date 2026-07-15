@@ -26,3 +26,8 @@ The native tool owns the compact preview, the single Telegram confirmation,
 idempotent execution, one batch connection to Task Command Center, and
 cancellation. Do not call `clarify`, approve, execute or cancel separately.
 Summarize succeeded and failed actions in one final message.
+
+For a compact human status of a long plan, call
+`mcp_jarhert_native_action_plan_trace`. Use the full
+`mcp_jarhert_native_action_plan_status` only when the user asks for details or
+when diagnosing a failure.

@@ -36,6 +36,22 @@ class ToolSpec:
     enabled_by_default: bool = True
 
 
+_DISCOVERY_HINTS: dict[str, tuple[str, ...]] = {
+    "task": ("задач", "trello", "карточ", "колонк", "приоритет", "перенес", "закрой"),
+    "calendar": ("календар", "встреч", "событи", "созвон", "расписан"),
+    "memory": ("памят", "замет", "иде", "обещан", "предпочтен"),
+    "note": ("замет", "иде", "сохрани", "найди", "памят"),
+    "contact": ("контакт", "илье", "напис", "сообщен", "crm"),
+    "message": ("сообщен", "напис", "отправ", "контакт"),
+    "reminder": ("напомин", "напомни", "завтра", "повтор"),
+    "monitor": ("монитор", "релиз", "rss", "радар", "изменен"),
+    "knowledge": ("сайт", "ссылк", "архив", "знани", "исслед"),
+    "github": ("github", "реп", "pr", "issue", "ci"),
+    "coding": ("код", "реп", "баг", "тест", "diff", "codex"),
+    "action_plan": ("создай", "сделай", "перенес", "план", "несколько"),
+}
+
+
 _ALL_MODES = frozenset({"fast", "think", "code"})
 _CODE_ONLY = frozenset({"code"})
 
@@ -119,6 +135,7 @@ _PLAN_CAPABILITIES = (
 TOOL_CATALOG = (
     _tool("integration_health", "integration_health", ("integration.health",), "low", ToolBundle.OPERATIONS),
     _tool("system_status", "system_status", ("system.status",), "low", ToolBundle.OPERATIONS),
+    _tool("tool_catalog_discover", "tool_catalog_discover", (), "low", ToolBundle.OPERATIONS),
     _tool("work_mode_get", "work_mode_get", (), "low", ToolBundle.OPERATIONS),
     _tool("work_mode_set", "work_mode_set", (), "medium", ToolBundle.OPERATIONS),
     _tool("task_list", "task_list", ("task.list",), "low", ToolBundle.PLANNING),
@@ -126,6 +143,7 @@ TOOL_CATALOG = (
     _tool("action_plan_confirm_execute", "action_plan_confirm_execute", _PLAN_CAPABILITIES, "high", ToolBundle.PLANNING),
     _tool("action_plan_dag_confirm_execute", "action_plan_dag_confirm_execute", _PLAN_CAPABILITIES, "high", ToolBundle.PLANNING),
     _tool("action_plan_status", "action_plan_get", (), "low", ToolBundle.PLANNING),
+    _tool("action_plan_trace", "action_plan_trace", (), "low", ToolBundle.PLANNING),
     _tool("action_plan_pause_confirmed", "action_plan_pause", ("planner.control",), "medium", ToolBundle.PLANNING),
     _tool("action_plan_resume_confirmed", "action_plan_resume", ("planner.control",), "medium", ToolBundle.PLANNING),
     _tool("contact_add", "contact_add", ("contact.write",), "low", ToolBundle.PERSONAL),
@@ -134,6 +152,7 @@ TOOL_CATALOG = (
     _tool("message_plan_cancel_confirmed", "message_plan_cancel", ("message.cancel",), "medium", ToolBundle.PERSONAL),
     _tool("memory_block_upsert", "memory_block_upsert", ("memory.write",), "low", ToolBundle.PERSONAL),
     _tool("memory_block_list", "memory_block_list", ("memory.read",), "low", ToolBundle.PERSONAL),
+    _tool("memory_context", "memory_context", ("memory.read",), "low", ToolBundle.PERSONAL),
     _tool("note_search", "note_search", ("memory.read",), "low", ToolBundle.PERSONAL),
     _tool("note_edit", "note_edit", ("memory.write",), "low", ToolBundle.PERSONAL),
     _tool("note_history", "note_history", ("memory.read",), "low", ToolBundle.PERSONAL),
@@ -184,6 +203,7 @@ TOOL_CATALOG = (
     _tool("knowledge_list_sources", "knowledge_list_sources", ("knowledge.read",), "low", ToolBundle.RESEARCH),
     _tool("github_public_repository", "github_public_repository", ("github.read",), "low", ToolBundle.RESEARCH),
     _tool("telegram_text_export_confirmed", "telegram_text_export_confirmed", ("telegram.export",), "high", ToolBundle.RESEARCH),
+    _tool("telegram_file_download_confirmed", "telegram_file_download_confirmed", ("telegram.export",), "high", ToolBundle.RESEARCH),
     _tool("telegram_text_export_excerpt", "telegram_text_export_excerpt", ("telegram.export.read",), "low", ToolBundle.RESEARCH),
     _tool("telegram_text_export_queue_analysis_confirmed", "telegram_text_export_queue_analysis", ("telegram.export.read", "research.run"), "high", ToolBundle.RESEARCH),
     _tool("coding_job_enqueue_confirmed", "coding_job_enqueue", ("coding.queue", "research.run"), "high", ToolBundle.CODE),
@@ -264,6 +284,72 @@ def tool_names_for_active_bundles(value: str | None = None) -> tuple[str, ...]:
 
 def tool_is_active(spec: ToolSpec, value: str | None = None) -> bool:
     return spec.bundle in active_tool_bundles(value)
+
+
+def discover_tool_specs(
+    query: str = "",
+    *,
+    bundle: ToolBundle | None = None,
+    limit: int = 8,
+) -> tuple[ToolSpec, ...]:
+    """Return a small relevant slice of the catalog without changing policy."""
+    clean_query = str(query or "").strip().casefold()
+    tokens = tuple(token for token in clean_query.replace("_", " ").split() if len(token) > 1)
+    candidates = [spec for spec in TOOL_CATALOG if bundle is None or spec.bundle == bundle]
+
+    def score(spec: ToolSpec) -> tuple[int, int, str]:
+        haystack = " ".join((spec.name, spec.handler, spec.bundle.value, *spec.capabilities)).casefold()
+        hint_tokens = (
+            _DISCOVERY_HINTS.get(spec.name.split("_", 1)[0], ())
+            + _DISCOVERY_HINTS.get(spec.handler.split("_", 1)[0], ())
+            + (_DISCOVERY_HINTS["action_plan"] if spec.name.startswith("action_plan_") else ())
+        )
+        matches = sum(3 for token in tokens if token in haystack)
+        matches += sum(2 for hint in hint_tokens if hint and hint in clean_query)
+        if spec.name == "action_plan_confirm_execute" and any(
+            marker in clean_query for marker in ("созда", "сдела", "перенес", "измени", "отмени", "закрой")
+        ):
+            matches += 5
+        risk_rank = {"low": 0, "medium": 1, "high": 2}[spec.risk]
+        return (-matches, risk_rank, spec.name)
+
+    ranked = sorted(candidates, key=score)
+    if tokens:
+        matched = [spec for spec in ranked if score(spec)[0] < 0]
+        if matched:
+            ranked = matched
+    return tuple(ranked[: max(1, min(int(limit), 12))])
+
+
+def tool_input_contract(spec: ToolSpec) -> str:
+    if spec.name.startswith("action_plan_"):
+        return "JSON plan with only documented action fields; unknown mutation fields are rejected."
+    if spec.name.endswith(("_list", "_search", "_status", "_get", "_trace", "_discover")):
+        return "Typed optional filters only."
+    if "confirmed" in spec.name:
+        return "Typed payload plus one explicit Telegram confirmation."
+    return "Typed payload only."
+
+
+def tool_output_contract(spec: ToolSpec) -> str:
+    if spec.name.startswith("action_plan_"):
+        return "Persisted plan state; trace returns only counts, next step, and compact problems."
+    if spec.name.endswith(("_list", "_search", "_history", "_candidates", "_discover")):
+        return "JSON object with an items array."
+    if spec.name.endswith("_trace"):
+        return "Compact JSON status for one plan."
+    return "JSON object with the created, updated, or requested result."
+
+
+def tool_catalog_entry(spec: ToolSpec) -> dict[str, object]:
+    return {
+        "name": spec.name,
+        "bundle": spec.bundle.value,
+        "risk": spec.risk,
+        "capabilities": list(spec.capabilities),
+        "input_contract": tool_input_contract(spec),
+        "output_contract": tool_output_contract(spec),
+    }
 
 
 def validate_tool_catalog() -> list[str]:

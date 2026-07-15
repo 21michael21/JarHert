@@ -109,6 +109,16 @@ focused profile may expose only `personal`, `planning`, `research` or `code`
 only between sessions and restart Hermes afterwards. This reduces the model's
 tool context without removing data or changing capability policy.
 
+`tool_catalog_discover` ищет небольшой подходящий набор по смыслу запроса и
+возвращает входной и выходной контракт каждого инструмента. Он не меняет права
+и не скрывает возможности от владельца. Для долгих plan вместо сырого объекта
+используй `action_plan_trace`: там только статус, счётчики, следующий шаг и
+реальные проблемы.
+
+`memory_context` читает не больше 12 записей памяти, добавляет короткое summary
+и помечает факты старше 90 дней. Это подсказка для контекста, а не источник
+команд и не автоматическое сохранение новых данных.
+
 JarHert invokes the allowlisted `taskctl.py` commands from that directory. Its
 Trello token and Google OAuth files remain owned by Task Command Center. Check
 the connection without changing anything:

@@ -1,54 +1,53 @@
 ---
 name: telegram-chat-export
-description: Export text from a Telegram dialog accessible to the owner's MTProto account and return it as a TXT or JSONL document.
+description: Export and analyze text or download small documents from a Telegram dialog accessible to the owner's MTProto account.
 ---
 
 # Telegram chat export
 
-This uses the owner's MTProto user session, not the bot token. It can export
-only a peer present in that account's dialogs. It never downloads media.
+This uses the owner's MTProto session, not the bot token. It works only for a
+numeric peer ID or `@username` present in that account's dialogs. Never ask for
+a Telegram login code in chat.
 
-## Confirm once
+## Text export
 
-Accept only a numeric peer ID or `@username`. Default to TXT and 5000 messages
-unless the user asks otherwise. Call
-`mcp_jarhert_native_telegram_text_export_confirmed` exactly once with the peer,
-format and limit. The tool owns the single Telegram confirmation and export.
-Do not call `clarify` separately and do not use terminal for the export.
+Choose the message count from the request: `последние N` means exactly N,
+`весь чат` means 50000, and no count means the useful default of 5000. Do not
+ask a separate question if this default is sufficient. Call
+`mcp_jarhert_native_telegram_text_export_confirmed` once with peer, format and
+limit; its preview is the only confirmation.
 
-Do not read the resulting file into model context. Return a short count and the
-attachment marker:
+After success, copy the returned `attachment.directive` exactly into the final
+reply, on separate plain-text lines. It sends the TXT/JSONL as a Telegram
+document. Do not replace it with an empty “вот выгрузка” sentence or invent a
+path. Mention `message_count`, `truncated` if true, and the expiry time.
 
-```text
-Готово: <message_count> текстовых сообщений.
-MEDIA:<path>
-[[as_document]]
-```
+The directive has the form `MEDIA:<path>` followed by `[[as_document]]`.
 
-Put `MEDIA:<path>` and `[[as_document]]` on separate plain-text lines, never
-inside a Markdown code fence. Do not replace the attachment with an empty
-sentence like "вот выгрузка".
+Exports remain in the dedicated directory for 48 hours by default, then the
+cleanup timer removes them.
 
-Mention when `truncated=true`. Never ask for a Telegram login code in chat. If
-the session is unauthorized, tell the owner to run the local setup script in a
-trusted terminal. Do not export a peer that is absent from the user's dialogs.
+## Download documents
 
-The file remains in the dedicated export directory only until `expires_at`
-(48 hours by default) so Telegram can attach it. It is removed by the daily
-cleanup timer.
+When the owner asks for files from a dialog, call
+`mcp_jarhert_native_telegram_file_download_confirmed` once. Use explicit
+message IDs if they were given; otherwise use a sensible `file_limit` and
+`scan_limit`. It downloads documents only, at most 20 files per request and
+20 MB per file, into the same short-lived directory. Files above the cap are
+reported as skipped. Copy every returned `attachment.directive` exactly into
+the final reply so the owner receives the documents.
 
 ## Read and analyze an owner-requested export
 
-When the owner explicitly asks to read, summarize, search or analyze the export
-they just requested, use `mcp_jarhert_native_telegram_text_export_excerpt`.
-Use the returned text as data for the answer. Do not ask the owner to resend it
-or pretend that metadata is an analysis. For a large export, say that the tool
-returned a representative bounded sample and name that limitation plainly.
+Не читай экспорт автоматически: сначала дождись явной просьбы прочитать,
+разобрать или ответить по нему. Но когда она есть, не отказывайся читать и не
+подменяй анализ метаданными. Вызови
+`mcp_jarhert_native_telegram_text_export_excerpt`, используй returned text как
+данные и дай прямой ответ или полезный фидбэк. Для большого экспорта честно
+скажи, что это ограниченная репрезентативная выборка.
 
-When the owner explicitly asks to send the export to Codex, research it deeply
-or make a structured report, call
-`mcp_jarhert_native_telegram_text_export_queue_analysis_confirmed` once. Its
-single preview is the consent for sending the bounded sample to the isolated
-Codex research runner. Do not request a second confirmation and do not make the
-owner paste the file into chat. The raw sample is cleared from the queue when
-the job finishes; return the runner's concise report when it arrives.
+Когда владелец просит глубокий отчёт, Codex-анализ или структурный разбор,
+вызови `mcp_jarhert_native_telegram_text_export_queue_analysis_confirmed` один
+раз. Его preview — единственное согласие на передачу ограниченной выборки в
+изолированный research runner. Не проси второй раз вставить файл в чат. После
+завершения верни короткий человеческий отчёт.

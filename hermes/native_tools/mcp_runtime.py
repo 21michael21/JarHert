@@ -14,26 +14,30 @@ else:
     from .tool_catalog import tool_is_active, tool_spec
 
 from mcp.server.fastmcp import Context, FastMCP
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Consent(BaseModel):
     pass
 
 
-class ScheduledMessagePayload(BaseModel):
+class StrictPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class ScheduledMessagePayload(StrictPayload):
     contact: str
     text: str
     send_at: str
 
 
-class NoteSavePayload(BaseModel):
+class NoteSavePayload(StrictPayload):
     subject: str
     content: str
     project: str | None = None
 
 
-class CommitmentCreatePayload(BaseModel):
+class CommitmentCreatePayload(StrictPayload):
     subject: str
     content: str
     contact: str | None = None
@@ -41,13 +45,13 @@ class CommitmentCreatePayload(BaseModel):
     due_at: str | None = None
 
 
-class ReminderCreatePayload(BaseModel):
+class ReminderCreatePayload(StrictPayload):
     text: str
     remind_at: str
     recurrence: Literal["daily", "weekly", "monthly"] | None = None
 
 
-class SkillStep(BaseModel):
+class SkillStep(StrictPayload):
     tool: str
     summary: str
 
@@ -68,7 +72,7 @@ ProjectTool = Literal[
 ]
 
 
-class TaskCreatePayload(BaseModel):
+class TaskCreatePayload(StrictPayload):
     title: str
     list_name: str = "Inbox"
     project: str | None = None
@@ -77,26 +81,26 @@ class TaskCreatePayload(BaseModel):
     description: str | None = None
 
 
-class TaskMovePayload(BaseModel):
+class TaskMovePayload(StrictPayload):
     title: str
     target_list: str
 
 
-class TaskPriorityPayload(BaseModel):
+class TaskPriorityPayload(StrictPayload):
     title: str
     priority: str
 
 
-class TaskDonePayload(BaseModel):
+class TaskDonePayload(StrictPayload):
     title: str
     summary: str = "Готово."
 
 
-class TaskDeletePayload(BaseModel):
+class TaskDeletePayload(StrictPayload):
     title: str
 
 
-class CalendarCreatePayload(BaseModel):
+class CalendarCreatePayload(StrictPayload):
     title: str
     start: str
     end: str
@@ -104,67 +108,67 @@ class CalendarCreatePayload(BaseModel):
     description: str | None = None
 
 
-class CalendarMovePayload(BaseModel):
+class CalendarMovePayload(StrictPayload):
     title: str
     start: str
     end: str
 
 
-class CalendarDeletePayload(BaseModel):
+class CalendarDeletePayload(StrictPayload):
     title: str
 
 
-class TaskCreateAction(BaseModel):
+class TaskCreateAction(StrictPayload):
     type: Literal["task.create"]
     payload: TaskCreatePayload
 
 
-class TaskMoveAction(BaseModel):
+class TaskMoveAction(StrictPayload):
     type: Literal["task.move"]
     payload: TaskMovePayload
 
 
-class TaskPriorityAction(BaseModel):
+class TaskPriorityAction(StrictPayload):
     type: Literal["task.priority"]
     payload: TaskPriorityPayload
 
 
-class TaskDoneAction(BaseModel):
+class TaskDoneAction(StrictPayload):
     type: Literal["task.done"]
     payload: TaskDonePayload
 
 
-class TaskDeleteAction(BaseModel):
+class TaskDeleteAction(StrictPayload):
     type: Literal["task.delete"]
     payload: TaskDeletePayload
 
 
-class CalendarCreateAction(BaseModel):
+class CalendarCreateAction(StrictPayload):
     type: Literal["calendar.create"]
     payload: CalendarCreatePayload
 
 
-class CalendarMoveAction(BaseModel):
+class CalendarMoveAction(StrictPayload):
     type: Literal["calendar.move"]
     payload: CalendarMovePayload
 
 
-class CalendarDeleteAction(BaseModel):
+class CalendarDeleteAction(StrictPayload):
     type: Literal["calendar.delete"]
     payload: CalendarDeletePayload
 
 
-class NoteSaveAction(BaseModel):
+class NoteSaveAction(StrictPayload):
     type: Literal["note.save"]
     payload: NoteSavePayload
 
 
-class CommitmentCreateAction(BaseModel):
+class CommitmentCreateAction(StrictPayload):
     type: Literal["commitment.create"]
     payload: CommitmentCreatePayload
 
 
-class ReminderCreateAction(BaseModel):
+class ReminderCreateAction(StrictPayload):
     type: Literal["reminder.create"]
     payload: ReminderCreatePayload
 
@@ -218,6 +222,16 @@ def integration_health() -> dict[str, bool]:
 def system_status() -> dict[str, object]:
     """Read a privacy-safe operational snapshot of the personal Hermes runtime."""
     return api.system_status()
+
+
+@native_tool()
+def tool_catalog_discover(
+    query: str = "",
+    bundle: Literal["operations", "planning", "personal", "research", "code"] | None = None,
+    limit: Annotated[int, Field(ge=1, le=12)] = 8,
+) -> dict[str, object]:
+    """Find a small relevant set of allowed tools with their input and output contracts."""
+    return api.tool_catalog_discover(query=query, bundle=bundle, limit=limit)
 
 
 @native_tool()
@@ -557,6 +571,16 @@ def memory_block_list(
 ) -> dict[str, object]:
     """List structured personal memory without returning unrelated block types."""
     return api.memory_block_list(block_type=block_type, project=project, limit=limit)
+
+
+@native_tool()
+def memory_context(
+    query: str | None = None,
+    project: str | None = None,
+    limit: Annotated[int, Field(ge=1, le=12)] = 6,
+) -> dict[str, object]:
+    """Retrieve a short memory hint and mark facts that may be stale; this never writes memory."""
+    return api.memory_context(query=query, project=project, limit=limit)
 
 
 @native_tool()
@@ -919,6 +943,12 @@ def action_plan_status(plan_id: int) -> dict[str, object]:
 
 
 @native_tool()
+def action_plan_trace(plan_id: int) -> dict[str, object]:
+    """Show only compact progress, the next step, and failures for one persisted plan."""
+    return api.action_plan_trace(plan_id=plan_id)
+
+
+@native_tool()
 async def action_plan_pause_confirmed(plan_id: int, ctx: Context) -> dict[str, object]:
     """Pause a pending plan after one explicit confirmation."""
     if not await _confirm(ctx, f"Поставить plan #{plan_id} на паузу?"):
@@ -946,6 +976,24 @@ async def telegram_text_export_confirmed(
         peer=peer,
         output_format=output_format,
         limit=limit,
+        confirmer=lambda preview: _confirm(ctx, preview),
+    )
+
+
+@native_tool()
+async def telegram_file_download_confirmed(
+    peer: str,
+    ctx: Context,
+    message_ids: list[Annotated[int, Field(gt=0)]] | None = None,
+    file_limit: Annotated[int, Field(ge=1, le=20)] = 5,
+    scan_limit: Annotated[int, Field(ge=1, le=50000)] = 500,
+) -> dict[str, object]:
+    """Download up to 20 requested Telegram documents under 20 MB each after one confirmation."""
+    return await api.telegram_file_download_confirmed(
+        peer=peer,
+        message_ids=message_ids,
+        file_limit=file_limit,
+        scan_limit=scan_limit,
         confirmer=lambda preview: _confirm(ctx, preview),
     )
 

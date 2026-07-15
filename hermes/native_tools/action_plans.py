@@ -27,6 +27,19 @@ ACTION_SCHEMAS: dict[str, tuple[str, ...]] = {
     "calendar.move": ("title", "start", "end"),
     "calendar.delete": ("title",),
 }
+ACTION_FIELDS: dict[str, frozenset[str]] = {
+    "note.save": frozenset({"subject", "content", "project"}),
+    "commitment.create": frozenset({"subject", "content", "contact", "project", "due_at", "idempotency_key"}),
+    "reminder.create": frozenset({"text", "remind_at", "recurrence", "idempotency_key"}),
+    "task.create": frozenset({"title", "list_name", "project", "priority", "due", "description"}),
+    "task.move": frozenset({"title", "target_list"}),
+    "task.priority": frozenset({"title", "priority"}),
+    "task.done": frozenset({"title", "summary"}),
+    "task.delete": frozenset({"title"}),
+    "calendar.create": frozenset({"title", "start", "end", "reminder_minutes", "description"}),
+    "calendar.move": frozenset({"title", "start", "end"}),
+    "calendar.delete": frozenset({"title"}),
+}
 EXTERNAL_ACTIONS = frozenset(action for action in ACTION_SCHEMAS if action.startswith(("task.", "calendar.")))
 
 
@@ -186,6 +199,30 @@ class ActionPlanStore:
                 raise ActionPlanError("Можно продолжить только paused plan.")
         return self.get(plan_id)
 
+    def compact_trace(self, plan_id: int) -> dict[str, Any]:
+        """Return a stable, small status summary suitable for a chat reply."""
+        plan = self.get(plan_id)
+        counts = {status: 0 for status in ("succeeded", "running", "pending", "failed")}
+        for action in plan.actions:
+            if action.status in counts:
+                counts[action.status] += 1
+        next_action = next(
+            (action for action in plan.actions if action.status in {"running", "pending"}),
+            None,
+        )
+        return {
+            "plan_id": plan.id,
+            "status": plan.status,
+            "total": len(plan.actions),
+            **counts,
+            "next": _trace_action(next_action) if next_action else None,
+            "problems": [
+                {**_trace_action(action), "error": _bounded(str(action.error or ""), 180)}
+                for action in plan.actions
+                if action.status == "failed"
+            ],
+        }
+
     def mark_running(self, action_id: int) -> None:
         with self._connect() as connection:
             connection.execute(
@@ -343,6 +380,7 @@ def _execute_action(adapter: Any, action_type: str, payload: dict[str, Any]) -> 
         "reminder.create": "create_reminder",
         "task.create": "create_task",
         "task.move": "move_task",
+        "task.priority": "set_task_priority",
         "task.done": "complete_task",
         "task.delete": "delete_task",
         "calendar.create": "create_calendar_event",
@@ -361,10 +399,22 @@ def _validate_action(item: dict[str, Any]) -> dict[str, Any]:
     payload = item.get("payload")
     if not isinstance(payload, dict):
         raise ActionPlanError("Action payload должен быть JSON-объектом.")
+    unexpected = sorted(set(payload) - ACTION_FIELDS[action_type])
+    if unexpected:
+        raise ActionPlanError(
+            f"Action {action_type} содержит неизвестные поля: {', '.join(unexpected)}."
+        )
     for field in ACTION_SCHEMAS[action_type]:
         if not str(payload.get(field) or "").strip():
             raise ActionPlanError(f"Action {action_type} требует поле {field}.")
     return {"type": action_type, "payload": payload}
+
+
+def _trace_action(action: PlannedAction | None) -> dict[str, str] | None:
+    if action is None:
+        return None
+    title = str(action.payload.get("title") or action.payload.get("subject") or action.payload.get("text") or "без названия")
+    return {"key": action.node_key, "type": action.action_type, "title": _bounded(title, 160)}
 
 
 def _validate_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:

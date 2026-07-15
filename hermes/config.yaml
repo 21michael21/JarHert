@@ -92,11 +92,13 @@ mcp_servers:
       include:
         - integration_health
         - system_status
+        - tool_catalog_discover
         - task_list
         - calendar_list
         - action_plan_confirm_execute
         - action_plan_dag_confirm_execute
         - action_plan_status
+        - action_plan_trace
         - action_plan_pause_confirmed
         - action_plan_resume_confirmed
         - contact_add
@@ -130,6 +132,7 @@ mcp_servers:
         - skill_mark_staged
         - memory_block_upsert
         - memory_block_list
+        - memory_context
         - note_search
         - note_edit
         - note_history
@@ -158,6 +161,7 @@ mcp_servers:
         - coding_job_enqueue_confirmed
         - coding_job_list
         - telegram_text_export_confirmed
+        - telegram_file_download_confirmed
         - telegram_text_export_excerpt
         - telegram_text_export_queue_analysis_confirmed
       resources: false

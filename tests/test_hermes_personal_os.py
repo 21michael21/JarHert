@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -66,6 +67,38 @@ def test_notes_support_search_edit_history_and_delete(tmp_path: Path) -> None:
     assert api.note_history(note_id=note["id"])["items"][0]["content"] == "Проверить refresh token перед релизом."
     assert api.note_delete(note_id=note["id"])["status"] == "deleted"
     assert api.note_search(query="refresh") == {"items": []}
+
+
+def test_memory_context_is_small_and_marks_old_facts_without_hiding_them(tmp_path: Path) -> None:
+    database = tmp_path / "personal-os.sqlite3"
+    api = NativeToolsAPI(database_path=database)
+    api.memory_block_upsert(
+        block_type="preference",
+        subject="Стиль",
+        content="Пиши коротко.",
+    )
+    api.memory_block_upsert(
+        block_type="note",
+        subject="OAuth",
+        content="Проверить refresh token.",
+        project="Hub_ML",
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE memory_blocks SET updated_at = '2000-01-01 00:00:00' WHERE subject = 'Стиль'"
+        )
+
+    context = api.memory_context(query="OAuth", project="Hub_ML", limit=99)
+    old_context = api.memory_context(limit=2)
+    preference_context = api.memory_context(query="коротко")
+
+    assert len(context["items"]) == 1
+    assert context["items"][0]["subject"] == "OAuth"
+    assert context["items"][0]["stale"] is False
+    assert len(old_context["items"]) == 2
+    assert any(item["stale"] is True for item in old_context["items"])
+    assert "могут устареть" in old_context["freshness_note"]
+    assert preference_context["items"][0]["subject"] == "Стиль"
 
 
 def test_project_context_resolves_alias_and_returns_scoped_integrations(tmp_path: Path) -> None:

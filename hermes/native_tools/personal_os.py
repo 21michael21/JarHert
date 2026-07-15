@@ -160,6 +160,35 @@ class PersonalOSStore:
             ).fetchall()
         return [_memory_from_row(row) for row in rows]
 
+    def search_memory_blocks(
+        self,
+        *,
+        query: str,
+        project: str | None = None,
+        limit: int = 20,
+    ) -> list[MemoryBlock]:
+        """Bounded local fallback for structured facts that are not note-FTS entries."""
+        terms = [term.casefold() for term in str(query or "").split() if term.strip()]
+        if not terms:
+            return []
+        clauses: list[str] = []
+        values: list[Any] = []
+        if project:
+            clauses.append("project_key = ?")
+            values.append(_required(project, "Project", limit=120))
+        sql = "SELECT * FROM memory_blocks"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY updated_at DESC, id DESC LIMIT 100"
+        with self._connect() as connection:
+            rows = connection.execute(sql, values).fetchall()
+        matches = []
+        for row in rows:
+            haystack = f"{row['subject']} {row['content']}".casefold()
+            if all(term in haystack for term in terms):
+                matches.append(_memory_from_row(row))
+        return matches[: max(1, min(int(limit), 20))]
+
     def edit_note(self, note_id: int, *, content: str) -> MemoryBlock:
         clean_content = _required(content, "Note content", limit=4000)
         with self._connect() as connection:

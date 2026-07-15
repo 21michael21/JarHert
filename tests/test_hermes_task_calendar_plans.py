@@ -71,6 +71,37 @@ def test_unknown_action_and_bad_payload_are_rejected(tmp_path) -> None:
     with pytest.raises(ActionPlanError, match="title"):
         store.create([{"type": "task.create", "payload": {}}], idempotency_key="missing")
 
+    with pytest.raises(ActionPlanError, match="неизвестные поля"):
+        store.create(
+            [{"type": "task.create", "payload": {"title": "Task", "surprise": "no"}}],
+            idempotency_key="unexpected-field",
+        )
+
+
+def test_compact_plan_trace_keeps_user_status_small(tmp_path) -> None:
+    store = ActionPlanStore(tmp_path / "plans.sqlite3")
+    plan = store.create(
+        [
+            {"type": "task.create", "payload": {"title": "Собрать релиз"}},
+            {"type": "calendar.create", "payload": {"title": "Созвон", "start": "2030-01-02 12:00", "end": "2030-01-02 12:30"}},
+        ],
+        idempotency_key="compact-trace",
+    )
+
+    trace = store.compact_trace(plan.id)
+
+    assert trace == {
+        "plan_id": plan.id,
+        "status": "draft",
+        "total": 2,
+        "succeeded": 0,
+        "running": 0,
+        "pending": 2,
+        "failed": 0,
+        "next": {"key": "action-1", "type": "task.create", "title": "Собрать релиз"},
+        "problems": [],
+    }
+
 
 def test_partial_failure_is_visible_and_later_action_continues(tmp_path) -> None:
     class PartialAdapter(FakeAdapter):

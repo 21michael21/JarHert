@@ -5,7 +5,7 @@ import json
 import os
 import re
 import stat
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Protocol
@@ -13,7 +13,11 @@ from typing import Any, AsyncIterator, Protocol
 
 DEFAULT_EXPORT_RETENTION_HOURS = 48
 DEFAULT_EXPORT_ANALYSIS_CHARS = 120_000
+MAX_DOWNLOAD_FILE_BYTES = 20 * 1024 * 1024
 _EXPORT_FILE_NAME = re.compile(r"^[A-Za-z0-9А-Яа-яЁё._-]+_\d{8}_\d{6}\.(?:txt|jsonl)(?:\.part)?$")
+_DOWNLOAD_FILE_NAME = re.compile(
+    r"^telegram_file_\d+_\d{8}_\d{6}_[A-Za-z0-9А-Яа-яЁё._-]{1,100}(?:\.part)?$"
+)
 
 
 class TelegramExportError(RuntimeError):
@@ -51,10 +55,45 @@ class ExportAnalysis:
     truncated: bool
 
 
+@dataclass(frozen=True)
+class TelegramFileMessage:
+    message_id: int
+    date: datetime
+    name: str
+    size_bytes: int
+    mime_type: str | None
+    source: Any = field(default=None, repr=False, compare=False)
+
+
+@dataclass(frozen=True)
+class FileDownloadItem:
+    message_id: int
+    path: Path
+    name: str
+    size_bytes: int
+    mime_type: str | None
+
+
+@dataclass(frozen=True)
+class FileDownloadResult:
+    peer: str
+    title: str
+    items: tuple[FileDownloadItem, ...]
+    skipped_oversized: int
+    expires_at: datetime
+
+
 class TextHistoryClient(Protocol):
     async def resolve_peer(self, peer: str | int) -> Any: ...
     async def is_accessible_dialog(self, entity: Any) -> bool: ...
     def iter_text_messages(self, entity: Any, *, limit: int) -> AsyncIterator[ExportMessage]: ...
+
+
+class FileHistoryClient(Protocol):
+    async def resolve_peer(self, peer: str | int) -> Any: ...
+    async def is_accessible_dialog(self, entity: Any) -> bool: ...
+    def iter_file_messages(self, entity: Any, *, scan_limit: int) -> AsyncIterator[TelegramFileMessage]: ...
+    async def download_file(self, file_message: TelegramFileMessage, destination: Path) -> int: ...
 
 
 class TelegramTextExporter:
@@ -122,6 +161,80 @@ class TelegramTextExporter:
         )
 
 
+class TelegramFileDownloader:
+    """Download only owner-requested Telegram documents into the short-lived export area."""
+
+    def __init__(
+        self,
+        *,
+        output_dir: str | Path,
+        max_file_bytes: int = MAX_DOWNLOAD_FILE_BYTES,
+        retention_hours: int = DEFAULT_EXPORT_RETENTION_HOURS,
+    ) -> None:
+        self.output_dir = Path(output_dir).expanduser()
+        self.max_file_bytes = max(1024, min(int(max_file_bytes), MAX_DOWNLOAD_FILE_BYTES))
+        self.retention_hours = _retention_hours(retention_hours)
+
+    async def download(
+        self,
+        client: FileHistoryClient,
+        *,
+        peer: str,
+        file_limit: int = 5,
+        scan_limit: int = 500,
+        message_ids: list[int] | None = None,
+    ) -> FileDownloadResult:
+        cleanup_expired_exports(self.output_dir, retention_hours=self.retention_hours)
+        normalized_peer = normalize_peer(peer)
+        clean_file_limit = _bounded_positive(file_limit, minimum=1, maximum=20, label="File limit")
+        clean_scan_limit = _bounded_positive(scan_limit, minimum=1, maximum=50_000, label="Scan limit")
+        requested_ids = {int(item) for item in (message_ids or [])}
+        if len(requested_ids) > 20 or any(item <= 0 for item in requested_ids):
+            raise TelegramExportError("Message IDs должны содержать от 1 до 20 положительных значений.")
+        entity = await client.resolve_peer(normalized_peer)
+        if not await client.is_accessible_dialog(entity):
+            raise TelegramExportError("Этот peer нет среди диалогов авторизованного Telegram-аккаунта.")
+        title = _entity_title(entity, str(peer))
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        downloaded: list[FileDownloadItem] = []
+        skipped_oversized = 0
+        async for item in client.iter_file_messages(entity, scan_limit=clean_scan_limit):
+            if requested_ids and item.message_id not in requested_ids:
+                continue
+            if item.size_bytes > self.max_file_bytes:
+                skipped_oversized += 1
+                continue
+            destination = self.output_dir / _download_name(item, stamp)
+            partial = destination.with_name(destination.name + ".part")
+            try:
+                written = await client.download_file(item, partial)
+                if written <= 0 or written > self.max_file_bytes:
+                    raise TelegramExportError("Telegram вернул файл с недопустимым размером.")
+                partial.replace(destination)
+            except Exception:
+                partial.unlink(missing_ok=True)
+                raise
+            downloaded.append(
+                FileDownloadItem(
+                    message_id=item.message_id,
+                    path=destination,
+                    name=destination.name,
+                    size_bytes=written,
+                    mime_type=item.mime_type,
+                )
+            )
+            if len(downloaded) >= clean_file_limit:
+                break
+        return FileDownloadResult(
+            peer=str(peer),
+            title=title,
+            items=tuple(downloaded),
+            skipped_oversized=skipped_oversized,
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=self.retention_hours),
+        )
+
+
 class TelethonTextClient:
     def __init__(self, *, api_id: int, api_hash: str, session_path: str | Path) -> None:
         self.api_id = api_id
@@ -176,6 +289,32 @@ class TelethonTextClient:
                 reply_to_message_id=_reply_id(message),
             )
 
+    async def iter_file_messages(self, entity: Any, *, scan_limit: int) -> AsyncIterator[TelegramFileMessage]:
+        async for message in self.client.iter_messages(entity, limit=scan_limit):
+            document = getattr(message, "document", None)
+            file = getattr(message, "file", None)
+            size = _optional_int(getattr(file, "size", None))
+            if document is None or size is None or size <= 0:
+                continue
+            name = str(getattr(file, "name", "") or f"document_{message.id}")
+            yield TelegramFileMessage(
+                message_id=int(message.id),
+                date=_aware(message.date),
+                name=name,
+                size_bytes=size,
+                mime_type=str(getattr(file, "mime_type", "") or "") or None,
+                source=message,
+            )
+
+    async def download_file(self, file_message: TelegramFileMessage, destination: Path) -> int:
+        downloaded = await self.client.download_media(file_message.source, file=str(destination))
+        actual = Path(str(downloaded or destination))
+        if not actual.is_file():
+            raise TelegramExportError("Telegram не сохранил запрошенный файл.")
+        if actual != destination:
+            actual.replace(destination)
+        return destination.stat().st_size
+
 
 def run_telegram_export(*, peer: str, output_format: str = "txt", limit: int = 5000) -> ExportResult:
     api_id, api_hash, session_path, output_dir = telegram_export_settings()
@@ -189,6 +328,35 @@ def run_telegram_export(*, peer: str, output_format: str = "txt", limit: int = 5
                 retention_hours=telegram_export_retention_hours(),
             ).export(
                 client, peer=peer, output_format=output_format, limit=limit
+            )
+        finally:
+            await client.close()
+
+    return asyncio.run(run())
+
+
+def run_telegram_file_download(
+    *,
+    peer: str,
+    file_limit: int = 5,
+    scan_limit: int = 500,
+    message_ids: list[int] | None = None,
+) -> FileDownloadResult:
+    api_id, api_hash, session_path, output_dir = telegram_export_settings()
+
+    async def run() -> FileDownloadResult:
+        client = TelethonTextClient(api_id=api_id, api_hash=api_hash, session_path=session_path)
+        await client.connect()
+        try:
+            return await TelegramFileDownloader(
+                output_dir=output_dir,
+                retention_hours=telegram_export_retention_hours(),
+            ).download(
+                client,
+                peer=peer,
+                file_limit=file_limit,
+                scan_limit=scan_limit,
+                message_ids=message_ids,
             )
         finally:
             await client.close()
@@ -278,7 +446,7 @@ def cleanup_expired_exports(
     cutoff = (now or datetime.now(timezone.utc)).timestamp() - _retention_hours(retention_hours) * 3600
     removed = 0
     for entry in directory.iterdir():
-        if not _EXPORT_FILE_NAME.fullmatch(entry.name):
+        if not _managed_export_name(entry.name):
             continue
         try:
             mode = entry.lstat().st_mode
@@ -321,6 +489,25 @@ def _retention_hours(value: int | str) -> int:
     if not 1 <= hours <= 168:
         raise TelegramExportError("TELEGRAM_EXPORT_RETENTION_HOURS должен быть от 1 до 168.")
     return hours
+
+
+def _bounded_positive(value: int, *, minimum: int, maximum: int, label: str) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as error:
+        raise TelegramExportError(f"{label} должен быть числом от {minimum} до {maximum}.") from error
+    if not minimum <= parsed <= maximum:
+        raise TelegramExportError(f"{label} должен быть от {minimum} до {maximum}.")
+    return parsed
+
+
+def _download_name(item: TelegramFileMessage, stamp: str) -> str:
+    safe_name = _safe_filename(item.name)
+    return f"telegram_file_{item.message_id}_{stamp}_{safe_name}"
+
+
+def _managed_export_name(name: str) -> bool:
+    return bool(_EXPORT_FILE_NAME.fullmatch(name) or _DOWNLOAD_FILE_NAME.fullmatch(name))
 
 
 def _serialize_message(message: ExportMessage, output_format: str) -> str:
