@@ -4,6 +4,9 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from .database import open_personal_os_database
+from .tool_catalog import CAPABILITY_SPECS
+
 
 @dataclass(frozen=True)
 class WorkMode:
@@ -38,57 +41,8 @@ THINK_CODE = frozenset({"think", "code"})
 CODE_ONLY = frozenset({"code"})
 
 CAPABILITIES = {
-    "integration.health": CapabilityRule("low", ALL_MODES),
-    "system.status": CapabilityRule("low", ALL_MODES),
-    "task.list": CapabilityRule("low", ALL_MODES),
-    "task.create": CapabilityRule("medium", ALL_MODES),
-    "task.move": CapabilityRule("medium", ALL_MODES),
-    "task.priority": CapabilityRule("medium", ALL_MODES),
-    "task.done": CapabilityRule("medium", ALL_MODES),
-    "task.delete": CapabilityRule("high", ALL_MODES),
-    "calendar.list": CapabilityRule("low", ALL_MODES),
-    "calendar.create": CapabilityRule("medium", ALL_MODES),
-    "calendar.move": CapabilityRule("medium", ALL_MODES),
-    "calendar.delete": CapabilityRule("high", ALL_MODES),
-    "contact.list": CapabilityRule("low", ALL_MODES),
-    "contact.write": CapabilityRule("low", ALL_MODES),
-    "message.schedule": CapabilityRule("medium", ALL_MODES),
-    "message.cancel": CapabilityRule("medium", ALL_MODES),
-    "monitor.list": CapabilityRule("low", ALL_MODES),
-    "monitor.write": CapabilityRule("medium", ALL_MODES),
-    "knowledge.read": CapabilityRule("low", ALL_MODES),
-    "knowledge.write": CapabilityRule("medium", ALL_MODES),
-    "shopping.read": CapabilityRule("low", ALL_MODES),
-    "shopping.write": CapabilityRule("low", ALL_MODES),
-    "trip.read": CapabilityRule("low", ALL_MODES),
-    "trip.write": CapabilityRule("low", ALL_MODES),
-    "trip.cancel": CapabilityRule("medium", ALL_MODES),
-    "memory.read": CapabilityRule("low", ALL_MODES),
-    "memory.write": CapabilityRule("low", ALL_MODES),
-    "note.delete": CapabilityRule("medium", ALL_MODES),
-    "note.save": CapabilityRule("low", ALL_MODES),
-    "commitment.create": CapabilityRule("low", ALL_MODES),
-    "commitment.list": CapabilityRule("low", ALL_MODES),
-    "commitment.complete": CapabilityRule("medium", ALL_MODES),
-    "reminder.create": CapabilityRule("low", ALL_MODES),
-    "reminder.list": CapabilityRule("low", ALL_MODES),
-    "reminder.write": CapabilityRule("low", ALL_MODES),
-    "crm.read": CapabilityRule("low", ALL_MODES),
-    "crm.write": CapabilityRule("low", ALL_MODES),
-    "personal.read": CapabilityRule("low", ALL_MODES),
-    "skill.feedback": CapabilityRule("low", ALL_MODES),
-    "skill.list": CapabilityRule("low", ALL_MODES),
-    "coding.read": CapabilityRule("low", ALL_MODES),
-    "coding.queue": CapabilityRule("high", ALL_MODES),
-    "subscription.read": CapabilityRule("low", ALL_MODES),
-    "subscription.write": CapabilityRule("low", ALL_MODES),
-    "project.read": CapabilityRule("low", ALL_MODES),
-    "project.write": CapabilityRule("medium", ALL_MODES),
-    "telegram.export": CapabilityRule("high", ALL_MODES),
-    "personal.export": CapabilityRule("high", ALL_MODES),
-    "planner.control": CapabilityRule("medium", ALL_MODES),
-    "research.run": CapabilityRule("high", THINK_CODE),
-    "sandbox.run": CapabilityRule("high", CODE_ONLY),
+    capability: CapabilityRule(spec.risk, spec.modes)
+    for capability, spec in CAPABILITY_SPECS.items()
 }
 
 
@@ -145,8 +99,4 @@ class CapabilityPolicyStore:
             )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=10)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout = 10000")
-        connection.execute("PRAGMA journal_mode = WAL")
-        return connection
+        return open_personal_os_database(self.database_path)

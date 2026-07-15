@@ -2,8 +2,7 @@
 
 ## Статус
 
-Accepted for the next development stages. The Telegram AI Brooch gateway is
-not the production runtime after this migration.
+Accepted. Hermes is the only JarHert runtime.
 
 ## Контекст
 
@@ -44,7 +43,7 @@ carefully scoped Trello/Calendar adapters.
 
 ## Guardrails
 
-- Do not start `gateway_bot` and `hermes gateway` for the same bot token.
+- Do not start a second Telegram polling process with the Hermes bot token.
 - Hermes is configured with explicit Telegram allowlists or pairing; never an
   open gateway.
 - Skills may request actions through narrow local CLIs. They do not receive
@@ -55,8 +54,7 @@ carefully scoped Trello/Calendar adapters.
 
 ## Consequences
 
-The existing JarHert runtime is retired gradually, not deleted in place. Its
-tests and modules remain a reference while Personal OS capabilities are moved
-to Hermes skills. Deployment switches only after native Hermes passes the live
-Telegram, reminder, Calendar, Trello, and restart-recovery checks.
-
+The old runtime is removed from the distribution. All new work targets native
+Hermes tools and the Personal OS database. Deployment requires the native
+release gate and an explicit live proof for Telegram, reminder, Calendar,
+Trello and restart recovery.

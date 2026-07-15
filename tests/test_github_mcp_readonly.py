@@ -52,6 +52,7 @@ def test_profile_declares_a_strict_read_only_github_mcp_and_nightly_consolidatio
 
     assert "github_readonly:" in config
     assert "--read-only" in config
+    assert "--lockdown-mode" in config
     assert "repos,issues,pull_requests,actions,users,code_security" in config
     assert "enabled: false" in config
     assert "не создавай" in skill.casefold()

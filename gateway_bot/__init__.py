@@ -1,2 +1,0 @@
-"""Telegram gateway bot package."""
-

@@ -4,10 +4,16 @@ import asyncio
 import json
 import os
 import re
+import stat
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Protocol
+
+
+DEFAULT_EXPORT_RETENTION_HOURS = 48
+DEFAULT_EXPORT_ANALYSIS_CHARS = 120_000
+_EXPORT_FILE_NAME = re.compile(r"^[A-Za-z0-9А-Яа-яЁё._-]+_\d{8}_\d{6}\.(?:txt|jsonl)(?:\.part)?$")
 
 
 class TelegramExportError(RuntimeError):
@@ -32,6 +38,17 @@ class ExportResult:
     message_count: int
     output_format: str
     truncated: bool
+    expires_at: datetime
+
+
+@dataclass(frozen=True)
+class ExportAnalysis:
+    """A bounded, owner-requested view of one temporary text export."""
+
+    path: Path
+    text: str
+    source_chars: int
+    truncated: bool
 
 
 class TextHistoryClient(Protocol):
@@ -41,9 +58,16 @@ class TextHistoryClient(Protocol):
 
 
 class TelegramTextExporter:
-    def __init__(self, *, output_dir: str | Path, max_output_bytes: int = 20 * 1024 * 1024) -> None:
+    def __init__(
+        self,
+        *,
+        output_dir: str | Path,
+        max_output_bytes: int = 20 * 1024 * 1024,
+        retention_hours: int = DEFAULT_EXPORT_RETENTION_HOURS,
+    ) -> None:
         self.output_dir = Path(output_dir).expanduser()
         self.max_output_bytes = max(1024, min(int(max_output_bytes), 20 * 1024 * 1024))
+        self.retention_hours = _retention_hours(retention_hours)
 
     async def export(
         self,
@@ -53,6 +77,7 @@ class TelegramTextExporter:
         output_format: str = "txt",
         limit: int = 5000,
     ) -> ExportResult:
+        cleanup_expired_exports(self.output_dir, retention_hours=self.retention_hours)
         normalized_peer = normalize_peer(peer)
         if not 1 <= limit <= 50_000:
             raise TelegramExportError("Export limit должен быть от 1 до 50000 сообщений.")
@@ -93,6 +118,7 @@ class TelegramTextExporter:
             message_count=count,
             output_format=file_format,
             truncated=truncated,
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=self.retention_hours),
         )
 
 
@@ -158,7 +184,10 @@ def run_telegram_export(*, peer: str, output_format: str = "txt", limit: int = 5
         client = TelethonTextClient(api_id=api_id, api_hash=api_hash, session_path=session_path)
         await client.connect()
         try:
-            return await TelegramTextExporter(output_dir=output_dir).export(
+            return await TelegramTextExporter(
+                output_dir=output_dir,
+                retention_hours=telegram_export_retention_hours(),
+            ).export(
                 client, peer=peer, output_format=output_format, limit=limit
             )
         finally:
@@ -196,10 +225,83 @@ def telegram_export_settings() -> tuple[int, str, Path, Path]:
         raise TelegramExportError("TELEGRAM_API_ID должен быть целым числом.") from error
     home = Path(os.getenv("HERMES_HOME", "~/.hermes")).expanduser()
     session_value = os.getenv("TELEGRAM_USER_SESSION", "").strip() or str(home / "data" / "telegram-user.session")
-    output_value = os.getenv("TELEGRAM_EXPORT_DIR", "").strip() or str(home / "exports" / "telegram")
     session = Path(session_value)
-    output = Path(output_value)
+    output = telegram_export_output_directory()
     return api_id, api_hash, session.expanduser(), output.expanduser()
+
+
+def telegram_export_output_directory() -> Path:
+    home = Path(os.getenv("HERMES_HOME", "~/.hermes")).expanduser()
+    output_value = os.getenv("TELEGRAM_EXPORT_DIR", "").strip() or str(home / "exports" / "telegram")
+    return Path(output_value).expanduser()
+
+
+def telegram_export_retention_hours() -> int:
+    return _retention_hours(os.getenv("TELEGRAM_EXPORT_RETENTION_HOURS", str(DEFAULT_EXPORT_RETENTION_HOURS)))
+
+
+def read_export_for_analysis(
+    path: str | Path,
+    *,
+    output_dir: str | Path | None = None,
+    max_chars: int = DEFAULT_EXPORT_ANALYSIS_CHARS,
+) -> ExportAnalysis:
+    """Read a bounded sample from one generated export after an explicit owner request."""
+    directory = Path(output_dir or telegram_export_output_directory()).expanduser().resolve()
+    candidate = Path(path).expanduser().resolve()
+    if not candidate.is_relative_to(directory):
+        raise TelegramExportError("Для анализа доступен только файл в папке экспортов Telegram.")
+    if not _EXPORT_FILE_NAME.fullmatch(candidate.name) or not candidate.is_file():
+        raise TelegramExportError("Файл не является действующим текстовым экспортом Telegram.")
+    mode = candidate.stat().st_mode
+    if not stat.S_ISREG(mode):
+        raise TelegramExportError("Экспорт должен быть обычным файлом.")
+    try:
+        source = candidate.read_text(encoding="utf-8")
+    except UnicodeDecodeError as error:
+        raise TelegramExportError("Экспорт должен быть UTF-8 текстом.") from error
+    cap = max(1_000, min(int(max_chars), DEFAULT_EXPORT_ANALYSIS_CHARS))
+    text, truncated = _sample_text(source, cap)
+    return ExportAnalysis(path=candidate, text=text, source_chars=len(source), truncated=truncated)
+
+
+def cleanup_expired_exports(
+    output_dir: str | Path,
+    *,
+    retention_hours: int = DEFAULT_EXPORT_RETENTION_HOURS,
+    now: datetime | None = None,
+) -> int:
+    """Delete only old regular TXT/JSONL files produced by this exporter."""
+    directory = Path(output_dir).expanduser()
+    if not directory.is_dir():
+        return 0
+    cutoff = (now or datetime.now(timezone.utc)).timestamp() - _retention_hours(retention_hours) * 3600
+    removed = 0
+    for entry in directory.iterdir():
+        if not _EXPORT_FILE_NAME.fullmatch(entry.name):
+            continue
+        try:
+            mode = entry.lstat().st_mode
+            if not stat.S_ISREG(mode) or entry.stat().st_mtime > cutoff:
+                continue
+            entry.unlink()
+            removed += 1
+        except FileNotFoundError:
+            continue
+    return removed
+
+
+def _sample_text(source: str, max_chars: int) -> tuple[str, bool]:
+    if len(source) <= max_chars:
+        return source, False
+    # Keep the beginning, end and evenly spaced interior portions. This gives a
+    # research worker broad coverage without turning a 20 MB export into one prompt.
+    slices = 8
+    chunk = max(1, (max_chars - (slices - 1) * 36) // slices)
+    stride = max(1, (len(source) - chunk) // (slices - 1))
+    parts = [source[index * stride:index * stride + chunk] for index in range(slices)]
+    marker = "\n\n[... часть экспорта пропущена ...]\n\n"
+    return marker.join(parts)[:max_chars], True
 
 
 def normalize_peer(value: str) -> str | int:
@@ -209,6 +311,16 @@ def normalize_peer(value: str) -> str | int:
     if re.fullmatch(r"@[A-Za-z0-9_]{5,32}", clean):
         return clean
     raise TelegramExportError("Peer должен быть numeric ID или @username.")
+
+
+def _retention_hours(value: int | str) -> int:
+    try:
+        hours = int(value)
+    except (TypeError, ValueError) as error:
+        raise TelegramExportError("TELEGRAM_EXPORT_RETENTION_HOURS должен быть числом от 1 до 168.") from error
+    if not 1 <= hours <= 168:
+        raise TelegramExportError("TELEGRAM_EXPORT_RETENTION_HOURS должен быть от 1 до 168.")
+    return hours
 
 
 def _serialize_message(message: ExportMessage, output_format: str) -> str:

@@ -14,6 +14,7 @@ from typing import Any, Callable, Protocol
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .database import open_personal_os_database
 from .events import EventStore
 
 
@@ -301,10 +302,7 @@ class MonitorRegistry:
             )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=5)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA journal_mode = WAL")
-        return connection
+        return open_personal_os_database(self.database_path, timeout_seconds=5)
 
 
 class MonitorRunner:

@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 from fastapi.testclient import TestClient
 
 from hermes.native_tools.dashboard import DashboardSettings, create_app
+from hermes.native_tools.dashboard_read_model import build_dashboard_snapshot
 from hermes.scripts.configure_dashboard_menu_button import configure_menu_button
 
 
@@ -199,6 +200,14 @@ class FakeDashboardAPI:
             "items": [{"id": 8, "name": "VDS", "amount": "20", "currency": "USD", "next_charge_at": "2026-07-15T09:00:00+00:00"}],
             "monthly_totals": {"USD": "20"},
         }
+
+
+def test_dashboard_read_model_is_independent_from_http_routes() -> None:
+    snapshot = build_dashboard_snapshot(FakeDashboardAPI())
+
+    assert snapshot["today"]["priorities"] == [{"title": "Проверить OAuth"}]
+    assert snapshot["today"]["tasks"] == ["Проверить OAuth", "Собрать план"]
+    assert snapshot["integrations"] == {"trello_ok": True, "calendar_ok": True}
 
 
 def _init_data(*, user_id: int = OWNER_ID, auth_date: int | None = None, tamper: bool = False) -> str:

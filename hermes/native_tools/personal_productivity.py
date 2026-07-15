@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .database import open_personal_os_database
+
 
 RECURRENCES = frozenset({"daily", "weekly", "monthly"})
 
@@ -308,11 +310,7 @@ class PersonalProductivityStore:
             )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=10, isolation_level=None)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout = 10000")
-        connection.execute("PRAGMA journal_mode = WAL")
-        return connection
+        return open_personal_os_database(self.database_path, autocommit=True)
 
 
 def _reminder_from_row(row: sqlite3.Row) -> PersonalReminder:

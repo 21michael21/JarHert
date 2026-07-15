@@ -1,1 +1,0 @@
-"""Telegram MTProto collector process."""

@@ -79,7 +79,7 @@
   {"id":"trace","prompt":"Зачем нужен trace_id в агенте?","max_chars":240,"required_any":["путь","событ","запрос"]},
   {"id":"observability","prompt":"Что проверить в первую очередь, если бот отвечает через раз?","max_chars":300,"required_any":["лог","ошиб","latency"]},
   {"id":"queue_lag","prompt":"В очереди растёт lag. Какой один сигнал важнее всего?","max_chars":260,"required_any":["врем","очеред","worker"]},
-  {"id":"migration","prompt":"Зачем Alembic, если SQLite и так сам создаёт таблицы?","max_chars":300,"required_any":["схем","миграц","production"]},
+  {"id":"sqlite_concurrency","prompt":"Зачем Personal OS SQLite нужны WAL и busy timeout?","max_chars":300,"required_any":["запис","ожидан","sqlite"]},
   {"id":"backup","prompt":"Что обязательно проверить у бэкапа перед тем, как ему доверять?","max_chars":280,"required_any":["restore","восстанов","провер"]},
   {"id":"release_gate","prompt":"Почему нельзя деплоить после одного зелёного pytest?","max_chars":300,"required_any":["e2e","провер","реальн"]},
   {"id":"small_commit","prompt":"Почему лучше делать маленькие коммиты?","max_chars":260,"required_any":["review","откат","измен"]},

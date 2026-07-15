@@ -50,7 +50,7 @@ def main() -> int:
 
 def _has_native_dependencies(python: Path) -> bool:
     result = subprocess.run(
-        [str(python), "-c", "import mcp, telethon"],
+        [str(python), "-c", "import mcp, telethon, fastapi, uvicorn"],
         check=False,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

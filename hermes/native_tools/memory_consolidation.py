@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .database import open_personal_os_database
+
 
 CONFIRMED_BLOCK_TYPES = frozenset({"profile", "person", "project", "commitment", "preference"})
 
@@ -144,11 +146,7 @@ class MemoryConsolidator:
             )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=10, isolation_level=None)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout = 10000")
-        connection.execute("PRAGMA journal_mode = WAL")
-        return connection
+        return open_personal_os_database(self.database_path, autocommit=True)
 
 
 def _append_fact(grouped: dict[str, list[dict[str, Any]]], scope: str, fact: dict[str, Any]) -> None:

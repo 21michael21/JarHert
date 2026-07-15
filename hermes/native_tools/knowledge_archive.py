@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse, urlunparse
 
+from .database import open_personal_os_database
+
 
 FetchBytes = Callable[[str, dict[str, str], float], bytes]
 _MAX_PAGE_BYTES = 1_000_000
@@ -133,6 +135,46 @@ class KnowledgeArchive:
             for row in rows
         ]
 
+    def source_excerpt(
+        self,
+        source_id: int,
+        *,
+        query: str | None = None,
+        max_chars: int = 2400,
+    ) -> dict[str, object]:
+        """Read a bounded excerpt from the latest locally archived source snapshot."""
+        clean_source_id = int(source_id)
+        clean_limit = int(max_chars)
+        if clean_source_id < 1:
+            raise ValueError("Источник не найден.")
+        if not 120 <= clean_limit <= 2400:
+            raise ValueError("Фрагмент должен быть от 120 до 2400 символов.")
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT sources.id AS source_id, sources.url, sources.title AS source_title,
+                       sources.project_key, sources.updated_at, snapshots.title AS snapshot_title,
+                       snapshots.content, snapshots.captured_at
+                FROM knowledge_sources AS sources
+                JOIN knowledge_snapshots AS snapshots ON snapshots.source_id = sources.id
+                WHERE sources.id = ?
+                ORDER BY snapshots.id DESC
+                LIMIT 1
+                """,
+                (clean_source_id,),
+            ).fetchone()
+        if row is None:
+            raise ValueError("Источник не найден.")
+        return {
+            "source_id": int(row["source_id"]),
+            "source_url": str(row["url"]),
+            "title": str(row["snapshot_title"] or row["source_title"]),
+            "project": str(row["project_key"]) if row["project_key"] else None,
+            "updated_at": str(row["updated_at"]),
+            "captured_at": str(row["captured_at"]),
+            "excerpt": _bounded_excerpt(str(row["content"]), query or "", clean_limit),
+        }
+
     def list_sources(self, *, project: str | None = None, limit: int = 100) -> list[KnowledgeSource]:
         values: list[object] = []
         clause = ""
@@ -212,12 +254,7 @@ class KnowledgeArchive:
             )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=10)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout = 10000")
-        connection.execute("PRAGMA journal_mode = WAL")
-        connection.execute("PRAGMA foreign_keys = ON")
-        return connection
+        return open_personal_os_database(self.database_path)
 
 
 def validate_archive_url(url: str) -> str:
@@ -315,6 +352,23 @@ def _excerpt(content: str, query: str) -> str:
     position = min((lowered.find(token.casefold()) for token in tokens if token.casefold() in lowered), default=0)
     start = max(0, position - 100)
     end = min(len(content), start + 360)
+    prefix = "…" if start else ""
+    suffix = "…" if end < len(content) else ""
+    return f"{prefix}{content[start:end]}{suffix}"
+
+
+def _bounded_excerpt(content: str, query: str, limit: int) -> str:
+    """Return a short window around a query hit without leaking a whole archive entry."""
+    if len(content) <= limit:
+        return content
+    tokens = _SEARCH_TOKEN.findall(str(query or ""))
+    lowered = content.casefold()
+    position = min((lowered.find(token.casefold()) for token in tokens if token.casefold() in lowered), default=0)
+    budget = max(1, limit - 2)
+    start = max(0, position - min(200, budget // 2))
+    end = min(len(content), start + budget)
+    if end == len(content):
+        start = max(0, end - budget)
     prefix = "…" if start else ""
     suffix = "…" if end < len(content) else ""
     return f"{prefix}{content[start:end]}{suffix}"

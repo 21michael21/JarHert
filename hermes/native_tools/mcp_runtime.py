@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
-from typing import Annotated, Literal, Union
+from typing import Annotated, Callable, Literal, TypeVar, Union
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from native_tools.mcp_api import NativeToolsAPI
+    from native_tools.tool_catalog import tool_is_active, tool_spec
 else:
     from .mcp_api import NativeToolsAPI
+    from .tool_catalog import tool_is_active, tool_spec
 
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field
@@ -186,6 +189,18 @@ Action = Annotated[
 
 api = NativeToolsAPI()
 mcp = FastMCP("jarhert-native")
+ToolFunction = TypeVar("ToolFunction", bound=Callable[..., object])
+
+
+def native_tool() -> Callable[[ToolFunction], ToolFunction]:
+    """Register one typed MCP wrapper using the catalogued public tool name."""
+    def register(function: ToolFunction) -> ToolFunction:
+        spec = tool_spec(function.__name__)
+        if not tool_is_active(spec, os.getenv("HERMES_TOOL_BUNDLES")):
+            return function
+        return mcp.tool(name=spec.name)(function)  # type: ignore[return-value]
+
+    return register
 
 
 async def _confirm(ctx: Context, message: str) -> bool:
@@ -193,43 +208,43 @@ async def _confirm(ctx: Context, message: str) -> bool:
     return result.action == "accept"
 
 
-@mcp.tool()
+@native_tool()
 def integration_health() -> dict[str, bool]:
     """Check whether Trello and Google Calendar adapters are ready."""
     return api.integration_health()
 
 
-@mcp.tool()
+@native_tool()
 def system_status() -> dict[str, object]:
     """Read a privacy-safe operational snapshot of the personal Hermes runtime."""
     return api.system_status()
 
 
-@mcp.tool()
+@native_tool()
 def task_list(list_name: str | None = None) -> dict[str, str]:
     """List Trello tasks, optionally from one list."""
     return api.task_list(list_name=list_name)
 
 
-@mcp.tool()
+@native_tool()
 def calendar_list(when: str = "today") -> dict[str, str]:
     """List Google Calendar events for today or tomorrow."""
     return api.calendar_list(when=when)
 
 
-@mcp.tool()
+@native_tool()
 def contact_add(name: str, telegram_chat_id: int, aliases: list[str] | None = None) -> dict[str, object]:
     """Save one exact Telegram contact and optional aliases."""
     return api.contact_add(name=name, telegram_chat_id=telegram_chat_id, aliases=aliases or [])
 
 
-@mcp.tool()
+@native_tool()
 def contact_list() -> dict[str, object]:
     """List saved Telegram contacts without guessing recipients."""
     return api.contact_list()
 
 
-@mcp.tool()
+@native_tool()
 async def message_plan_confirm_schedule(
     items: Annotated[list[ScheduledMessagePayload], Field(min_length=1, max_length=20)],
     idempotency_key: str,
@@ -243,7 +258,7 @@ async def message_plan_confirm_schedule(
     )
 
 
-@mcp.tool()
+@native_tool()
 async def message_plan_cancel_confirmed(plan_id: int, ctx: Context) -> dict[str, object]:
     """Ask once, then cancel a draft or scheduled Telegram message plan."""
     if not await _confirm(ctx, f"Отменить план сообщений #{plan_id}?"):
@@ -251,7 +266,7 @@ async def message_plan_cancel_confirmed(plan_id: int, ctx: Context) -> dict[str,
     return api.message_plan_cancel(plan_id=plan_id)
 
 
-@mcp.tool()
+@native_tool()
 async def monitor_add_github_releases(
     name: str, owner: str, repo: str, condition: str, ctx: Context
 ) -> dict[str, object]:
@@ -261,7 +276,7 @@ async def monitor_add_github_releases(
     return api.monitor_add_github_releases(name=name, owner=owner, repo=repo, condition=condition)
 
 
-@mcp.tool()
+@native_tool()
 async def monitor_add_source(
     name: str,
     source_type: Literal["rss", "json_api", "allowed_url"],
@@ -286,25 +301,25 @@ async def monitor_add_source(
     )
 
 
-@mcp.tool()
+@native_tool()
 def monitor_list() -> dict[str, object]:
     """List configured proactive monitors."""
     return api.monitor_list()
 
 
-@mcp.tool()
+@native_tool()
 def monitor_digest() -> dict[str, object]:
     """Read deferred quiet-hours and over-budget monitor changes."""
     return api.monitor_digest()
 
 
-@mcp.tool()
+@native_tool()
 def monitor_digest_mark_delivered(item_ids: list[int]) -> dict[str, int]:
     """Acknowledge digest items only after composing their Telegram summary."""
     return api.monitor_digest_mark_delivered(item_ids=item_ids)
 
 
-@mcp.tool()
+@native_tool()
 async def knowledge_archive_url_confirmed(
     url: str,
     ctx: Context,
@@ -316,7 +331,7 @@ async def knowledge_archive_url_confirmed(
     return api.knowledge_archive_url(url=url, project=project)
 
 
-@mcp.tool()
+@native_tool()
 async def knowledge_archive_urls_confirmed(
     urls: Annotated[list[str], Field(min_length=1, max_length=20)],
     ctx: Context,
@@ -328,7 +343,7 @@ async def knowledge_archive_urls_confirmed(
     return api.knowledge_archive_urls(urls=urls, project=project)
 
 
-@mcp.tool()
+@native_tool()
 def knowledge_search(
     query: str,
     project: str | None = None,
@@ -338,7 +353,13 @@ def knowledge_search(
     return api.knowledge_search(query=query, project=project, limit=limit)
 
 
-@mcp.tool()
+@native_tool()
+def knowledge_source_excerpt(source_id: int, query: str | None = None) -> dict[str, object]:
+    """Read a short cited excerpt from one already saved knowledge source; it never refetches the URL."""
+    return api.knowledge_source_excerpt(source_id=source_id, query=query)
+
+
+@native_tool()
 def knowledge_list_sources(
     project: str | None = None,
     limit: Annotated[int, Field(ge=1, le=200)] = 100,
@@ -347,7 +368,13 @@ def knowledge_list_sources(
     return api.knowledge_list_sources(project=project, limit=limit)
 
 
-@mcp.tool()
+@native_tool()
+def github_public_repository(url: str) -> dict[str, object]:
+    """Read a small public GitHub repository snapshot without a token or write access."""
+    return api.github_public_repository(url=url)
+
+
+@native_tool()
 def shopping_add(
     text: str,
     idempotency_key: str,
@@ -365,7 +392,7 @@ def shopping_add(
     )
 
 
-@mcp.tool()
+@native_tool()
 def shopping_list(
     status: Literal["needed", "bought", "cancelled"] = "needed",
     project: str | None = None,
@@ -375,19 +402,19 @@ def shopping_list(
     return api.shopping_list(status=status, project=project, limit=limit)
 
 
-@mcp.tool()
+@native_tool()
 def shopping_mark_bought(item_id: int) -> dict[str, object]:
     """Mark a visible shopping item as bought."""
     return api.shopping_mark_bought(item_id=item_id)
 
 
-@mcp.tool()
+@native_tool()
 def shopping_remove(item_id: int) -> dict[str, object]:
     """Soft-remove one shopping item while keeping a minimal history."""
     return api.shopping_remove(item_id=item_id)
 
 
-@mcp.tool()
+@native_tool()
 def trip_create(
     name: str,
     destination: str,
@@ -405,7 +432,7 @@ def trip_create(
     )
 
 
-@mcp.tool()
+@native_tool()
 def trip_list(
     status: Literal["active", "completed", "cancelled"] = "active",
     limit: Annotated[int, Field(ge=1, le=200)] = 100,
@@ -414,13 +441,13 @@ def trip_list(
     return api.trip_list(status=status, limit=limit)
 
 
-@mcp.tool()
+@native_tool()
 def trip_details(trip_id: int) -> dict[str, object]:
     """Read routes, bookings, documents, and checklist entries for one trip."""
     return api.trip_details(trip_id=trip_id)
 
 
-@mcp.tool()
+@native_tool()
 def trip_add_item(
     trip_id: int,
     kind: Literal["route", "booking", "document", "checklist"],
@@ -440,13 +467,13 @@ def trip_add_item(
     )
 
 
-@mcp.tool()
+@native_tool()
 def trip_item_complete(item_id: int) -> dict[str, object]:
     """Mark one trip item done and cancel only its linked reminder."""
     return api.trip_item_complete(item_id=item_id)
 
 
-@mcp.tool()
+@native_tool()
 async def trip_cancel_confirmed(trip_id: int, ctx: Context) -> dict[str, object]:
     """Cancel one trip and its pending linked reminders after a single confirmation."""
     if not await _confirm(ctx, f"Отменить поездку #{trip_id} и её незавершённые напоминания?"):
@@ -454,7 +481,7 @@ async def trip_cancel_confirmed(trip_id: int, ctx: Context) -> dict[str, object]
     return api.trip_cancel(trip_id=trip_id)
 
 
-@mcp.tool()
+@native_tool()
 async def monitor_disable(monitor_id: int, ctx: Context) -> dict[str, object]:
     """Disable one proactive monitor while preserving its audit state."""
     if not await _confirm(ctx, f"Отключить monitor #{monitor_id}?"):
@@ -462,7 +489,7 @@ async def monitor_disable(monitor_id: int, ctx: Context) -> dict[str, object]:
     return api.monitor_disable(monitor_id=monitor_id)
 
 
-@mcp.tool()
+@native_tool()
 def monitor_schedule_update(
     monitor_id: int,
     quiet_hours: str | None = None,
@@ -476,7 +503,7 @@ def monitor_schedule_update(
     )
 
 
-@mcp.tool()
+@native_tool()
 def skill_feedback(
     workflow_key: str,
     title: str,
@@ -494,19 +521,19 @@ def skill_feedback(
     )
 
 
-@mcp.tool()
+@native_tool()
 def skill_candidates(ready_only: bool = True) -> dict[str, object]:
     """List inert skill drafts; writing still requires a separate diff approval."""
     return api.skill_candidates(ready_only=ready_only)
 
 
-@mcp.tool()
+@native_tool()
 def skill_mark_staged(workflow_key: str) -> dict[str, object]:
     """Mark a candidate staged only after the native skill write approval reported success."""
     return api.skill_mark_staged(workflow_key=workflow_key)
 
 
-@mcp.tool()
+@native_tool()
 def memory_block_upsert(
     block_type: MemoryBlockType,
     subject: str,
@@ -522,7 +549,7 @@ def memory_block_upsert(
     )
 
 
-@mcp.tool()
+@native_tool()
 def memory_block_list(
     block_type: MemoryBlockType | None = None,
     project: str | None = None,
@@ -532,7 +559,7 @@ def memory_block_list(
     return api.memory_block_list(block_type=block_type, project=project, limit=limit)
 
 
-@mcp.tool()
+@native_tool()
 def note_search(
     query: str,
     project: str | None = None,
@@ -542,19 +569,19 @@ def note_search(
     return api.note_search(query=query, project=project, limit=limit)
 
 
-@mcp.tool()
+@native_tool()
 def note_edit(note_id: int, content: str) -> dict[str, object]:
     """Edit one visible note while keeping its previous text in local history."""
     return api.note_edit(note_id=note_id, content=content)
 
 
-@mcp.tool()
+@native_tool()
 def note_history(note_id: int) -> dict[str, object]:
     """Read previous versions of one note without exposing other notes."""
     return api.note_history(note_id=note_id)
 
 
-@mcp.tool()
+@native_tool()
 async def note_delete_confirmed(note_id: int, ctx: Context) -> dict[str, object]:
     """Permanently delete one note and its local history after a single confirmation."""
     if not await _confirm(ctx, f"Удалить заметку #{note_id} и её локальную историю?"):
@@ -562,13 +589,13 @@ async def note_delete_confirmed(note_id: int, ctx: Context) -> dict[str, object]
     return api.note_delete(note_id=note_id)
 
 
-@mcp.tool()
+@native_tool()
 def memory_consolidation_list() -> dict[str, object]:
     """Read compact snapshots built only from explicitly confirmed facts."""
     return api.memory_consolidation_list()
 
 
-@mcp.tool()
+@native_tool()
 async def project_context_upsert(
     key: str,
     name: str,
@@ -597,19 +624,19 @@ async def project_context_upsert(
     )
 
 
-@mcp.tool()
+@native_tool()
 def project_context_list() -> dict[str, object]:
     """List active project contexts and their scoped integrations."""
     return api.project_context_list()
 
 
-@mcp.tool()
+@native_tool()
 def project_context_resolve(text: str) -> dict[str, object] | None:
     """Resolve one project from exact configured aliases in the user's text."""
     return api.project_context_resolve(text=text)
 
 
-@mcp.tool()
+@native_tool()
 def commitment_list(
     contact: str | None = None,
     project: str | None = None,
@@ -620,7 +647,7 @@ def commitment_list(
     return api.commitment_list(contact=contact, project=project, status=status, limit=limit)
 
 
-@mcp.tool()
+@native_tool()
 def reminder_create(
     text: str,
     remind_at: str,
@@ -636,7 +663,7 @@ def reminder_create(
     )
 
 
-@mcp.tool()
+@native_tool()
 def reminder_list(
     status: Literal["active", "sent", "cancelled"] = "active",
     limit: Annotated[int, Field(ge=1, le=200)] = 100,
@@ -645,7 +672,7 @@ def reminder_list(
     return api.reminder_list(status=status, limit=limit)
 
 
-@mcp.tool()
+@native_tool()
 def reminder_reschedule(
     reminder_id: int,
     remind_at: str,
@@ -659,13 +686,13 @@ def reminder_reschedule(
     )
 
 
-@mcp.tool()
+@native_tool()
 def reminder_cancel(reminder_id: int) -> dict[str, object]:
     """Cancel one active reminder by its owner-visible id."""
     return api.reminder_cancel(reminder_id=reminder_id)
 
 
-@mcp.tool()
+@native_tool()
 def crm_interaction_log(
     contact: str,
     kind: Literal["message", "call", "meeting", "agreement", "note"],
@@ -687,7 +714,7 @@ def crm_interaction_log(
     )
 
 
-@mcp.tool()
+@native_tool()
 def crm_timeline(
     contact: str | None = None,
     project: str | None = None,
@@ -697,7 +724,7 @@ def crm_timeline(
     return api.crm_timeline(contact=contact, project=project, limit=limit)
 
 
-@mcp.tool()
+@native_tool()
 def personal_today(
     now: str | None = None,
     timezone_name: str = "Europe/Moscow",
@@ -706,7 +733,7 @@ def personal_today(
     return api.personal_today(now=now, timezone_name=timezone_name)
 
 
-@mcp.tool()
+@native_tool()
 def personal_daily_brief(
     now: str | None = None,
     timezone_name: str = "Europe/Moscow",
@@ -715,7 +742,7 @@ def personal_daily_brief(
     return api.personal_daily_brief(now=now, timezone_name=timezone_name)
 
 
-@mcp.tool()
+@native_tool()
 def personal_weekly_review(
     now: str | None = None,
     timezone_name: str = "Europe/Moscow",
@@ -724,7 +751,7 @@ def personal_weekly_review(
     return api.personal_weekly_review(now=now, timezone_name=timezone_name)
 
 
-@mcp.tool()
+@native_tool()
 def subscription_create(
     name: str,
     amount: str,
@@ -746,13 +773,13 @@ def subscription_create(
     )
 
 
-@mcp.tool()
+@native_tool()
 def subscription_list(status: Literal["active", "cancelled"] = "active") -> dict[str, object]:
     """List subscriptions and monthly totals grouped by currency."""
     return api.subscription_list(status=status)
 
 
-@mcp.tool()
+@native_tool()
 def subscription_update(
     subscription_id: int,
     amount: str | None = None,
@@ -770,13 +797,13 @@ def subscription_update(
     )
 
 
-@mcp.tool()
+@native_tool()
 def subscription_cancel(subscription_id: int) -> dict[str, object]:
     """Cancel a subscription and its pending charge reminder."""
     return api.subscription_cancel(subscription_id=subscription_id)
 
 
-@mcp.tool()
+@native_tool()
 async def commitment_complete_confirmed(commitment_id: int, ctx: Context) -> dict[str, object]:
     """Ask once, then mark one open promise as done."""
     if not await _confirm(ctx, f"Отметить обещание #{commitment_id} выполненным?"):
@@ -784,19 +811,19 @@ async def commitment_complete_confirmed(commitment_id: int, ctx: Context) -> dic
     return api.commitment_complete(commitment_id=commitment_id)
 
 
-@mcp.tool()
+@native_tool()
 def work_mode_get() -> dict[str, object]:
     """Return the active fast, think, or code policy mode and its deadline."""
     return api.work_mode_get()
 
 
-@mcp.tool()
+@native_tool()
 def work_mode_set(mode: Literal["fast", "think", "code"]) -> dict[str, object]:
     """Change capability mode after an explicit user request."""
     return api.work_mode_set(mode=mode)
 
 
-@mcp.tool()
+@native_tool()
 async def coding_job_enqueue_confirmed(
     mode: Literal["coding", "research"],
     prompt: str,
@@ -817,19 +844,49 @@ async def coding_job_enqueue_confirmed(
     )
 
 
-@mcp.tool()
+@native_tool()
 def coding_job_list(limit: Annotated[int, Field(ge=1, le=100)] = 20) -> dict[str, object]:
     """List compact coding and research statuses. Fetch one report by id only when needed."""
     return api.coding_job_list(limit=limit)
 
 
-@mcp.tool()
+@native_tool()
+def telegram_text_export_excerpt(
+    path: str,
+    max_chars: Annotated[int, Field(ge=1_000, le=120_000)] = 120_000,
+) -> dict[str, object]:
+    """Read an owner-requested bounded excerpt from one temporary Telegram text export."""
+    return api.telegram_text_export_excerpt(path=path, max_chars=max_chars)
+
+
+@native_tool()
+async def telegram_text_export_queue_analysis_confirmed(
+    path: str,
+    question: str,
+    idempotency_key: str,
+    ctx: Context,
+) -> dict[str, object]:
+    """Preview once, then send an owner-requested export sample to the isolated Codex research queue."""
+    preview = (
+        "Отправить выбранный Telegram текстовый экспорт в изолированный research job для анализа?\n"
+        f"Задача: {question[:300]}"
+    )
+    if not await _confirm(ctx, preview):
+        return {"status": "unchanged"}
+    return api.telegram_text_export_queue_analysis(
+        path=path,
+        question=question,
+        idempotency_key=idempotency_key,
+    )
+
+
+@native_tool()
 def coding_job_get(job_id: Annotated[int, Field(gt=0)]) -> dict[str, object]:
     """Fetch the complete report for one of your coding or research jobs."""
     return api.coding_job_get(job_id=job_id)
 
 
-@mcp.tool()
+@native_tool()
 async def action_plan_confirm_execute(
     actions: list[Action], idempotency_key: str, ctx: Context
 ) -> dict[str, object]:
@@ -842,7 +899,7 @@ async def action_plan_confirm_execute(
     )
 
 
-@mcp.tool()
+@native_tool()
 async def action_plan_dag_confirm_execute(
     nodes: list[dict[str, object]], idempotency_key: str, ctx: Context
 ) -> dict[str, object]:
@@ -855,13 +912,13 @@ async def action_plan_dag_confirm_execute(
     )
 
 
-@mcp.tool()
+@native_tool()
 def action_plan_status(plan_id: int) -> dict[str, object]:
     """Show persisted plan state and completed checkpoints without executing anything."""
     return api.action_plan_get(plan_id=plan_id)
 
 
-@mcp.tool()
+@native_tool()
 async def action_plan_pause_confirmed(plan_id: int, ctx: Context) -> dict[str, object]:
     """Pause a pending plan after one explicit confirmation."""
     if not await _confirm(ctx, f"Поставить plan #{plan_id} на паузу?"):
@@ -869,7 +926,7 @@ async def action_plan_pause_confirmed(plan_id: int, ctx: Context) -> dict[str, o
     return api.action_plan_pause(plan_id=plan_id)
 
 
-@mcp.tool()
+@native_tool()
 async def action_plan_resume_confirmed(plan_id: int, ctx: Context) -> dict[str, object]:
     """Resume a paused plan after one explicit confirmation."""
     if not await _confirm(ctx, f"Продолжить plan #{plan_id}?"):
@@ -877,7 +934,7 @@ async def action_plan_resume_confirmed(plan_id: int, ctx: Context) -> dict[str, 
     return api.action_plan_resume(plan_id=plan_id)
 
 
-@mcp.tool()
+@native_tool()
 async def telegram_text_export_confirmed(
     peer: str,
     ctx: Context,

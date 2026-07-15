@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .database import open_personal_os_database
+
 
 class ActionPlanError(RuntimeError):
     pass
@@ -277,11 +279,7 @@ class ActionPlanStore:
                 connection.execute("ALTER TABLE plan_actions ADD COLUMN depends_on_json TEXT NOT NULL DEFAULT '[]'")
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=5)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA journal_mode = WAL")
-        return connection
+        return open_personal_os_database(self.database_path, timeout_seconds=5)
 
 
 def execute_plan(store: ActionPlanStore, plan_id: int, adapter: Any) -> ActionPlan:

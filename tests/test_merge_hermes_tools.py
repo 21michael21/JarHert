@@ -146,6 +146,41 @@ def test_merge_keeps_existing_live_display_choices(tmp_path: Path) -> None:
     assert target.read_text(encoding="utf-8") == "display:\n  busy_ack_enabled: true\n"
 
 
+def test_merge_adds_context_file_budget_without_overwriting_live_choice(tmp_path: Path) -> None:
+    source = tmp_path / "source.yaml"
+    target = tmp_path / "target.yaml"
+    source.write_text("context_file_max_chars: 6000\n", encoding="utf-8")
+    target.write_text("model:\n  provider: openai-codex\n", encoding="utf-8")
+
+    assert merge_profile_config(source, target) == ["context_file_max_chars"]
+    assert "context_file_max_chars: 6000" in target.read_text(encoding="utf-8")
+
+    target.write_text("context_file_max_chars: 9000\n", encoding="utf-8")
+    assert merge_profile_config(source, target) == []
+    assert target.read_text(encoding="utf-8") == "context_file_max_chars: 9000\n"
+
+
+def test_merge_adds_telegram_session_hygiene_without_overwriting_live_choice(tmp_path: Path) -> None:
+    source = tmp_path / "source.yaml"
+    target = tmp_path / "target.yaml"
+    source.write_text(
+        "compression:\n"
+        "  threshold: 0.5\n"
+        "  protect_last_n: 14\n"
+        "  hygiene_hard_message_limit: 160\n"
+        "  codex_gpt55_autoraise: false\n",
+        encoding="utf-8",
+    )
+    target.write_text("model:\n  provider: openai-codex\n", encoding="utf-8")
+
+    assert merge_profile_config(source, target) == ["compression"]
+    assert "hygiene_hard_message_limit: 160" in target.read_text(encoding="utf-8")
+
+    target.write_text("compression:\n  hygiene_hard_message_limit: 320\n", encoding="utf-8")
+    assert merge_profile_config(source, target) == []
+    assert target.read_text(encoding="utf-8") == "compression:\n  hygiene_hard_message_limit: 320\n"
+
+
 def test_merge_adds_disabled_read_only_github_mcp_without_touching_live_model(tmp_path: Path) -> None:
     source = tmp_path / "source.yaml"
     target = tmp_path / "target.yaml"

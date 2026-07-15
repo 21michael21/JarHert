@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from .knowledge_archive import validate_archive_url
 from .mcp_api import NativeToolsAPI
+from .dashboard_read_model import build_dashboard_snapshot
 
 
 ASSET_DIR = Path(__file__).with_name("dashboard_assets")
@@ -120,7 +121,7 @@ def create_app(
     @app.get("/api/snapshot")
     async def snapshot(request: Request) -> JSONResponse:
         require_user(request)
-        return JSONResponse(_snapshot(dashboard_api))
+        return JSONResponse(build_dashboard_snapshot(dashboard_api))
 
     @app.get("/api/tasks")
     async def tasks(request: Request) -> JSONResponse:
@@ -391,55 +392,6 @@ async def _request_payload(request: Request) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="invalid request")
     return payload
-
-
-def _snapshot(api: Any) -> dict[str, Any]:
-    today = _safe(api.personal_today, fallback={})
-    status = _safe(api.system_status, fallback={})
-    reminders = _safe(lambda: api.reminder_list(status="active", limit=10), fallback={"items": []})
-    notes = _safe(lambda: api.memory_block_list(block_type="note", limit=6), fallback={"items": []})
-    monitors = _safe(api.monitor_list, fallback={"items": []})
-    projects = _safe(api.project_context_list, fallback={"items": []})
-    integrations = _safe(api.integration_health, fallback={})
-    work_mode = _safe(api.work_mode_get, fallback={"mode": "fast"})
-    tasks = _external_items(today.get("tasks"))
-    priorities = list(today.get("top_three") or [])[:3]
-    if not priorities:
-        priorities = [{"title": task, "type": "task"} for task in tasks[:3]]
-    return {
-        "today": {
-            "tasks": tasks,
-            "calendar": _external_items(today.get("calendar")),
-            "reminders": _items(reminders),
-            "priorities": priorities,
-        },
-        "notes": _items(notes),
-        "status": status,
-        "integrations": integrations,
-        "work_mode": work_mode,
-        "monitors": _items(monitors),
-        "projects": _items(projects),
-        "capabilities": _capabilities(),
-    }
-
-
-def _safe(operation: Callable[[], Any], *, fallback: Any) -> Any:
-    try:
-        return operation()
-    except Exception:
-        return fallback
-
-
-def _items(payload: Any) -> list[dict[str, Any]]:
-    return [item for item in (payload or {}).get("items", []) if isinstance(item, dict)][:10]
-
-
-def _external_items(value: Any) -> list[str]:
-    raw = str(value or "").strip()
-    if not raw or raw.casefold().rstrip(".!") in {"no events found", "событий нет"}:
-        return []
-    rows = [row.strip(" -•\t") for row in raw.splitlines() if row.strip()]
-    return [row.split("|", 1)[0].replace("[open]", "").strip()[:160] for row in rows[:10]]
 
 
 def _parse_user_ids(raw: str) -> frozenset[int]:
@@ -747,17 +699,6 @@ def _plan_preview(plan: dict[str, Any]) -> list[str]:
         title = str(payload.get("title") or payload.get("text") or payload.get("subject") or "без названия")
         rows.append(f"{labels.get(str(action.get('action_type') or action.get('type') or ''), 'Выполнить')}: {title}")
     return rows
-
-
-def _capabilities() -> list[dict[str, str]]:
-    return [
-        {"title": "План дня", "text": "Календарь, Trello, напоминания и три главных приоритета."},
-        {"title": "Память", "text": "Заметки, проекты, люди, обещания и поиск по ним."},
-        {"title": "Автоматизация", "text": "Напоминания, отложенные сообщения, сводки и monitors."},
-        {"title": "Интеграции", "text": "Trello и Google Calendar через один подтверждённый план."},
-        {"title": "Режимы", "text": "Быстро, думаю и код: с разными правами и лимитами."},
-        {"title": "Безопасность", "text": "Код только в sandbox; важные действия подтверждаются в Telegram."},
-    ]
 
 
 def _dashboard_page() -> str:

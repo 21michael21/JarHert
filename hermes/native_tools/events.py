@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .database import open_personal_os_database
+
 
 ALLOWED_EVENT_ACTIONS = frozenset({"evaluate", "notify"})
 
@@ -281,11 +283,7 @@ class EventStore:
         )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=5)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA journal_mode = WAL")
-        return connection
+        return open_personal_os_database(self.database_path, timeout_seconds=5)
 
 
 def compact_json_diff(before: Any, after: Any, path: str = "") -> dict[str, list[dict[str, Any]]]:

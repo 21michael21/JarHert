@@ -68,14 +68,44 @@ def test_archive_keeps_a_bounded_history_of_changed_snapshots(tmp_path) -> None:
     assert archive.search("Version 22")[0]["title"] == "Guide 22"
 
 
+def test_source_excerpt_reads_only_the_latest_saved_snapshot_with_a_hard_limit(tmp_path) -> None:
+    pages = [
+        b"<title>OAuth guide v1</title><p>Old guidance.</p>",
+        (
+            b"<title>OAuth guide v2</title><p>Intro.</p><p>OAuth refresh tokens must be rotated "
+            b"after an incident.</p><p>" + b"x" * 5_000 + b"</p>"
+        ),
+    ]
+    archive = KnowledgeArchive(
+        tmp_path / "personal-os.sqlite3",
+        fetcher=lambda *_args: pages[0],
+    )
+    saved = archive.archive_url("https://docs.example.test/oauth", project="Hub_ML")
+    pages[0] = pages[1]
+    archive.archive_url("https://docs.example.test/oauth", project="Hub_ML")
+
+    excerpt = archive.source_excerpt(saved["source_id"], query="refresh tokens", max_chars=240)
+
+    assert excerpt["source_id"] == saved["source_id"]
+    assert excerpt["source_url"] == "https://docs.example.test/oauth"
+    assert excerpt["title"] == "OAuth guide v2"
+    assert excerpt["project"] == "Hub_ML"
+    assert "refresh tokens" in excerpt["excerpt"]
+    assert len(excerpt["excerpt"]) <= 240
+    with pytest.raises(ValueError, match="Источник не найден"):
+        archive.source_excerpt(999)
+
+
 def test_knowledge_archive_is_exposed_as_low_read_and_confirmed_write(tmp_path) -> None:
     api = NativeToolsAPI(
         database_path=tmp_path / "personal-os.sqlite3",
         knowledge_fetcher=lambda *_args: b"<title>Short</title><p>Useful text.</p>",
     )
     captured = api.knowledge_archive_url(url="https://example.test/guide")
+    excerpt = api.knowledge_source_excerpt(source_id=captured["source_id"])
 
     assert captured["title"] == "Short"
+    assert excerpt["excerpt"] == "Short Useful text."
     assert api.knowledge_list_sources()["items"] == [
         {
             "id": captured["source_id"],
@@ -116,5 +146,7 @@ def test_knowledge_tools_are_in_the_profile_and_skill_guides_one_page_only() -> 
     assert "- knowledge_archive_urls_confirmed" in config
     assert "- knowledge_search" in config
     assert "- knowledge_list_sources" in config
+    assert "- knowledge_source_excerpt" in config
     assert "never crawl" in skill.casefold()
     assert "mcp_jarhert_native_knowledge_archive_url_confirmed" in skill
+    assert "mcp_jarhert_native_knowledge_source_excerpt" in skill

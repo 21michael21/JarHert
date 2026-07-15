@@ -5,6 +5,8 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from .database import open_personal_os_database
+
 
 _STATUSES = frozenset({"needed", "bought", "cancelled"})
 
@@ -155,11 +157,7 @@ class ShoppingStore:
             )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=10)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout = 10000")
-        connection.execute("PRAGMA journal_mode = WAL")
-        return connection
+        return open_personal_os_database(self.database_path)
 
 
 def _from_row(row: sqlite3.Row) -> ShoppingItem:

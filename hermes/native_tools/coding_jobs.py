@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from .database import open_personal_os_database
+
 
 _MODES = frozenset({"coding", "research"})
 _STATUSES = frozenset({"queued", "running", "succeeded", "failed", "cancelled"})
@@ -20,6 +22,8 @@ class NativeCodingJob:
     prompt: str
     repository_url: str | None
     source_urls: tuple[str, ...]
+    source_text: str | None
+    source_label: str | None
     status: str
     idempotency_key: str
     worker_id: str | None
@@ -50,6 +54,8 @@ class NativeCodingJobStore:
         idempotency_key: str,
         repository_url: str | None = None,
         source_urls: list[str] | tuple[str, ...] | None = None,
+        source_text: str | None = None,
+        source_label: str | None = None,
     ) -> NativeCodingJob:
         clean_key = _required(idempotency_key, "Idempotency key", 220)
         with self._connect() as connection:
@@ -64,8 +70,9 @@ class NativeCodingJobStore:
                 connection.execute(
                     """
                     INSERT INTO native_coding_jobs(
-                        tg_user_id, mode, prompt, repository_url, source_urls_json, status, idempotency_key
-                    ) VALUES (?, ?, ?, ?, ?, 'queued', ?)
+                        tg_user_id, mode, prompt, repository_url, source_urls_json, source_text, source_label,
+                        status, idempotency_key
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)
                     """,
                     (
                         _positive(tg_user_id, "Telegram user id"),
@@ -73,6 +80,8 @@ class NativeCodingJobStore:
                         _required(prompt, "Prompt", 5000),
                         _optional(repository_url, 500),
                         _json_urls(source_urls or []),
+                        _optional(source_text, 120_000),
+                        _optional(source_label, 240),
                         clean_key,
                     ),
                 ).lastrowid
@@ -218,7 +227,8 @@ class NativeCodingJobStore:
             result = connection.execute(
                 """
                 UPDATE native_coding_jobs
-                SET status = ?, result_text = ?, last_error = ?, lease_until = NULL, updated_at = CURRENT_TIMESTAMP
+                SET status = ?, result_text = ?, last_error = ?, source_text = NULL,
+                    lease_until = NULL, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ? AND status = 'running' AND worker_id = ?
                 """,
                 (
@@ -245,6 +255,8 @@ class NativeCodingJobStore:
                     prompt TEXT NOT NULL,
                     repository_url TEXT,
                     source_urls_json TEXT NOT NULL DEFAULT '[]',
+                    source_text TEXT,
+                    source_label TEXT,
                     status TEXT NOT NULL DEFAULT 'queued',
                     idempotency_key TEXT NOT NULL,
                     worker_id TEXT,
@@ -270,13 +282,11 @@ class NativeCodingJobStore:
             _add_column(connection, "delivery_attempts", "INTEGER NOT NULL DEFAULT 0")
             _add_column(connection, "delivery_worker_id", "TEXT")
             _add_column(connection, "delivery_lease_until", "TEXT")
+            _add_column(connection, "source_text", "TEXT")
+            _add_column(connection, "source_label", "TEXT")
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=10, isolation_level=None)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout = 10000")
-        connection.execute("PRAGMA journal_mode = WAL")
-        return connection
+        return open_personal_os_database(self.database_path, autocommit=True)
 
     def _finish_delivery(self, job_id: int, *, worker_id: str, delivered: bool) -> NativeCodingJob:
         with self._connect() as connection:
@@ -303,6 +313,8 @@ def _from_row(row: sqlite3.Row) -> NativeCodingJob:
         prompt=str(row["prompt"]),
         repository_url=str(row["repository_url"]) if row["repository_url"] else None,
         source_urls=tuple(json.loads(row["source_urls_json"])),
+        source_text=str(row["source_text"]) if row["source_text"] else None,
+        source_label=str(row["source_label"]) if row["source_label"] else None,
         status=str(row["status"]),
         idempotency_key=str(row["idempotency_key"]),
         worker_id=str(row["worker_id"]) if row["worker_id"] else None,

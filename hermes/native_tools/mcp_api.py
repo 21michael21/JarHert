@@ -11,6 +11,8 @@ from .action_plans import ActionPlan, ActionPlanStore, execute_plan
 from .capabilities import CapabilityPolicyStore
 from .coding_jobs import NativeCodingJobStore
 from .contacts import ContactStore, MessagePlan
+from .github_public import FetchJson as GitHubPublicFetchJson
+from .github_public import GitHubPublicReader
 from .knowledge_archive import FetchBytes as KnowledgeFetchBytes
 from .knowledge_archive import KnowledgeArchive
 from .monitors import Monitor, MonitorRegistry
@@ -24,7 +26,7 @@ from .shopping import ShoppingStore
 from .subscriptions import SubscriptionStore, subscription_sync_from_env
 from .system_status import collect_system_status
 from .task_calendar import TaskCalendarAdapter
-from .telegram_text_export import ExportResult, run_telegram_export
+from .telegram_text_export import ExportResult, read_export_for_analysis, run_telegram_export
 from .trips import TripStore
 
 
@@ -52,13 +54,16 @@ class NativeToolsAPI:
         exporter: Exporter = run_telegram_export,
         subscription_sync: SubscriptionSync | None = None,
         knowledge_fetcher: KnowledgeFetchBytes | None = None,
+        github_public_fetcher: GitHubPublicFetchJson | None = None,
     ) -> None:
         self.database_path = Path(database_path or personal_os_database_path()).expanduser()
         self.adapter_factory = adapter_factory
         self._task_calendar_adapter: Any | None = None
+        self._stores: dict[str, Any] = {}
         self.exporter = exporter
         self.subscription_sync = subscription_sync if subscription_sync is not None else subscription_sync_from_env()
         self.knowledge_fetcher = knowledge_fetcher
+        self.github_public_fetcher = github_public_fetcher
 
     def integration_health(self) -> dict[str, bool]:
         self._capabilities().require("integration.health")
@@ -237,6 +242,15 @@ class NativeToolsAPI:
         self._capabilities().require("knowledge.read")
         return {"items": self._knowledge().search(query, project=project, limit=limit)}
 
+    def knowledge_source_excerpt(
+        self,
+        *,
+        source_id: int,
+        query: str | None = None,
+    ) -> dict[str, Any]:
+        self._capabilities().require("knowledge.read")
+        return self._knowledge().source_excerpt(source_id, query=query)
+
     def knowledge_list_sources(
         self,
         *,
@@ -245,6 +259,10 @@ class NativeToolsAPI:
     ) -> dict[str, Any]:
         self._capabilities().require("knowledge.read")
         return {"items": [_value_payload(item) for item in self._knowledge().list_sources(project=project, limit=limit)]}
+
+    def github_public_repository(self, *, url: str) -> dict[str, Any]:
+        self._capabilities().require("github.read")
+        return self._github_public().inspect_repository(url)
 
     def shopping_add(
         self,
@@ -673,6 +691,8 @@ class NativeToolsAPI:
         idempotency_key: str,
         repository_url: str | None = None,
         source_urls: list[str] | None = None,
+        source_text: str | None = None,
+        source_label: str | None = None,
     ) -> dict[str, Any]:
         capability = "coding.queue" if mode == "coding" else "research.run"
         self._capabilities().require(capability)
@@ -685,8 +705,37 @@ class NativeToolsAPI:
             prompt=prompt,
             repository_url=repository_url,
             source_urls=list(source_urls or []),
+            source_text=source_text,
+            source_label=source_label,
             idempotency_key=idempotency_key,
         ))
+
+    def telegram_text_export_excerpt(self, *, path: str, max_chars: int = 120_000) -> dict[str, Any]:
+        self._capabilities().require("telegram.export.read")
+        result = read_export_for_analysis(path, max_chars=max_chars)
+        return {
+            "path": str(result.path),
+            "text": result.text,
+            "source_chars": result.source_chars,
+            "truncated": result.truncated,
+        }
+
+    def telegram_text_export_queue_analysis(
+        self,
+        *,
+        path: str,
+        question: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        self._capabilities().require("telegram.export.read")
+        result = read_export_for_analysis(path)
+        return self.coding_job_enqueue(
+            mode="research",
+            prompt=question,
+            idempotency_key=idempotency_key,
+            source_text=result.text,
+            source_label=result.path.name,
+        )
 
     def coding_job_list(self, *, limit: int = 20, include_result: bool = False) -> dict[str, Any]:
         self._capabilities().require("coding.read")
@@ -794,6 +843,7 @@ class NativeToolsAPI:
             "message_count": result.message_count,
             "output_format": result.output_format,
             "truncated": result.truncated,
+            "expires_at": result.expires_at.isoformat(),
         }
 
     async def telegram_text_export_confirmed(
@@ -817,46 +867,49 @@ class NativeToolsAPI:
         )
 
     def _plans(self) -> ActionPlanStore:
-        return ActionPlanStore(self.database_path)
+        return self._store("plans", lambda: ActionPlanStore(self.database_path))
 
     def _contacts(self) -> ContactStore:
-        return ContactStore(self.database_path)
+        return self._store("contacts", lambda: ContactStore(self.database_path))
 
     def _monitors(self) -> MonitorRegistry:
-        return MonitorRegistry(self.database_path)
+        return self._store("monitors", lambda: MonitorRegistry(self.database_path))
 
     def _knowledge(self) -> KnowledgeArchive:
-        return KnowledgeArchive(self.database_path, fetcher=self.knowledge_fetcher)
+        return self._store("knowledge", lambda: KnowledgeArchive(self.database_path, fetcher=self.knowledge_fetcher))
+
+    def _github_public(self) -> GitHubPublicReader:
+        return self._store("github_public", lambda: GitHubPublicReader(fetcher=self.github_public_fetcher))
 
     def _skills(self) -> SkillDistiller:
-        return SkillDistiller(self.database_path)
+        return self._store("skills", lambda: SkillDistiller(self.database_path))
 
     def _memory_consolidator(self) -> MemoryConsolidator:
-        return MemoryConsolidator(self.database_path)
+        return self._store("memory_consolidator", lambda: MemoryConsolidator(self.database_path))
 
     def _personal_os(self) -> PersonalOSStore:
-        return PersonalOSStore(self.database_path)
+        return self._store("personal_os", lambda: PersonalOSStore(self.database_path))
 
     def _productivity(self) -> PersonalProductivityStore:
-        return PersonalProductivityStore(self.database_path)
+        return self._store("productivity", lambda: PersonalProductivityStore(self.database_path))
 
     def _crm(self) -> PersonalCRMStore:
-        return PersonalCRMStore(self.database_path)
+        return self._store("crm", lambda: PersonalCRMStore(self.database_path))
 
     def _rhythms(self) -> PersonalRhythmStore:
-        return PersonalRhythmStore(self.database_path)
+        return self._store("rhythms", lambda: PersonalRhythmStore(self.database_path))
 
     def _subscriptions(self) -> SubscriptionStore:
-        return SubscriptionStore(self.database_path)
+        return self._store("subscriptions", lambda: SubscriptionStore(self.database_path))
 
     def _shopping(self) -> ShoppingStore:
-        return ShoppingStore(self.database_path)
+        return self._store("shopping", lambda: ShoppingStore(self.database_path))
 
     def _trips(self) -> TripStore:
-        return TripStore(self.database_path)
+        return self._store("trips", lambda: TripStore(self.database_path))
 
     def _coding_jobs(self) -> NativeCodingJobStore:
-        return NativeCodingJobStore(self.database_path)
+        return self._store("coding_jobs", lambda: NativeCodingJobStore(self.database_path))
 
     def _coding_owner_id(self) -> int:
         tg_user_id = int(os.getenv("HERMES_OWNER_TELEGRAM_CHAT_ID", "0") or 0)
@@ -874,14 +927,22 @@ class NativeToolsAPI:
             logger.exception("Optional subscription sync failed")
 
     def _capabilities(self) -> CapabilityPolicyStore:
-        return CapabilityPolicyStore(self.database_path)
+        return self._store("capabilities", lambda: CapabilityPolicyStore(self.database_path))
 
     def _action_adapter(self) -> "_NativeActionAdapter":
-        return _NativeActionAdapter(
-            self._task_calendar,
-            self._personal_os(),
-            self._productivity(),
+        return self._store(
+            "action_adapter",
+            lambda: _NativeActionAdapter(
+                self._task_calendar,
+                self._personal_os(),
+                self._productivity(),
+            ),
         )
+
+    def _store(self, name: str, factory: Callable[[], Any]) -> Any:
+        if name not in self._stores:
+            self._stores[name] = factory()
+        return self._stores[name]
 
     def _task_calendar(self) -> Any:
         if self._task_calendar_adapter is None:
@@ -1006,6 +1067,7 @@ def _coding_job_summary(job: Any) -> dict[str, Any]:
         "mode": job.mode,
         "prompt": _short_text(job.prompt, 180),
         "repository_url": job.repository_url,
+        "source_label": job.source_label,
         "status": job.status,
         "result_summary": _short_text(job.result_text, 160),
         "last_error": _short_text(job.last_error, 160),

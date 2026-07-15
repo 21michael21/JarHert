@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -124,6 +125,7 @@ def test_native_api_export_requires_confirmation(tmp_path: Path) -> None:
             message_count=3,
             output_format=str(kwargs["output_format"]),
             truncated=False,
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=48),
         )
 
     api = NativeToolsAPI(database_path=tmp_path / "personal.sqlite3", exporter=exporter)
@@ -143,7 +145,32 @@ def test_native_api_export_requires_confirmation(tmp_path: Path) -> None:
     )
 
     assert result["message_count"] == 3
+    assert result["expires_at"]
     assert calls == [{"peer": "@example", "output_format": "txt", "limit": 10}]
+
+
+def test_native_api_can_queue_explicit_export_analysis_and_keeps_raw_text_off_the_summary(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HERMES_OWNER_TELEGRAM_CHAT_ID", "566055009")
+    export_dir = tmp_path / "exports"
+    export_dir.mkdir()
+    source = export_dir / "test_20300101_120000.txt"
+    source.write_text("[1] 2030-01-01T12:00:00+00:00\nАвтор: ML мысль\n", encoding="utf-8")
+    monkeypatch.setenv("TELEGRAM_EXPORT_DIR", str(export_dir))
+    api = NativeToolsAPI(database_path=tmp_path / "personal.sqlite3")
+
+    excerpt = api.telegram_text_export_excerpt(path=str(source))
+    queued = api.telegram_text_export_queue_analysis(
+        path=str(source),
+        question="Выдели темы и полезные идеи.",
+        idempotency_key="telegram:export:analysis:1",
+    )
+
+    assert "ML мысль" in excerpt["text"]
+    assert queued["mode"] == "research"
+    assert queued["source_text"].startswith("[1]")
+    summary = api.coding_job_list()["items"][0]
+    assert "source_text" not in summary
+    assert summary["source_label"] == source.name
 
 
 def test_native_api_exposes_contacts_and_idempotent_message_plan(tmp_path: Path) -> None:

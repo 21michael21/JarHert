@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .database import open_personal_os_database
+
 
 CONFIRMATIONS_REQUIRED = 3
 ALLOWED_SKILL_TOOLS = frozenset(
@@ -197,11 +199,7 @@ class SkillDistiller:
             )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=5)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA journal_mode = WAL")
-        return connection
+        return open_personal_os_database(self.database_path, timeout_seconds=5)
 
 
 def _validate_steps(steps: list[dict[str, Any]]) -> list[dict[str, str]]:

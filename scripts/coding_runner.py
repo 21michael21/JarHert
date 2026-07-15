@@ -20,7 +20,6 @@ except ModuleNotFoundError:  # pragma: no cover - production dependency.
 if load_dotenv is not None:
     load_dotenv(PROJECT_ROOT / ".env")
 
-from hermes.native_tools.coding_queue import RemoteCodingQueueClient
 from hermes.native_tools.sandbox_worker import SandboxTask, SandboxedHermesWorker
 from hermes.native_tools.ssh_coding_queue import SshNativeCodingQueueClient
 
@@ -45,6 +44,8 @@ def run_once(*, client, worker, worker_id: str) -> bool:
             prompt=str(payload["prompt"]),
             repository_url=payload.get("repository_url"),
             source_urls=tuple(payload.get("source_urls") or []),
+            source_text=payload.get("source_text"),
+            source_label=payload.get("source_label"),
         ))
     except Exception as error:
         client.fail(job_id, worker_id, _queue_failure_reason(error))
@@ -82,26 +83,23 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="Verify SSH queue, Docker, and Hermes CLI without claiming a job.")
     parser.add_argument("--interval", type=float, default=5)
     parser.add_argument("--worker-id", default=f"mac-{socket.gethostname()}")
-    parser.add_argument("--queue-ssh", default=os.getenv("HERMES_CODING_QUEUE_SSH", ""))
+    parser.add_argument(
+        "--queue-ssh",
+        default=os.getenv("HERMES_CODING_QUEUE_SSH", ""),
+        help="SSH destination for the private Hermes profile queue, for example deploy@vps.",
+    )
     parser.add_argument("--remote-profile", default="/home/deploy/.hermes/profiles/jarhert")
     parser.add_argument("--remote-python", default="/home/deploy/.hermes/hermes-agent/venv/bin/python")
     args = parser.parse_args()
-    if args.queue_ssh:
-        client = SshNativeCodingQueueClient(
-            args.queue_ssh,
-            remote_profile=args.remote_profile,
-            remote_python=args.remote_python,
-        )
-    else:
-        base_url = os.getenv("JARHERT_BACKEND_URL", "").strip()
-        token = os.getenv("ASSISTANT_SERVICE_TOKEN", "").strip()
-        if not base_url or not token:
-            raise SystemExit("Set --queue-ssh or JARHERT_BACKEND_URL and ASSISTANT_SERVICE_TOKEN")
-        client = RemoteCodingQueueClient(base_url, token)
+    if not args.queue_ssh:
+        raise SystemExit("Set --queue-ssh or HERMES_CODING_QUEUE_SSH for the native Hermes queue.")
+    client = SshNativeCodingQueueClient(
+        args.queue_ssh,
+        remote_profile=args.remote_profile,
+        remote_python=args.remote_python,
+    )
     worker = SandboxedHermesWorker()
     if args.check:
-        if not hasattr(client, "ping"):
-            raise SystemExit("--check поддерживается только для --queue-ssh native queue")
         client.ping()
         worker.preflight()
         print("coding_runner_ready=true")

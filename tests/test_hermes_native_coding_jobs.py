@@ -37,6 +37,26 @@ def test_native_coding_queue_is_idempotent_and_uses_one_lease(tmp_path) -> None:
     assert store.complete(first.id, worker_id="mac-main", result_text="Готово: 3 теста прошли").status == "succeeded"
 
 
+def test_export_analysis_payload_is_available_to_runner_then_cleared_after_completion(tmp_path) -> None:
+    store = NativeCodingJobStore(tmp_path / "personal-os.sqlite3")
+    job = store.enqueue(
+        tg_user_id=566055009,
+        mode="research",
+        prompt="Разбери экспорт",
+        idempotency_key="telegram:export:job:1",
+        source_text="Текст экспорта",
+        source_label="chat.txt",
+    )
+
+    claimed = store.claim_next(worker_id="mac")
+    completed = store.complete(job.id, worker_id="mac", result_text="Готовый разбор")
+
+    assert claimed.source_text == "Текст экспорта"
+    assert claimed.source_label == "chat.txt"
+    assert completed.source_text is None
+    assert completed.source_label == "chat.txt"
+
+
 def test_expired_native_coding_job_can_be_claimed_after_mac_stops(tmp_path) -> None:
     store = NativeCodingJobStore(tmp_path / "personal-os.sqlite3")
     job = store.enqueue(
@@ -71,6 +91,7 @@ def test_native_api_queues_previewed_coding_work_from_fast_mode_and_lists_result
         "mode": "coding",
         "prompt": "Добавь тест",
         "repository_url": None,
+        "source_label": None,
         "status": "queued",
         "result_summary": None,
         "last_error": None,

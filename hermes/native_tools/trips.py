@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .database import open_personal_os_database
+
 
 TRIP_STATUSES = frozenset({"active", "completed", "cancelled"})
 TRIP_ITEM_KINDS = frozenset({"route", "booking", "document", "checklist"})
@@ -227,12 +229,7 @@ class TripStore:
             )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=10)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout = 10000")
-        connection.execute("PRAGMA journal_mode = WAL")
-        connection.execute("PRAGMA foreign_keys = ON")
-        return connection
+        return open_personal_os_database(self.database_path)
 
 
 def _trip_from_row(row: sqlite3.Row) -> Trip:

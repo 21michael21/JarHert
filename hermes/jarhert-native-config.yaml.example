@@ -41,4 +41,4 @@ terminal:
 
 # Do not configure Telegram here by copying a token into the repository.
 # Configure the Hermes gateway through ~/.hermes/.env and allow only paired or
-# explicitly allowlisted users. Do not run JarHert gateway_bot with that token.
+# explicitly allowlisted users. JarHert has one Telegram gateway: Hermes.

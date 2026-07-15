@@ -20,6 +20,7 @@ def test_fast_mode_uses_low_reasoning_and_blocks_code_workspace(tmp_path: Path) 
     assert policy.decide("task.list").decision == "auto"
     assert policy.decide("task.create").decision == "confirm"
     assert policy.decide("task.delete").decision == "preview"
+    assert policy.decide("research.run").decision == "preview"
     assert policy.decide("sandbox.run").decision == "deny"
 
 

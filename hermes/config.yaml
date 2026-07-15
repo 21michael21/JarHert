@@ -6,6 +6,19 @@ agent:
   reasoning_effort: low
   restart_drain_timeout: 60
 
+# Prevent an accidentally large AGENTS.md or project rule file from making
+# every Telegram turn slow. The compact SOUL and profile AGENTS fit below this.
+context_file_max_chars: 6000
+
+# Telegram is a long-lived personal chat. Keep a recent tail intact, but
+# compact earlier than the Codex OAuth default so hundreds of old turns do not
+# slow every new message. Compacted rows remain soft-archived in state.db.
+compression:
+  threshold: 0.5
+  protect_last_n: 14
+  hygiene_hard_message_limit: 160
+  codex_gpt55_autoraise: false
+
 # Telegram is a personal inbox. Keep only the useful final response and a
 # single approval prompt: no generated "Working", mid-turn commentary, or
 # status breadcrumbs that read like broken duplicate replies on a phone.
@@ -65,10 +78,9 @@ mcp_servers:
       TASK_COMMAND_CENTER_DIR: "${TASK_COMMAND_CENTER_DIR}"
       TASK_COMMAND_CENTER_PYTHON: "${TASK_COMMAND_CENTER_PYTHON}"
       TASK_COMMAND_CENTER_HEALTH_CACHE_SECONDS: "${TASK_COMMAND_CENTER_HEALTH_CACHE_SECONDS}"
-      JARHERT_BACKEND_URL: "${JARHERT_BACKEND_URL}"
-      ASSISTANT_SERVICE_TOKEN: "${ASSISTANT_SERVICE_TOKEN}"
       HERMES_OWNER_TELEGRAM_CHAT_ID: "${HERMES_OWNER_TELEGRAM_CHAT_ID}"
       HERMES_NATIVE_SEND_COMMAND: "${HERMES_NATIVE_SEND_COMMAND}"
+      HERMES_TOOL_BUNDLES: "${HERMES_TOOL_BUNDLES}"
       TELEGRAM_API_ID: "${TELEGRAM_API_ID}"
       TELEGRAM_API_HASH: "${TELEGRAM_API_HASH}"
       TELEGRAM_USER_SESSION: "${TELEGRAM_USER_SESSION}"
@@ -100,7 +112,9 @@ mcp_servers:
         - knowledge_archive_url_confirmed
         - knowledge_archive_urls_confirmed
         - knowledge_search
+        - knowledge_source_excerpt
         - knowledge_list_sources
+        - github_public_repository
         - shopping_add
         - shopping_list
         - shopping_mark_bought
@@ -144,6 +158,8 @@ mcp_servers:
         - coding_job_enqueue_confirmed
         - coding_job_list
         - telegram_text_export_confirmed
+        - telegram_text_export_excerpt
+        - telegram_text_export_queue_analysis_confirmed
       resources: false
       prompts: false
 
@@ -154,6 +170,7 @@ mcp_servers:
     args:
       - stdio
       - --read-only
+      - --lockdown-mode
       - --toolsets
       - repos,issues,pull_requests,actions,users,code_security
     env:

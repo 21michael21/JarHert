@@ -7,6 +7,7 @@ from pathlib import Path
 MANAGED_NATIVE_ENV_KEYS = (
     "HERMES_NATIVE_SEND_COMMAND",
     "HERMES_OWNER_TELEGRAM_CHAT_ID",
+    "HERMES_TOOL_BUNDLES",
 )
 
 
@@ -57,6 +58,15 @@ def merge_profile_config(source: Path, target: Path) -> list[str]:
         separator = "" if not target_lines or target_lines[-1].endswith("\n\n") else "\n"
         target.write_text("".join(target_lines) + separator + "".join(display_block), encoding="utf-8")
         merged.append("display")
+    if merge_top_level_scalar(source, target, key="context_file_max_chars"):
+        merged.append("context_file_max_chars")
+    source_lines = source.read_text(encoding="utf-8").splitlines(keepends=True)
+    target_lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
+    compression_block = _top_level_block(source_lines, "compression")
+    if compression_block and _top_level_block(target_lines, "compression") is None:
+        separator = "" if not target_lines or target_lines[-1].endswith("\n\n") else "\n"
+        target.write_text("".join(target_lines) + separator + "".join(compression_block), encoding="utf-8")
+        merged.append("compression")
     return merged
 
 
@@ -94,6 +104,20 @@ def merge_native_env(source: Path, target: Path, keys: tuple[str, ...]) -> list[
         target_lines[insertion_index:insertion_index] = additions
         target.write_text("".join(target_lines), encoding="utf-8")
     return missing
+
+
+def merge_top_level_scalar(source: Path, target: Path, *, key: str) -> bool:
+    """Add a safe profile default only when the live profile has no value."""
+    prefix = f"{key}:"
+    source_line = next((line for line in source.read_text(encoding="utf-8").splitlines() if line.startswith(prefix)), None)
+    if source_line is None:
+        return False
+    target_lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
+    if any(line.startswith(prefix) for line in target_lines):
+        return False
+    separator = "" if not target_lines or target_lines[-1].endswith("\n\n") else "\n"
+    target.write_text("".join(target_lines) + separator + f"{source_line}\n", encoding="utf-8")
+    return True
 
 
 def _native_tool_block(lines: list[str]) -> tuple[list[str], int, str]:
