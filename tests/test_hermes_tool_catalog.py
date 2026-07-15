@@ -84,6 +84,12 @@ def test_all_bundle_preserves_the_complete_native_tool_surface() -> None:
     assert set(tool_names_for_active_bundles("all")) == {spec.name for spec in TOOL_CATALOG}
 
 
+def test_unexpanded_optional_bundle_environment_uses_the_default_surface() -> None:
+    assert set(tool_names_for_active_bundles("${HERMES_TOOL_BUNDLES}")) == {
+        spec.name for spec in TOOL_CATALOG
+    }
+
+
 def test_runtime_registers_only_the_selected_tool_bundles() -> None:
     script = """
 import json

@@ -239,7 +239,10 @@ def tool_names_for_bundle(bundle: ToolBundle, *, enabled_by_default: bool = Fals
 def active_tool_bundles(value: str | None = None) -> set[ToolBundle]:
     """Parse an explicit MCP bundle selection; operations remain observable."""
     raw = (value or "all").strip().casefold()
-    if not raw or raw == "all":
+    # Hermes leaves an optional ${VAR} reference intact when the variable is
+    # absent. Treat this one known config placeholder as the documented
+    # default, while keeping genuinely invalid bundle values explicit errors.
+    if not raw or raw in {"all", "${hermes_tool_bundles}"}:
         return set(ToolBundle)
     selected: set[ToolBundle] = {ToolBundle.OPERATIONS}
     for item in raw.split(","):
