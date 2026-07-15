@@ -20,7 +20,7 @@ except ModuleNotFoundError:  # pragma: no cover - production dependency.
 if load_dotenv is not None:
     load_dotenv(PROJECT_ROOT / ".env")
 
-from hermes.native_tools.sandbox_worker import SandboxTask, SandboxedHermesWorker
+from hermes.native_tools.sandbox_worker import SandboxTask, coding_worker_from_environment
 from hermes.native_tools.ssh_coding_queue import SshNativeCodingQueueClient
 
 
@@ -80,7 +80,7 @@ def _queue_failure_reason(error: Exception) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run sandboxed Hermes coding jobs from a remote queue.")
     parser.add_argument("--once", action="store_true")
-    parser.add_argument("--check", action="store_true", help="Verify SSH queue, Docker, and Hermes CLI without claiming a job.")
+    parser.add_argument("--check", action="store_true", help="Verify SSH queue and the selected local coding executor without claiming a job.")
     parser.add_argument("--interval", type=float, default=5)
     parser.add_argument("--worker-id", default=f"mac-{socket.gethostname()}")
     parser.add_argument(
@@ -90,6 +90,12 @@ def main() -> int:
     )
     parser.add_argument("--remote-profile", default="/home/deploy/.hermes/profiles/jarhert")
     parser.add_argument("--remote-python", default="/home/deploy/.hermes/hermes-agent/venv/bin/python")
+    parser.add_argument(
+        "--executor",
+        choices=("codex", "hermes"),
+        default=os.getenv("HERMES_CODING_EXECUTOR", "codex"),
+        help="Local executor: Codex workspace sandbox by default, or the legacy Hermes Docker profile.",
+    )
     args = parser.parse_args()
     if not args.queue_ssh:
         raise SystemExit("Set --queue-ssh or HERMES_CODING_QUEUE_SSH for the native Hermes queue.")
@@ -98,10 +104,11 @@ def main() -> int:
         remote_profile=args.remote_profile,
         remote_python=args.remote_python,
     )
-    worker = SandboxedHermesWorker()
+    os.environ["HERMES_CODING_EXECUTOR"] = args.executor
+    worker = coding_worker_from_environment()
+    worker.preflight()
     if args.check:
         client.ping()
-        worker.preflight()
         print("coding_runner_ready=true")
         return 0
     while True:

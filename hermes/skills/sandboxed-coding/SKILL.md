@@ -1,6 +1,6 @@
 ---
 name: sandboxed-coding
-description: Run coding or source-bounded research through the native Hermes Docker backend with reviewable results and no forwarded secrets.
+description: Run coding or source-bounded research through the private queue with reviewable results and no forwarded secrets. The local runner uses a disposable Codex workspace by default.
 ---
 
 # Sandboxed Coding
@@ -38,7 +38,7 @@ python "$HERMES_HOME/native_tools/cli.py" sandbox run \
 
 ## Procedure
 
-1. Work only in the task workspace or an isolated git worktree.
+1. Work only in the disposable task workspace or an isolated git worktree.
 2. Inspect the relevant files before changing them.
 3. Write a failing test when behavior changes, then implement the smallest fix.
 4. Run the relevant checks and report exact results.
@@ -52,8 +52,10 @@ python "$HERMES_HOME/native_tools/cli.py" sandbox run \
 - Never read `.env`, SSH keys, Docker socket, or files outside the workspace.
 - Never deploy, merge, push, delete data, or change production configuration
   without an explicit approval in the current conversation.
-- Do not use a host shell for code tasks; use the Hermes sandbox backend.
-- If Docker is unavailable, stop. Never silently fall back to the host.
+- Use the Codex `workspace-write` sandbox by default. Do not use the dangerous
+  bypass flag and do not pass application secrets into the runner.
+- The optional Hermes Docker worker must be selected explicitly; never silently
+  fall back to a general host shell.
 - Network access is available for clone and declared sources. It is not an
   egress firewall; never put credentials in prompts or repositories.
 

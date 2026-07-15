@@ -33,8 +33,9 @@ Mac coding runner -- SSH --> private native coding queue on the profile
 ```
 
 The tools never receive raw `.env` files, SSH keys, a Docker socket or general
-host-shell access. Coding work runs in the Hermes Docker sandbox and deployment
-always remains a separate approval.
+host-shell access. Coding work runs in a disposable Codex workspace by default;
+the older Hermes Docker sandbox is an explicit local fallback. Deployment always
+remains a separate approval.
 
 ## Local checks
 
@@ -140,8 +141,9 @@ unauthenticated public admin panel.
 ## Coding and research runner
 
 The VPS stores job metadata in Personal OS SQLite. A Mac claims work through
-SSH, runs it in the local Hermes sandbox and posts the result back to the same
-queue. No HTTP port or service token is involved.
+SSH, runs it in a disposable local Codex workspace and posts the result back to
+the same queue. No HTTP port or service token is involved. Codex uses the
+ChatGPT login already present on the Mac; its normal API key is not required.
 
 ```bash
 .venv/bin/python scripts/setup_coding_profile.py
@@ -152,6 +154,8 @@ queue. No HTTP port or service token is involved.
 
 Remove `--check` to poll the queue. Add `--once` for one iteration. If the Mac
 goes offline, the job lease expires and another configured runner may claim it.
+Set `HERMES_CODING_EXECUTOR=hermes` or pass `--executor hermes` only when you
+want the older Docker-backed Hermes runner instead.
 
 ## GitHub research
 

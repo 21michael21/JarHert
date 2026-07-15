@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 import pytest
 
-from hermes.native_tools.sandbox_worker import SandboxTask, SandboxedHermesWorker
+from hermes.native_tools import sandbox_worker
+from hermes.native_tools.sandbox_worker import (
+    CodexWorkspaceWorker,
+    SandboxTask,
+    SandboxedHermesWorker,
+    coding_worker_from_environment,
+)
 
 
 def test_coding_task_runs_same_hermes_profile_with_docker_backend() -> None:
@@ -52,6 +59,65 @@ def test_coding_worker_uses_dedicated_docker_profile_by_default() -> None:
     worker = SandboxedHermesWorker(docker_available=lambda: True)
 
     assert worker.profile_binary == "jarhert-coding"
+
+
+def test_coding_runner_uses_codex_workspace_worker_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("HERMES_CODING_EXECUTOR", raising=False)
+
+    worker = coding_worker_from_environment()
+    assert isinstance(worker, CodexWorkspaceWorker)
+
+    monkeypatch.setenv("HERMES_CODING_EXECUTOR", "hermes")
+    assert isinstance(coding_worker_from_environment(), SandboxedHermesWorker)
+
+
+def test_codex_worker_prefers_a_user_local_install(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("HERMES_CODEX_BIN", raising=False)
+    local_binary = tmp_path / ".local" / "bin" / "codex"
+    local_binary.parent.mkdir(parents=True)
+    local_binary.touch()
+    monkeypatch.setattr(sandbox_worker.Path, "home", lambda: tmp_path)
+
+    assert CodexWorkspaceWorker().codex_binary == str(local_binary)
+
+
+def test_codex_worker_honors_an_explicit_binary_path(monkeypatch) -> None:
+    monkeypatch.setenv("HERMES_CODEX_BIN", "/opt/codex/bin/codex")
+
+    assert CodexWorkspaceWorker().codex_binary == "/opt/codex/bin/codex"
+
+
+def test_codex_worker_uses_an_ephemeral_workspace_without_dangerous_bypass(tmp_path) -> None:
+    calls: list[tuple[list[str], Path]] = []
+
+    def execute(argv, *, cwd, **_kwargs):
+        calls.append((argv, Path(cwd)))
+        result_path = Path(argv[argv.index("--output-last-message") + 1])
+        result_path.write_text("Готово: тесты прошли.", encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    worker = CodexWorkspaceWorker(
+        codex_binary="codex",
+        execute=execute,
+        workspace_root=tmp_path,
+        allowed_research_hosts={"github.com"},
+    )
+    result = worker.run(
+        SandboxTask(
+            mode="coding",
+            prompt="Добавь тест",
+            repository_url="https://github.com/example/repository",
+        )
+    )
+
+    argv, workspace = calls[0]
+    assert result.output == "Готово: тесты прошли."
+    assert argv[:2] == ["codex", "exec"]
+    assert "workspace-write" in argv
+    assert "--ephemeral" in argv
+    assert "--ignore-user-config" in argv
+    assert "--dangerously-bypass-approvals-and-sandbox" not in argv
+    assert not workspace.exists()
 
 
 def test_non_github_or_non_https_repository_is_rejected() -> None:
