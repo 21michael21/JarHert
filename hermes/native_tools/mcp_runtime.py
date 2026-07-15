@@ -3,14 +3,16 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Annotated, Callable, Literal, TypeVar, Union
+from typing import Annotated, Any, Callable, Literal, TypeVar, Union
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from native_tools.mcp_api import NativeToolsAPI
+    from native_tools.tool_dispatch import handler_parameter_contract, invoke_catalog_handler
     from native_tools.tool_catalog import tool_is_active, tool_spec
 else:
     from .mcp_api import NativeToolsAPI
+    from .tool_dispatch import handler_parameter_contract, invoke_catalog_handler
     from .tool_catalog import tool_is_active, tool_spec
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -194,12 +196,29 @@ Action = Annotated[
 api = NativeToolsAPI()
 mcp = FastMCP("jarhert-native")
 ToolFunction = TypeVar("ToolFunction", bound=Callable[..., object])
+_NATIVE_HANDLERS: dict[str, ToolFunction] = {}
+_CATALOG_BOOTSTRAP_TOOLS = frozenset(
+    {"integration_health", "system_status", "tool_catalog_discover", "tool_catalog_invoke"}
+)
+
+
+def _uses_catalog_surface() -> bool:
+    """Keep full registration as the backwards-compatible fallback."""
+    value = os.getenv("HERMES_TOOL_SURFACE", "full").strip().casefold()
+    if value in {"", "${hermes_tool_surface}", "full"}:
+        return False
+    if value == "catalog":
+        return True
+    raise ValueError("HERMES_TOOL_SURFACE должен быть full или catalog.")
 
 
 def native_tool() -> Callable[[ToolFunction], ToolFunction]:
     """Register one typed MCP wrapper using the catalogued public tool name."""
     def register(function: ToolFunction) -> ToolFunction:
+        _NATIVE_HANDLERS[function.__name__] = function
         spec = tool_spec(function.__name__)
+        if _uses_catalog_surface() and spec.name not in _CATALOG_BOOTSTRAP_TOOLS:
+            return function
         if not tool_is_active(spec, os.getenv("HERMES_TOOL_BUNDLES")):
             return function
         return mcp.tool(name=spec.name)(function)  # type: ignore[return-value]
@@ -231,7 +250,29 @@ def tool_catalog_discover(
     limit: Annotated[int, Field(ge=1, le=12)] = 8,
 ) -> dict[str, object]:
     """Find a small relevant set of allowed tools with their input and output contracts."""
-    return api.tool_catalog_discover(query=query, bundle=bundle, limit=limit)
+    result = api.tool_catalog_discover(query=query, bundle=bundle, limit=limit)
+    for item in result["items"]:
+        name = str(item["name"])
+        handler = _NATIVE_HANDLERS.get(name)
+        if handler is not None:
+            item["parameters"] = handler_parameter_contract(handler)
+    return result
+
+
+@native_tool()
+async def tool_catalog_invoke(
+    name: str,
+    payload: dict[str, Any] | None,
+    ctx: Context,
+) -> object:
+    """Invoke one catalogued native tool after discovery, with strict payload fields."""
+    return await invoke_catalog_handler(
+        _NATIVE_HANDLERS,
+        name=name,
+        payload=payload,
+        ctx=ctx,
+        forbidden_names=frozenset({"tool_catalog_invoke", "tool_catalog_discover"}),
+    )
 
 
 @native_tool()

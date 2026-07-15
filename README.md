@@ -103,11 +103,19 @@ TASK_COMMAND_CENTER_HEALTH_CACHE_SECONDS=30
 
 ### MCP bundles
 
-`HERMES_TOOL_BUNDLES=all` keeps the complete personal assistant surface. A
-focused profile may expose only `personal`, `planning`, `research` or `code`
-(comma-separated); operational status tools stay available. Change the value
-only between sessions and restart Hermes afterwards. This reduces the model's
-tool context without removing data or changing capability policy.
+`HERMES_TOOL_SURFACE=catalog` is the recommended production surface. Hermes
+starts with four small tools: status, integrations, discovery and a strict
+catalog dispatcher. `tool_catalog_discover` returns the few relevant tools,
+their required fields and their output contract; `tool_catalog_invoke` opens
+that exact ability. This keeps the first prompt small without taking away any
+native feature, approval or capability.
+
+`HERMES_TOOL_SURFACE=full` retains the old one-tool-per-function MCP surface
+for debugging and backwards compatibility. `HERMES_TOOL_BUNDLES=all` keeps the
+complete catalog behind either surface. A focused profile may deliberately
+expose only `personal`, `planning`, `research` or `code` (comma-separated);
+operational status tools stay available. Change either variable between
+sessions and restart Hermes afterwards.
 
 `tool_catalog_discover` ищет небольшой подходящий набор по смыслу запроса и
 возвращает входной и выходной контракт каждого инструмента. Он не меняет права

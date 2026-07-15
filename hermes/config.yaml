@@ -80,6 +80,7 @@ mcp_servers:
       TASK_COMMAND_CENTER_HEALTH_CACHE_SECONDS: "${TASK_COMMAND_CENTER_HEALTH_CACHE_SECONDS}"
       HERMES_OWNER_TELEGRAM_CHAT_ID: "${HERMES_OWNER_TELEGRAM_CHAT_ID}"
       HERMES_NATIVE_SEND_COMMAND: "${HERMES_NATIVE_SEND_COMMAND}"
+      HERMES_TOOL_SURFACE: "${HERMES_TOOL_SURFACE}"
       HERMES_TOOL_BUNDLES: "${HERMES_TOOL_BUNDLES}"
       TELEGRAM_API_ID: "${TELEGRAM_API_ID}"
       TELEGRAM_API_HASH: "${TELEGRAM_API_HASH}"
@@ -93,6 +94,7 @@ mcp_servers:
         - integration_health
         - system_status
         - tool_catalog_discover
+        - tool_catalog_invoke
         - task_list
         - calendar_list
         - action_plan_confirm_execute

@@ -146,6 +146,8 @@ class TelegramTextExporter:
                     handle.write(encoded)
                     size += len(encoded)
                     count += 1
+            if count == 0:
+                raise TelegramExportError("В выбранном диапазоне нет текстовых сообщений.")
             partial.replace(destination)
         except Exception:
             partial.unlink(missing_ok=True)
@@ -270,7 +272,11 @@ class TelethonTextClient:
         return False
 
     async def iter_text_messages(self, entity: Any, *, limit: int) -> AsyncIterator[ExportMessage]:
-        async for message in self.client.iter_messages(entity, limit=limit, reverse=True):
+        # Telethon limits raw events, not text messages. Scan a bounded recent
+        # window so “последние 2 сообщения” still means two readable messages
+        # when a channel ends with media-only posts.
+        collected: list[ExportMessage] = []
+        async for message in self.client.iter_messages(entity, limit=_text_scan_limit(limit)):
             text = str(getattr(message, "message", "") or "")
             if not text.strip():
                 continue
@@ -280,14 +286,20 @@ class TelethonTextClient:
                     sender = await message.get_sender()
                 except Exception:
                     sender = None
-            yield ExportMessage(
-                message_id=int(message.id),
-                date=_aware(message.date),
-                sender_id=_optional_int(getattr(message, "sender_id", None)),
-                sender_name=_sender_name(sender),
-                text=text,
-                reply_to_message_id=_reply_id(message),
+            collected.append(
+                ExportMessage(
+                    message_id=int(message.id),
+                    date=_aware(message.date),
+                    sender_id=_optional_int(getattr(message, "sender_id", None)),
+                    sender_name=_sender_name(sender),
+                    text=text,
+                    reply_to_message_id=_reply_id(message),
+                )
             )
+            if len(collected) >= limit:
+                break
+        for item in reversed(collected):
+            yield item
 
     async def iter_file_messages(self, entity: Any, *, scan_limit: int) -> AsyncIterator[TelegramFileMessage]:
         async for message in self.client.iter_messages(entity, limit=scan_limit):
@@ -499,6 +511,10 @@ def _bounded_positive(value: int, *, minimum: int, maximum: int, label: str) -> 
     if not minimum <= parsed <= maximum:
         raise TelegramExportError(f"{label} должен быть от {minimum} до {maximum}.")
     return parsed
+
+
+def _text_scan_limit(limit: int) -> int:
+    return min(max(limit * 10, 100), 50_000)
 
 
 def _download_name(item: TelegramFileMessage, stamp: str) -> str:

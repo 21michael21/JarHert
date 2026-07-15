@@ -5,6 +5,7 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,6 +15,7 @@ from hermes.native_tools.telegram_text_export import (
     TelegramFileDownloader,
     TelegramFileMessage,
     TelegramExportError,
+    TelethonTextClient,
     TelegramTextExporter,
     cleanup_expired_exports,
     normalize_peer,
@@ -51,6 +53,17 @@ class FakeFileClient(FakeClient):
         return len(file_message.source)
 
 
+class RawTelethonClient:
+    def __init__(self, messages) -> None:
+        self.messages = messages
+        self.limits: list[int] = []
+
+    async def iter_messages(self, _entity, *, limit):
+        self.limits.append(limit)
+        for item in self.messages[:limit]:
+            yield item
+
+
 def message(number: int, text: str) -> ExportMessage:
     return ExportMessage(
         message_id=number,
@@ -71,6 +84,10 @@ def file_message(number: int, name: str, content: bytes) -> TelegramFileMessage:
         mime_type="application/octet-stream",
         source=content,
     )
+
+
+async def _collect(iterator):
+    return [item async for item in iterator]
 
 
 def test_txt_export_contains_only_text_records(tmp_path) -> None:
@@ -134,6 +151,37 @@ def test_export_stops_at_size_cap_without_partial_file(tmp_path) -> None:
     assert result.truncated is True
     assert result.path.stat().st_size <= 1024
     assert not list(tmp_path.glob("*.part"))
+
+
+def test_export_does_not_create_an_empty_document(tmp_path) -> None:
+    exporter = TelegramTextExporter(output_dir=tmp_path)
+
+    with pytest.raises(TelegramExportError, match="нет текстовых сообщений"):
+        asyncio.run(exporter.export(FakeClient([]), peer="@test_chat"))
+
+    assert not list(tmp_path.glob("*.txt"))
+    assert not list(tmp_path.glob("*.part"))
+
+
+def test_telethon_reader_collects_requested_texts_past_recent_media() -> None:
+    def raw(number: int, text: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            id=number,
+            date=datetime(2030, 1, 1, 12, tzinfo=timezone.utc),
+            message=text,
+            sender=SimpleNamespace(first_name="Sender", last_name=None, title=None, username=None),
+            sender_id=100 + number,
+            reply_to=None,
+        )
+
+    client = TelethonTextClient(api_id=1, api_hash="hash", session_path="unused")
+    raw_client = RawTelethonClient([raw(1, ""), raw(2, ""), raw(3, "Первое"), raw(4, "Второе")])
+    client.client = raw_client
+
+    items = asyncio.run(_collect(client.iter_text_messages(object(), limit=2)))
+
+    assert [item.text for item in items] == ["Второе", "Первое"]
+    assert raw_client.limits == [100]
 
 
 def test_file_download_keeps_small_documents_temporarily_and_skips_large_ones(tmp_path) -> None:

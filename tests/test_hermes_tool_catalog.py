@@ -64,6 +64,16 @@ def test_catalog_covers_every_registered_mcp_tool_and_its_api_handler() -> None:
             and part.func.value.id == "api"
         }
     for spec in TOOL_CATALOG:
+        if spec.name == "tool_catalog_invoke":
+            function = next(
+                node for node in runtime.body
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == spec.name
+            )
+            assert any(
+                isinstance(part, ast.Name) and part.id == "invoke_catalog_handler"
+                for part in ast.walk(function)
+            )
+            continue
         assert spec.handler in handlers_by_tool[spec.name]
 
 
@@ -150,3 +160,51 @@ print(json.dumps(runtime.names))
     registered = set(json.loads(result.stdout))
     assert {"system_status", "knowledge_search", "coding_job_list"} <= registered
     assert "shopping_list" not in registered
+
+
+def test_catalog_surface_registers_only_bootstrap_tools() -> None:
+    script = """
+import json
+import sys
+import types
+
+class Context:
+    pass
+
+class FastMCP:
+    def __init__(self, _name):
+        self.names = []
+    def tool(self, *, name):
+        def register(function):
+            self.names.append(name)
+            return function
+        return register
+
+mcp = types.ModuleType('mcp')
+server = types.ModuleType('mcp.server')
+fastmcp = types.ModuleType('mcp.server.fastmcp')
+fastmcp.Context = Context
+fastmcp.FastMCP = FastMCP
+sys.modules['mcp'] = mcp
+sys.modules['mcp.server'] = server
+sys.modules['mcp.server.fastmcp'] = fastmcp
+
+from hermes.native_tools.mcp_runtime import mcp as runtime
+print(json.dumps(runtime.names))
+"""
+    environment = {**os.environ, "HERMES_TOOL_SURFACE": "catalog", "HERMES_TOOL_BUNDLES": "all"}
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=ROOT,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert set(json.loads(result.stdout)) == {
+        "integration_health",
+        "system_status",
+        "tool_catalog_discover",
+        "tool_catalog_invoke",
+    }

@@ -136,6 +136,7 @@ TOOL_CATALOG = (
     _tool("integration_health", "integration_health", ("integration.health",), "low", ToolBundle.OPERATIONS),
     _tool("system_status", "system_status", ("system.status",), "low", ToolBundle.OPERATIONS),
     _tool("tool_catalog_discover", "tool_catalog_discover", (), "low", ToolBundle.OPERATIONS),
+    _tool("tool_catalog_invoke", "tool_catalog_invoke", (), "low", ToolBundle.OPERATIONS),
     _tool("work_mode_get", "work_mode_get", (), "low", ToolBundle.OPERATIONS),
     _tool("work_mode_set", "work_mode_set", (), "medium", ToolBundle.OPERATIONS),
     _tool("task_list", "task_list", ("task.list",), "low", ToolBundle.PLANNING),
