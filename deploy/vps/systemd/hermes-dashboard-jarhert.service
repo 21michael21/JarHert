@@ -7,6 +7,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/home/deploy/.hermes/profiles/jarhert
 EnvironmentFile=/home/deploy/.hermes/profiles/jarhert/.env
+Environment=HERMES_HOME=%h/.hermes/profiles/jarhert
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/deploy/.hermes/hermes-agent/venv/bin/python /home/deploy/.hermes/profiles/jarhert/scripts/run_dashboard.py
 Restart=on-failure

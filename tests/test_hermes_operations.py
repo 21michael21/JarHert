@@ -135,6 +135,14 @@ def test_gateway_stop_timeout_override_is_bounded() -> None:
     assert "HERMES_RESTART_DRAIN_TIMEOUT=60" in override
 
 
+def test_dashboard_service_uses_jarhert_profile_home_for_status_checks() -> None:
+    service = (
+        Path(__file__).resolve().parents[1] / "deploy" / "vps" / "systemd" / "hermes-dashboard-jarhert.service"
+    ).read_text(encoding="utf-8")
+
+    assert "Environment=HERMES_HOME=%h/.hermes/profiles/jarhert" in service
+
+
 def test_versioned_telegram_profile_is_quiet_and_final_answer_first() -> None:
     config = (Path(__file__).resolve().parents[1] / "hermes" / "config.yaml").read_text(encoding="utf-8")
 
