@@ -23,7 +23,7 @@ compression:
 # single approval prompt: no generated "Working", mid-turn commentary, or
 # status breadcrumbs that read like broken duplicate replies on a phone.
 display:
-  busy_input_mode: queue
+  busy_input_mode: interrupt
   busy_ack_enabled: false
   platforms:
     telegram:
@@ -160,6 +160,9 @@ mcp_servers:
         - subscription_cancel
         - work_mode_get
         - work_mode_set
+        - voice_inbox_prepare
+        - voice_vocabulary_add
+        - voice_vocabulary_list
         - coding_job_enqueue_confirmed
         - coding_job_list
         - telegram_text_export_confirmed

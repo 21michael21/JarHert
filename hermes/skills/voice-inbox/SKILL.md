@@ -9,6 +9,13 @@ Use when Telegram provides a voice transcript containing several thoughts or
 actions. Do not transcribe audio inside this skill; the gateway already provides
 text.
 
+Before interpreting a transcript, call `mcp_jarhert_native_voice_inbox_prepare`.
+Use its `text` as the working transcript. It only applies the owner's explicit
+vocabulary corrections and normalizes whitespace; it never invents wording,
+dates, contacts, or actions. If the user corrects a recurring proper noun or
+project name, save it through `mcp_jarhert_native_voice_vocabulary_add` and
+continue with the same single inbox plan.
+
 Before selecting tools, build an internal JSON plan. Never show this JSON to the
 user and never execute it directly:
 

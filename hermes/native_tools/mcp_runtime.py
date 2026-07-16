@@ -889,6 +889,24 @@ def work_mode_set(mode: Literal["fast", "think", "code"]) -> dict[str, object]:
 
 
 @native_tool()
+def voice_inbox_prepare(transcript: str) -> dict[str, object]:
+    """Normalize only owner-approved voice terms before building one inbox plan."""
+    return api.voice_inbox_prepare(transcript=transcript)
+
+
+@native_tool()
+def voice_vocabulary_add(spoken: str, canonical: str) -> dict[str, object]:
+    """Save one owner-approved speech correction for future voice inboxes."""
+    return api.voice_vocabulary_add(spoken=spoken, canonical=canonical)
+
+
+@native_tool()
+def voice_vocabulary_list() -> dict[str, object]:
+    """List the compact owner-approved voice vocabulary."""
+    return api.voice_vocabulary_list()
+
+
+@native_tool()
 async def coding_job_enqueue_confirmed(
     mode: Literal["coding", "research"],
     prompt: str,
@@ -896,15 +914,20 @@ async def coding_job_enqueue_confirmed(
     ctx: Context,
     repository_url: str | None = None,
     source_urls: list[str] | None = None,
+    followups: list[str] | None = None,
 ) -> dict[str, object]:
     """Preview once, then queue coding work for an isolated remote runner."""
-    if not await _confirm(ctx, f"Поставить {mode} job в изолированную очередь?\n{prompt[:300]}"):
+    preview = f"Поставить {mode} job в изолированную очередь?\n{prompt[:300]}"
+    if followups:
+        preview += f"\nПосле него: {len(followups)} шаг(а) без нового подтверждения."
+    if not await _confirm(ctx, preview):
         return {"status": "unchanged"}
     return api.coding_job_enqueue(
         mode=mode,
         prompt=prompt,
         repository_url=repository_url,
         source_urls=source_urls or [],
+        followups=followups,
         idempotency_key=idempotency_key,
     )
 

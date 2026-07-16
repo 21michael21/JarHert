@@ -48,6 +48,7 @@ _DISCOVERY_HINTS: dict[str, tuple[str, ...]] = {
     "knowledge": ("сайт", "ссылк", "архив", "знани", "исслед"),
     "github": ("github", "реп", "pr", "issue", "ci"),
     "coding": ("код", "реп", "баг", "тест", "diff", "codex"),
+    "voice": ("голос", "голосов", "диктов", "расшифров", "термин"),
     "action_plan": ("создай", "сделай", "перенес", "план", "несколько"),
 }
 
@@ -139,6 +140,9 @@ TOOL_CATALOG = (
     _tool("tool_catalog_invoke", "tool_catalog_invoke", (), "low", ToolBundle.OPERATIONS),
     _tool("work_mode_get", "work_mode_get", (), "low", ToolBundle.OPERATIONS),
     _tool("work_mode_set", "work_mode_set", (), "medium", ToolBundle.OPERATIONS),
+    _tool("voice_inbox_prepare", "voice_inbox_prepare", ("memory.read",), "low", ToolBundle.PERSONAL),
+    _tool("voice_vocabulary_add", "voice_vocabulary_add", ("memory.write",), "low", ToolBundle.PERSONAL),
+    _tool("voice_vocabulary_list", "voice_vocabulary_list", ("memory.read",), "low", ToolBundle.PERSONAL),
     _tool("task_list", "task_list", ("task.list",), "low", ToolBundle.PLANNING),
     _tool("calendar_list", "calendar_list", ("calendar.list",), "low", ToolBundle.PLANNING),
     _tool("action_plan_confirm_execute", "action_plan_confirm_execute", _PLAN_CAPABILITIES, "high", ToolBundle.PLANNING),

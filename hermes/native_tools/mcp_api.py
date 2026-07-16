@@ -36,6 +36,7 @@ from .telegram_text_export import (
 )
 from .tool_catalog import ToolBundle, discover_tool_specs, tool_catalog_entry
 from .trips import TripStore
+from .voice_inbox import VoiceVocabularyStore
 
 
 AdapterFactory = Callable[[], Any]
@@ -756,6 +757,18 @@ class NativeToolsAPI:
     def work_mode_set(self, *, mode: str) -> dict[str, Any]:
         return _value_payload(self._capabilities().set_mode(mode))
 
+    def voice_inbox_prepare(self, *, transcript: str) -> dict[str, Any]:
+        self._capabilities().require("memory.read")
+        return _value_payload(self._voice_vocabulary().prepare(transcript))
+
+    def voice_vocabulary_add(self, *, spoken: str, canonical: str) -> dict[str, Any]:
+        self._capabilities().require("memory.write")
+        return _value_payload(self._voice_vocabulary().add(spoken=spoken, canonical=canonical))
+
+    def voice_vocabulary_list(self) -> dict[str, Any]:
+        self._capabilities().require("memory.read")
+        return {"items": _value_payload(self._voice_vocabulary().list())}
+
     def coding_job_enqueue(
         self,
         *,
@@ -766,12 +779,28 @@ class NativeToolsAPI:
         source_urls: list[str] | None = None,
         source_text: str | None = None,
         source_label: str | None = None,
+        followups: list[str] | None = None,
     ) -> dict[str, Any]:
         capability = "coding.queue" if mode == "coding" else "research.run"
         self._capabilities().require(capability)
         tg_user_id = int(os.getenv("HERMES_OWNER_TELEGRAM_CHAT_ID", "0") or 0)
         if tg_user_id <= 0:
             raise RuntimeError("HERMES_OWNER_TELEGRAM_CHAT_ID is required")
+        if followups:
+            if source_text is not None or source_label is not None:
+                raise ValueError("Follow-up coding jobs do not accept an attached text export.")
+            jobs = self._coding_jobs().enqueue_chain(
+                tg_user_id=tg_user_id,
+                mode=mode,
+                prompt=prompt,
+                repository_url=repository_url,
+                source_urls=list(source_urls or []),
+                followups=followups,
+                idempotency_key=idempotency_key,
+            )
+            payload = _value_payload(jobs[0])
+            payload["followup_job_ids"] = [job.id for job in jobs[1:]]
+            return payload
         return _value_payload(self._coding_jobs().enqueue(
             tg_user_id=tg_user_id,
             mode=mode,
@@ -1047,6 +1076,9 @@ class NativeToolsAPI:
 
     def _coding_jobs(self) -> NativeCodingJobStore:
         return self._store("coding_jobs", lambda: NativeCodingJobStore(self.database_path))
+
+    def _voice_vocabulary(self) -> VoiceVocabularyStore:
+        return self._store("voice_vocabulary", lambda: VoiceVocabularyStore(self.database_path))
 
     def _coding_owner_id(self) -> int:
         tg_user_id = int(os.getenv("HERMES_OWNER_TELEGRAM_CHAT_ID", "0") or 0)

@@ -223,11 +223,14 @@ function renderMemory(snapshot) {
   list("knowledge-sources", state.knowledge.items || [], knowledgeRow, "Добавь первую ссылку: JarHert сохранит только эту страницу.");
   const system = $("system"); system.replaceChildren();
   const status = snapshot.status || {}; const integrations = snapshot.integrations || {};
+  const runtime = status.runtime || {}; const queue = status.coding_queue || {};
+  system.append(statusRow("JarHert", runtimeLabel(runtime.state), runtime.state === "healthy"));
   system.append(statusRow("Gateway", status.gateway?.active ? "работает" : "нет связи", Boolean(status.gateway?.active)));
   system.append(statusRow("Trello", integrations.trello_ok ? "подключён" : "проверь", Boolean(integrations.trello_ok)));
   system.append(statusRow("Calendar", integrations.calendar_ok ? "подключён" : "проверь", Boolean(integrations.calendar_ok)));
   const github = status.github_mcp || {};
   system.append(statusRow("GitHub", githubMcpLabel(github.state), github.state === "ready"));
+  system.append(statusRow("Runner", workerLabel(queue.worker_state), queue.worker_state !== "attention"));
   system.append(statusRow("Backup", status.backup?.configured ? "настроен" : "проверь", Boolean(status.backup?.configured)));
 }
 
@@ -299,6 +302,14 @@ function statusRow(label, value, good) {
 
 function githubMcpLabel(state) {
   return {ready: "read-only готов", disabled: "выключен", needs_token: "нужен токен", missing_binary: "нужна установка"}[state] || "проверь";
+}
+
+function runtimeLabel(state) {
+  return {healthy: "в порядке", attention: "нужно внимание", offline: "не в сети"}[state] || "проверяется";
+}
+
+function workerLabel(state) {
+  return {busy: "в работе", idle: "ожидает", attention: "есть ошибка"}[state] || "проверяется";
 }
 
 function taskMeta(task) {

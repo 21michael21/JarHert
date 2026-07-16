@@ -595,6 +595,8 @@ def test_dashboard_tasks_and_code_desk_keep_mobile_actions_clear_and_compact() -
     assert "не коммитит и не деплоит" in page
     assert "function taskMatchesQuery" in script
     assert "function openTaskMenu" in script
+    assert 'statusRow("JarHert"' in script
+    assert 'statusRow("Runner"' in script
     assert ".task-menu-button" in stylesheet
     assert "-webkit-line-clamp: 3" in stylesheet
 

@@ -16,6 +16,7 @@ Report only factual, compact fields:
 - cron job count, watchdog timer and stale heartbeat if present;
 - backup timer state, encrypted backup readiness, count and age;
 - aggregate native coding queue state, without prompts, results or errors;
+- compact runtime state: healthy, attention, or offline, plus non-personal reason codes;
 - free disk, memory pressure and zombie-child count;
 - deployed profile revision.
 

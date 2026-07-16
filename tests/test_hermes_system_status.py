@@ -80,7 +80,10 @@ def test_system_status_reports_operational_facts_without_personal_content(tmp_pa
         "running": 1,
         "failed": 1,
         "delivery_pending": 2,
+        "worker_state": "busy",
+        "last_heartbeat_at": None,
     }
+    assert status["runtime"] == {"state": "attention", "reasons": ["coding_failed", "zombie_children"]}
     assert status["personal_summaries"] == {
         "available": True,
         "daily": {"status": "sent", "updated_at": "2030-01-01T08:00:00+00:00"},

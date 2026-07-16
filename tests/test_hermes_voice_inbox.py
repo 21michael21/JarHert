@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 
 from hermes.native_tools.mcp_api import NativeToolsAPI
+from hermes.native_tools.voice_inbox import VoiceVocabularyStore
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -113,3 +114,17 @@ def test_voice_skill_keeps_clear_calendar_items_and_does_not_hallucinate_the_que
     assert "год или ссылку" in skill.lower()
     assert '"actions"' in skill
     assert '"followups"' in skill
+
+
+def test_voice_inbox_uses_owner_vocabulary_without_changing_unrelated_words(tmp_path: Path) -> None:
+    vocabulary = VoiceVocabularyStore(tmp_path / "personal-os.sqlite3")
+    vocabulary.add(spoken="ганджубасик", canonical="Ганджубасик")
+    vocabulary.add(spoken="хаб эм эль", canonical="Hub_ML")
+
+    prepared = vocabulary.prepare(
+        "Завтра в 19 напомни читать ганджубасик, а по хаб эм эль сохрани мысль.",
+    )
+
+    assert prepared.mode == "inbox"
+    assert prepared.text == "Завтра в 19 напомни читать Ганджубасик, а по Hub_ML сохрани мысль."
+    assert prepared.replacements == ("ганджубасик -> Ганджубасик", "хаб эм эль -> Hub_ML")

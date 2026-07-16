@@ -38,11 +38,14 @@ def collect_system_status(
     backup_secret = Path(backup_secret_path or Path.home() / ".config" / "jarhert" / "backup.env").expanduser()
     ticker = profile / "cron" / "ticker_last_success"
     database = profile / "data" / "personal-os.sqlite3"
+    coding_queue = _coding_queue_status(database)
+    zombies = zombie_processes(process_table, parent_pid=main_pid)
     return {
         "gateway": {"active": active, "main_pid": main_pid},
         "provider": _model_config(profile / "config.yaml"),
         "github_mcp": github_mcp_status(profile_home=profile),
-        "coding_queue": _coding_queue_status(database),
+        "coding_queue": coding_queue,
+        "runtime": _runtime_health(gateway_active=active, coding_queue=coding_queue, zombies=zombies),
         "personal_summaries": _personal_summary_status(database),
         "automation": {
             "watchdog_timer_active": _systemctl_active("hermes-watchdog.timer", command_runner),
@@ -51,7 +54,7 @@ def collect_system_status(
         "resources": {
             "disk_free_gib": round(disk.free / (1024**3), 2),
             "memory_used_percent": round(100 * (1 - available_memory / total_memory), 1),
-            "zombie_children": zombie_processes(process_table, parent_pid=main_pid),
+            "zombie_children": zombies,
         },
         "cron": {
             "jobs": _cron_job_count(profile / "cron" / "jobs.json"),
@@ -127,13 +130,15 @@ def _model_config(path: Path) -> dict[str, str]:
     return result
 
 
-def _coding_queue_status(database: Path) -> dict[str, int | bool]:
-    result: dict[str, int | bool] = {
+def _coding_queue_status(database: Path) -> dict[str, int | bool | str | None]:
+    result: dict[str, int | bool | str | None] = {
         "available": False,
         "queued": 0,
         "running": 0,
         "failed": 0,
         "delivery_pending": 0,
+        "worker_state": "unknown",
+        "last_heartbeat_at": None,
     }
     if not database.is_file():
         return result
@@ -143,13 +148,42 @@ def _coding_queue_status(database: Path) -> dict[str, int | bool]:
             pending = connection.execute(
                 "SELECT COUNT(*) FROM native_coding_jobs WHERE delivery_status IN ('pending', 'delivering')"
             ).fetchone()
+            columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(native_coding_jobs)")}
+            heartbeat = (
+                connection.execute("SELECT MAX(heartbeat_at) FROM native_coding_jobs WHERE heartbeat_at IS NOT NULL").fetchone()
+                if "heartbeat_at" in columns
+                else None
+            )
     except (OSError, sqlite3.Error):
         return result
     result["available"] = True
     for status in ("queued", "running", "failed"):
         result[status] = int(statuses.get(status, 0))
     result["delivery_pending"] = int(pending[0]) if pending else 0
+    result["last_heartbeat_at"] = str(heartbeat[0]) if heartbeat and heartbeat[0] else None
+    result["worker_state"] = (
+        "busy" if int(result["running"]) else "attention" if int(result["failed"]) else "idle"
+    )
     return result
+
+
+def _runtime_health(
+    *,
+    gateway_active: bool,
+    coding_queue: dict[str, int | bool | str | None],
+    zombies: list[int],
+) -> dict[str, object]:
+    reasons: list[str] = []
+    if not gateway_active:
+        reasons.append("gateway_inactive")
+    if int(coding_queue["failed"] or 0):
+        reasons.append("coding_failed")
+    if zombies:
+        reasons.append("zombie_children")
+    return {
+        "state": "offline" if not gateway_active else "attention" if reasons else "healthy",
+        "reasons": reasons,
+    }
 
 
 def _personal_summary_status(database: Path) -> dict[str, dict[str, str | None] | bool]:

@@ -82,6 +82,15 @@ def test_catalog_assigns_every_tool_to_one_user_facing_bundle() -> None:
     assert all(spec.handler and spec.risk in {"low", "medium", "high"} for spec in TOOL_CATALOG)
 
 
+def test_release_radar_skill_has_one_small_monitor_contract() -> None:
+    skill = (ROOT / "hermes" / "skills" / "github-release-radar" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "one `owner/repository` pair" in skill
+    assert "monitor_add_github_releases" in skill
+    assert "monitor_disable" in skill
+    assert "push code" in skill
+
+
 def test_bundle_selection_keeps_operations_and_hides_unrelated_tools() -> None:
     selected = active_tool_bundles("research, code")
 
