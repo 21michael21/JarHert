@@ -2,9 +2,10 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CHECK_PYTHON="${NATIVE_CHECK_PYTHON:-$ROOT/.venv/bin/python}"
 PROFILE_HOME="${HERMES_HOME:-$HOME/.hermes/profiles/jarhert}"
 PYTHON="${NATIVE_RELEASE_PYTHON:-$PROFILE_HOME/.venv/bin/python}"
-NATIVE_CHECK_PYTHON="$PYTHON" "$ROOT/scripts/native_check.sh"
+NATIVE_CHECK_PYTHON="$CHECK_PYTHON" "$ROOT/scripts/native_check.sh"
 
 if [[ "${NATIVE_RELEASE_ALLOW_LIVE:-0}" != "1" ]]; then
   echo "live_native_telegram=skipped set NATIVE_RELEASE_ALLOW_LIVE=1 for the external proof"
