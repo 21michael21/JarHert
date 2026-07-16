@@ -103,6 +103,8 @@ HERMES_HOME="$PROFILE_DIR" "$HERMES_PYTHON" "$PROFILE_DIR/scripts/bootstrap_nati
 # backslash escaping would make dotenv treat the complete command as one executable.
 sed -i '/^HERMES_NATIVE_SEND_COMMAND=/d' "$PROFILE_DIR/.env"
 printf "HERMES_NATIVE_SEND_COMMAND='%s -m hermes_cli.main'\n" "$HERMES_PYTHON" >> "$PROFILE_DIR/.env"
+sed -i '/^HERMES_ACTION_PLAN_RECEIPT_DELIVERY=/d' "$PROFILE_DIR/.env"
+printf 'HERMES_ACTION_PLAN_RECEIPT_DELIVERY=true\n' >> "$PROFILE_DIR/.env"
 chmod 600 "$PROFILE_DIR/.env"
 "$HERMES_PYTHON" -m hermes_cli.main --profile jarhert tools disable --platform telegram \
   terminal file code_execution browser computer_use delegation cronjob >/dev/null
