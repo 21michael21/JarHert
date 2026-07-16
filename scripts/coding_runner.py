@@ -39,9 +39,13 @@ def run_once(*, client, worker, worker_id: str) -> bool:
         )
         heartbeat.start()
     try:
+        prompt = _prompt_with_predecessor_result(
+            str(payload["prompt"]),
+            payload.get("predecessor_result"),
+        )
         result = worker.run(SandboxTask(
             mode=str(payload["mode"]),
-            prompt=str(payload["prompt"]),
+            prompt=prompt,
             repository_url=payload.get("repository_url"),
             source_urls=tuple(payload.get("source_urls") or []),
             source_text=payload.get("source_text"),
@@ -75,6 +79,14 @@ def _queue_failure_reason(error: Exception) -> str:
         detail,
     )
     return detail[:500]
+
+
+def _prompt_with_predecessor_result(prompt: str, predecessor_result: object) -> str:
+    """Give a queued follow-up only the previous step's bounded, local result."""
+    previous = str(predecessor_result or "").strip()
+    if not previous:
+        return prompt
+    return f"{prompt}\n\nРезультат предыдущего шага:\n{previous[:12_000]}"
 
 
 def main() -> int:

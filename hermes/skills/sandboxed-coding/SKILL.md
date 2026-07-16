@@ -16,6 +16,12 @@ not an imagined completion.
 For a clear coding or research request, call
 `mcp_jarhert_native_coding_job_enqueue_confirmed` directly. Do not compose a separate preview in chat. The native tool owns the one approval prompt.
 
+When the user explicitly asks for a deterministic sequence such as “сначала
+проверь, потом покажи diff и итог”, pass the later instructions as `followups`.
+They enter the same durable queue, start only after the preceding step succeeds,
+receive its result as context, and produce one final Telegram report. Do not
+create a second conversational plan or ask for another confirmation.
+
 ## Launch
 
 Coding accepts only a public GitHub HTTPS repository:

@@ -24,6 +24,9 @@ class NativeCodingJob:
     source_urls: tuple[str, ...]
     source_text: str | None
     source_label: str | None
+    depends_on_job_id: int | None
+    predecessor_result: str | None
+    deliver_result: bool
     status: str
     idempotency_key: str
     worker_id: str | None
@@ -56,6 +59,8 @@ class NativeCodingJobStore:
         source_urls: list[str] | tuple[str, ...] | None = None,
         source_text: str | None = None,
         source_label: str | None = None,
+        depends_on_job_id: int | None = None,
+        deliver_result: bool = True,
     ) -> NativeCodingJob:
         clean_key = _required(idempotency_key, "Idempotency key", 220)
         with self._connect() as connection:
@@ -66,13 +71,21 @@ class NativeCodingJobStore:
             ).fetchone()
             if existing is not None:
                 return _from_row(existing)
+            parent_id = _optional_job_id(depends_on_job_id)
+            if parent_id is not None:
+                parent = connection.execute(
+                    "SELECT id FROM native_coding_jobs WHERE id = ? AND tg_user_id = ?",
+                    (parent_id, int(tg_user_id)),
+                ).fetchone()
+                if parent is None:
+                    raise LookupError("Follow-up job must belong to the same Telegram user.")
             job_id = int(
                 connection.execute(
                     """
                     INSERT INTO native_coding_jobs(
                         tg_user_id, mode, prompt, repository_url, source_urls_json, source_text, source_label,
-                        status, idempotency_key
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)
+                        depends_on_job_id, deliver_result, status, idempotency_key
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)
                     """,
                     (
                         _positive(tg_user_id, "Telegram user id"),
@@ -82,12 +95,61 @@ class NativeCodingJobStore:
                         _json_urls(source_urls or []),
                         _optional(source_text, 120_000),
                         _optional(source_label, 240),
+                        parent_id,
+                        int(bool(deliver_result)),
                         clean_key,
                     ),
                 ).lastrowid
             )
             row = connection.execute("SELECT * FROM native_coding_jobs WHERE id = ?", (job_id,)).fetchone()
         return _from_row(row)
+
+    def enqueue_chain(
+        self,
+        *,
+        tg_user_id: int,
+        mode: str,
+        prompt: str,
+        followups: list[str] | tuple[str, ...],
+        idempotency_key: str,
+        repository_url: str | None = None,
+        source_urls: list[str] | tuple[str, ...] | None = None,
+    ) -> tuple[NativeCodingJob, ...]:
+        """Queue deterministic post-work steps without another LLM round trip.
+
+        A chain only delivers its final useful result. If an earlier step fails,
+        that failed step becomes deliverable and downstream steps are cancelled
+        during the next claim, so the user still receives one honest outcome.
+        """
+        root_key = _required(idempotency_key, "Idempotency key", 180)
+        clean_followups = tuple(_required(item, "Follow-up", 2_000) for item in followups)
+        if len(clean_followups) > 5:
+            raise ValueError("A coding chain supports at most 5 follow-ups.")
+        jobs: list[NativeCodingJob] = [
+            self.enqueue(
+                tg_user_id=tg_user_id,
+                mode=mode,
+                prompt=prompt,
+                repository_url=repository_url,
+                source_urls=source_urls,
+                idempotency_key=root_key,
+                deliver_result=not clean_followups,
+            )
+        ]
+        previous = jobs[0]
+        for position, followup in enumerate(clean_followups, start=1):
+            previous = self.enqueue(
+                tg_user_id=tg_user_id,
+                mode=mode,
+                prompt=followup,
+                repository_url=repository_url,
+                source_urls=source_urls,
+                depends_on_job_id=previous.id,
+                deliver_result=position == len(clean_followups),
+                idempotency_key=f"{root_key}:followup:{position}",
+            )
+            jobs.append(previous)
+        return tuple(jobs)
 
     def claim_next(
         self,
@@ -109,8 +171,27 @@ class NativeCodingJobStore:
                 """,
                 (current,),
             )
+            connection.execute(
+                """
+                UPDATE native_coding_jobs AS child
+                SET status = 'cancelled', source_text = NULL, delivery_status = 'delivered',
+                    last_error = 'Previous coding step did not succeed.', updated_at = CURRENT_TIMESTAMP
+                WHERE child.status = 'queued'
+                  AND child.depends_on_job_id IN (
+                    SELECT parent.id FROM native_coding_jobs AS parent
+                    WHERE parent.status IN ('failed', 'cancelled')
+                  )
+                """
+            )
             row = connection.execute(
-                "SELECT * FROM native_coding_jobs WHERE status = 'queued' ORDER BY id LIMIT 1"
+                """
+                SELECT job.*, parent.result_text AS predecessor_result
+                FROM native_coding_jobs AS job
+                LEFT JOIN native_coding_jobs AS parent ON parent.id = job.depends_on_job_id
+                WHERE job.status = 'queued'
+                  AND (job.depends_on_job_id IS NULL OR parent.status = 'succeeded')
+                ORDER BY job.id LIMIT 1
+                """
             ).fetchone()
             if row is None:
                 return None
@@ -125,7 +206,15 @@ class NativeCodingJobStore:
             )
             if result.rowcount != 1:
                 return None
-            claimed = connection.execute("SELECT * FROM native_coding_jobs WHERE id = ?", (int(row["id"]),)).fetchone()
+            claimed = connection.execute(
+                """
+                SELECT job.*, parent.result_text AS predecessor_result
+                FROM native_coding_jobs AS job
+                LEFT JOIN native_coding_jobs AS parent ON parent.id = job.depends_on_job_id
+                WHERE job.id = ?
+                """,
+                (int(row["id"]),),
+            ).fetchone()
         return _from_row(claimed)
 
     def heartbeat(self, job_id: int, *, worker_id: str, lease_seconds: int = 900) -> bool:
@@ -190,7 +279,7 @@ class NativeCodingJobStore:
             row = connection.execute(
                 """
                 SELECT * FROM native_coding_jobs
-                WHERE status IN ('succeeded', 'failed') AND delivery_status = 'pending'
+                WHERE status IN ('succeeded', 'failed') AND delivery_status = 'pending' AND deliver_result = 1
                 ORDER BY id LIMIT 1
                 """
             ).fetchone()
@@ -228,13 +317,22 @@ class NativeCodingJobStore:
                 """
                 UPDATE native_coding_jobs
                 SET status = ?, result_text = ?, last_error = ?, source_text = NULL,
-                    lease_until = NULL, updated_at = CURRENT_TIMESTAMP
+                    lease_until = NULL,
+                    deliver_result = CASE
+                        WHEN ? = 'failed' AND EXISTS (
+                            SELECT 1 FROM native_coding_jobs AS child
+                            WHERE child.depends_on_job_id = native_coding_jobs.id
+                        ) THEN 1
+                        ELSE deliver_result
+                    END,
+                    updated_at = CURRENT_TIMESTAMP
                 WHERE id = ? AND status = 'running' AND worker_id = ?
                 """,
                 (
                     _allowed(status, _STATUSES, "Status"),
                     _optional(result_text, 20_000),
                     _optional(error, 500),
+                    status,
                     int(job_id),
                     _required(worker_id, "Worker id", 100),
                 ),
@@ -257,6 +355,8 @@ class NativeCodingJobStore:
                     source_urls_json TEXT NOT NULL DEFAULT '[]',
                     source_text TEXT,
                     source_label TEXT,
+                    depends_on_job_id INTEGER REFERENCES native_coding_jobs(id),
+                    deliver_result INTEGER NOT NULL DEFAULT 1,
                     status TEXT NOT NULL DEFAULT 'queued',
                     idempotency_key TEXT NOT NULL,
                     worker_id TEXT,
@@ -284,6 +384,8 @@ class NativeCodingJobStore:
             _add_column(connection, "delivery_lease_until", "TEXT")
             _add_column(connection, "source_text", "TEXT")
             _add_column(connection, "source_label", "TEXT")
+            _add_column(connection, "depends_on_job_id", "INTEGER")
+            _add_column(connection, "deliver_result", "INTEGER NOT NULL DEFAULT 1")
 
     def _connect(self) -> sqlite3.Connection:
         return open_personal_os_database(self.database_path, autocommit=True)
@@ -315,6 +417,9 @@ def _from_row(row: sqlite3.Row) -> NativeCodingJob:
         source_urls=tuple(json.loads(row["source_urls_json"])),
         source_text=str(row["source_text"]) if row["source_text"] else None,
         source_label=str(row["source_label"]) if row["source_label"] else None,
+        depends_on_job_id=_row_int(row, "depends_on_job_id"),
+        predecessor_result=_row_text(row, "predecessor_result"),
+        deliver_result=bool(_row_int(row, "deliver_result", default=1)),
         status=str(row["status"]),
         idempotency_key=str(row["idempotency_key"]),
         worker_id=str(row["worker_id"]) if row["worker_id"] else None,
@@ -392,6 +497,24 @@ def _required(value: str, label: str, limit: int) -> str:
 
 def _optional(value: str | None, limit: int) -> str | None:
     return _required(value, "Value", limit) if value is not None and str(value).strip() else None
+
+
+def _optional_job_id(value: int | None) -> int | None:
+    if value is None:
+        return None
+    return _positive(value, "Follow-up job id")
+
+
+def _row_int(row: sqlite3.Row, key: str, *, default: int | None = None) -> int | None:
+    if key not in row.keys() or row[key] is None:
+        return default
+    return int(row[key])
+
+
+def _row_text(row: sqlite3.Row, key: str) -> str | None:
+    if key not in row.keys() or row[key] is None:
+        return None
+    return str(row[key])
 
 
 def _add_column(connection: sqlite3.Connection, name: str, definition: str) -> None:

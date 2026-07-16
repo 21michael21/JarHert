@@ -150,3 +150,76 @@ def test_completed_native_job_is_delivered_once_with_a_short_result(tmp_path) ->
     assert result == {"claimed": 1, "sent": 1, "failed": 0}
     assert replay == {"claimed": 0, "sent": 0, "failed": 0}
     assert sent == [(566055009, "Готово: тесты прошли")]
+
+
+def test_coding_followups_run_in_order_keep_previous_result_and_only_deliver_the_final_summary(tmp_path) -> None:
+    store = NativeCodingJobStore(tmp_path / "personal-os.sqlite3")
+
+    jobs = store.enqueue_chain(
+        tg_user_id=566055009,
+        mode="coding",
+        prompt="Исправь причину и запусти узкие тесты",
+        followups=["Проверь diff и подготовь короткий итог для Telegram"],
+        repository_url="https://github.com/example/repo",
+        idempotency_key="telegram:106:coding-chain",
+    )
+
+    assert [job.status for job in jobs] == ["queued", "queued"]
+    assert store.claim_next(worker_id="mac").id == jobs[0].id
+    assert store.complete(jobs[0].id, worker_id="mac", result_text="Исправлено. 4 теста прошли.").status == "succeeded"
+
+    followup = store.claim_next(worker_id="mac")
+    assert followup is not None
+    assert followup.id == jobs[1].id
+    assert followup.predecessor_result == "Исправлено. 4 теста прошли."
+    store.complete(followup.id, worker_id="mac", result_text="Причина найдена, diff готов, 4 теста зелёные.")
+
+    sent: list[tuple[int, str]] = []
+    assert dispatch_completed_coding_jobs(store, lambda chat_id, text: sent.append((chat_id, text)) or "telegram:1") == {
+        "claimed": 1,
+        "sent": 1,
+        "failed": 0,
+    }
+    assert sent == [(566055009, "Причина найдена, diff готов, 4 теста зелёные.")]
+
+
+def test_replayed_coding_chain_keeps_one_chain_and_one_final_delivery(tmp_path) -> None:
+    store = NativeCodingJobStore(tmp_path / "personal-os.sqlite3")
+    payload = {
+        "tg_user_id": 566055009,
+        "mode": "coding",
+        "prompt": "Найди причину",
+        "followups": ["Проверь diff", "Напиши короткий итог"],
+        "idempotency_key": "telegram:108:replayed-chain",
+    }
+
+    first = store.enqueue_chain(**payload)
+    replay = store.enqueue_chain(**payload)
+
+    assert [job.id for job in replay] == [job.id for job in first]
+    assert [job.deliver_result for job in replay] == [False, False, True]
+    assert len(store.list_for_user(566055009)) == 3
+
+
+def test_failed_coding_step_cancels_followups_and_delivers_one_failure(tmp_path) -> None:
+    store = NativeCodingJobStore(tmp_path / "personal-os.sqlite3")
+    jobs = store.enqueue_chain(
+        tg_user_id=566055009,
+        mode="coding",
+        prompt="Запусти проверку",
+        followups=["Собери diff"],
+        idempotency_key="telegram:107:failed-chain",
+    )
+
+    assert store.claim_next(worker_id="mac").id == jobs[0].id
+    store.fail(jobs[0].id, worker_id="mac", error="Тесты не прошли")
+    assert store.claim_next(worker_id="mac") is None
+    assert store.get_for_user(jobs[1].id, tg_user_id=566055009).status == "cancelled"
+
+    sent: list[str] = []
+    assert dispatch_completed_coding_jobs(store, lambda _chat_id, text: sent.append(text) or "telegram:1") == {
+        "claimed": 1,
+        "sent": 1,
+        "failed": 0,
+    }
+    assert sent == [f"Задача #{jobs[0].id} не выполнилась. Попробуй ещё раз."]

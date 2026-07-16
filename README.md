@@ -58,6 +58,25 @@ NATIVE_RELEASE_ALLOW_LIVE=1 scripts/native_release_gate.sh
 The live mode sends real Telegram messages and creates then removes a small
 Trello and Calendar canary. Run it only against the owner profile.
 
+## Fast, quiet conversations
+
+Telegram uses Hermes `interrupt` input mode: when you replace a question while
+the assistant is working, the newer request wins instead of waiting behind an
+old reply. The JarHert sync migrates only its previous `queue` setting; any
+other explicit live display choice stays untouched.
+
+For a voice dump, say everything naturally. Hermes first applies the compact
+owner vocabulary, keeps clear items, and shows one preview for the whole set
+of tasks, meetings, reminders and notes. Add a recurring correction once, for
+example a project or name, through `voice_vocabulary_add`; it is then reused
+without changing unrelated words.
+
+For code or research, one request may include a deterministic continuation:
+“сначала найди причину, потом проверь diff и напиши итог”. The first step and
+its follow-ups share one durable chain, run in order, and send only the final
+useful report. Replaying the same Telegram update keeps the same jobs and
+cannot create a second chain.
+
 ## Hermes profile on a VPS
 
 Install Hermes separately, then copy the profile through the guarded sync

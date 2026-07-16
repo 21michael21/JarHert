@@ -42,3 +42,24 @@ def test_runner_passes_temporary_export_text_to_the_isolated_research_task() -> 
     assert worker.task.source_text == "[1] Обсуждаем SQLite и ML."
     assert worker.task.source_label == "mlphys.txt"
     assert queue.completed == [(41, "mac", "Готовый разбор")]
+
+
+def test_runner_passes_the_previous_step_result_only_to_a_claimed_followup() -> None:
+    class FollowupQueue(Queue):
+        def claim(self, _worker_id: str) -> dict[str, object]:
+            return {
+                "id": 42,
+                "mode": "coding",
+                "prompt": "Проверь diff и напиши итог.",
+                "repository_url": "https://github.com/example/repo",
+                "source_urls": [],
+                "source_text": None,
+                "source_label": None,
+                "predecessor_result": "Исправлено. 4 теста прошли.",
+            }
+
+    queue = FollowupQueue()
+    worker = Worker()
+
+    assert run_once(client=queue, worker=worker, worker_id="mac") is True
+    assert worker.task.prompt == "Проверь diff и напиши итог.\n\nРезультат предыдущего шага:\nИсправлено. 4 теста прошли."
