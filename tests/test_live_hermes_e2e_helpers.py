@@ -5,6 +5,7 @@ import sqlite3
 
 import pytest
 
+import scripts.live_hermes_e2e as live_e2e
 from scripts.live_hermes_e2e import (
     approval_button,
     cleanup_temporary_calendar_event,
@@ -17,6 +18,8 @@ from scripts.live_hermes_e2e import (
     task_present,
     task_adapter_from_profile,
     telethon_session_file,
+    has_bad_reply,
+    wait_for_turn_release,
     wait_confirmation_result,
 )
 
@@ -78,6 +81,25 @@ def test_live_runner_ignores_progress_updates_until_the_tool_has_finished() -> N
     assert is_transient_confirmation_update(progress) is True
     assert is_transient_confirmation_update(accepted) is True
     assert is_transient_confirmation_update(completed) is False
+
+
+def test_live_runner_rejects_interrupted_tool_reply() -> None:
+    assert has_bad_reply(Message("Operation interrupted: waiting for model response", [])) is True
+    assert has_bad_reply(Message("Готово: задача создана.", [])) is False
+
+
+def test_live_runner_waits_for_gateway_cleanup_before_the_next_turn(monkeypatch) -> None:
+    delays: list[float] = []
+
+    async def record_sleep(seconds: float) -> None:
+        delays.append(seconds)
+
+    monkeypatch.setattr(live_e2e.asyncio, "sleep", record_sleep)
+
+    asyncio.run(wait_for_turn_release(1.5))
+    asyncio.run(wait_for_turn_release(0))
+
+    assert delays == [1.5]
 
 
 def test_isolated_telethon_session_uses_a_disposable_sqlite_snapshot(tmp_path) -> None:

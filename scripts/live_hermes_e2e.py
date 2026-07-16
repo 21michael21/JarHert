@@ -187,6 +187,9 @@ def has_bad_reply(message) -> bool:
             "не настроен",
             "не удалось",
             "не смог",
+            "operation interrupted",
+            "операция прервана",
+            "прервано во время ожидания",
             "отсутствует в plan allowlist",
             "требует подтверждение",
             "должен быть подтверждён",
@@ -218,6 +221,12 @@ def is_transient_confirmation_update(message) -> bool:
             "выполняю",
         )
     )
+
+
+async def wait_for_turn_release(seconds: float) -> None:
+    """Avoid racing the gateway's short post-delivery cleanup window."""
+    if seconds > 0:
+        await asyncio.sleep(seconds)
 
 
 async def send_plain(client, entity, text: str, timeout: int, *, marker: str) -> tuple[Any, int]:
@@ -297,6 +306,7 @@ async def run(args, steps: list[Step]) -> None:
                 marker=run_id,
             )
             steps.append(Step("llm_reply", True, latency, int(reply.id)))
+            await wait_for_turn_release(args.settle_seconds)
 
             reply, latency = await send_confirmed(
                 client,
@@ -309,6 +319,7 @@ async def run(args, steps: list[Step]) -> None:
             if not task_present(task_adapter, task_title):
                 raise RuntimeError("Trello task was not found after the confirmed Telegram action")
             steps.append(Step("trello_create", True, latency, int(reply.id)))
+            await wait_for_turn_release(args.settle_seconds)
             reply, latency = await send_confirmed(
                 client,
                 entity,
@@ -320,6 +331,7 @@ async def run(args, steps: list[Step]) -> None:
             if task_present(task_adapter, task_title):
                 raise RuntimeError("Trello task still exists after the confirmed delete action")
             steps.append(Step("trello_delete", True, latency, int(reply.id)))
+            await wait_for_turn_release(args.settle_seconds)
 
             reply, latency = await send_confirmed(
                 client,
@@ -329,6 +341,7 @@ async def run(args, steps: list[Step]) -> None:
                 marker=run_id,
             )
             steps.append(Step("calendar_create", True, latency, int(reply.id)))
+            await wait_for_turn_release(args.settle_seconds)
             reply, latency = await send_confirmed(
                 client,
                 entity,
@@ -337,6 +350,7 @@ async def run(args, steps: list[Step]) -> None:
                 marker=run_id,
             )
             steps.append(Step("calendar_delete", True, latency, int(reply.id)))
+            await wait_for_turn_release(args.settle_seconds)
 
             reply, latency = await send_confirmed(
                 client,
@@ -361,6 +375,7 @@ def main() -> int:
     parser.add_argument("--profile-home", type=Path, default=Path.home() / ".hermes" / "profiles" / "jarhert")
     parser.add_argument("--timeout", type=int, default=180)
     parser.add_argument("--total-timeout", type=int, default=600)
+    parser.add_argument("--settle-seconds", type=float, default=2.0)
     parser.add_argument("--allow-live", action="store_true")
     parser.add_argument("--report", type=Path, default=Path("reports/live_hermes_e2e.json"))
     args = parser.parse_args()
