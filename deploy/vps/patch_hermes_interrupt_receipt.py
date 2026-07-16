@@ -89,6 +89,28 @@ _NEW = _PREVIOUS_NEW.replace(
 ''',
 )
 
+_PRE_DEBUG_NEW = _NEW
+
+_NEW = _PRE_DEBUG_NEW.replace(
+    '''                    _completed_native_plan = (
+                        '"status": "succeeded"' in _current_turn_normalized_text
+                        and '"actions":' in _current_turn_normalized_text
+                    )
+''',
+    '''                    _completed_native_plan = (
+                        '"status": "succeeded"' in _current_turn_normalized_text
+                        and '"actions":' in _current_turn_normalized_text
+                    )
+                    logger.warning(
+                        "JarHert receipt probe: current=%d session=%d status=%s actions=%s",
+                        len(messages or []),
+                        len(getattr(agent, "_session_messages", []) or []),
+                        '"status": "succeeded"' in _current_turn_normalized_text,
+                        '"actions":' in _current_turn_normalized_text,
+                    )
+''',
+)
+
 _PREVIOUS_RETURNLESS_NEW = _PREVIOUS_NEW.replace(
     '''                    if _completed_native_plan:
                         final_response = "Готово: подтверждённый план выполнен."
@@ -204,6 +226,7 @@ def patch_source(source: str) -> str:
     if _NEW in source:
         return source
     for previous in (
+        _PRE_DEBUG_NEW,
         _PREVIOUS_NEW,
         _PREVIOUS_RETURNLESS_NEW,
         _PREVIOUS_NORMALIZED_NEW,
