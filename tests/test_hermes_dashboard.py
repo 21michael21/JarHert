@@ -560,7 +560,10 @@ def test_dashboard_page_uses_telegram_webapp_and_external_assets_only() -> None:
     assert 'id="note-search"' in response.text
     assert 'id="knowledge-sources"' in response.text
     assert 'id="architecture-open"' in response.text
+    assert 'id="architecture-open-home"' in response.text
     assert 'id="architecture-dialog"' in response.text
+    assert 'id="architecture-detail-title"' in response.text
+    assert 'data-architecture-step="telegram"' in response.text
 
 
 def test_dashboard_has_a_touch_first_command_center_and_preserves_navigation_state() -> None:
@@ -600,6 +603,8 @@ def test_dashboard_tasks_and_code_desk_keep_mobile_actions_clear_and_compact() -
     assert 'statusRow("JarHert"' in script
     assert 'statusRow("Runner"' in script
     assert 'architecture-open' in script
+    assert 'function openArchitecture' in script
+    assert 'function showArchitectureStep' in script
     assert ".task-menu-button" in stylesheet
     assert "-webkit-line-clamp: 3" in stylesheet
     assert ".architecture-flow" in stylesheet

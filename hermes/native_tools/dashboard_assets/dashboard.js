@@ -5,6 +5,16 @@ const state = {
   coding: {items: []}, notes: {items: []}, knowledge: {items: []}, subscriptions: {items: []}, digest: {items: []}, noteQuery: "", taskQuery: "", taskFilter: "Все", taskMenu: null, quickType: "task", edit: null, plan: null, codingDraft: null, clip: null, lastUpdatedAt: null,
 };
 const VIEWS = new Set(["today", "tasks", "calendar", "code", "memory"]);
+const ARCHITECTURE_STEPS = {
+  telegram: {eyebrow: "ШАГ 1 · ВХОД", title: "Telegram — единственная входная дверь", copy: "Текст, голос, кнопка или файл приходят в один Hermes gateway. Параллельный старый бот не обрабатывает те же сообщения.", guard: "Голос сначала превращается в текст, затем ясные пункты собираются в один план."},
+  codex: {eyebrow: "ШАГ 2 · ПОНИМАНИЕ", title: "Codex понимает, а SOUL держит тон", copy: "Основной разговорный backend работает через Codex OAuth. SOUL задаёт русский стиль, краткость и честные уточнения.", guard: "Отдельный Codex CLI нужен только для изолированных кодовых задач, не для каждого сообщения."},
+  tools: {eyebrow: "ШАГ 3 · ВЫБОР ДЕЙСТВИЯ", title: "Открывается только нужный набор", copy: "Для вопроса не подсовываются все инструменты разом: личное, планирование, исследование или код выбираются по смыслу запроса.", guard: "Меньше лишних tools — меньше путаницы, задержки и расхода токенов."},
+  memory: {eyebrow: "ШАГ 4 · ЛИЧНЫЙ КОНТЕКСТ", title: "Память живёт в Personal OS", copy: "Заметки, проекты, контакты, обещания и напоминания лежат в одной SQLite-базе с локальным поиском.", guard: "Сырые переписки и секреты не становятся памятью сами по себе."},
+  integrations: {eyebrow: "ШАГ 5 · ВНЕШНИЕ СЕРВИСЫ", title: "Trello, Calendar и GitHub — узкими адаптерами", copy: "Trello и Google Calendar выполняются через Task Command Center. GitHub MCP читает репы, PR и CI только в режиме read-only.", guard: "Внешние изменения не происходят от одной случайной фразы."},
+  plan: {eyebrow: "ШАГ 6 · ТВОЙ КОНТРОЛЬ", title: "Несколько действий — один понятный план", copy: "Задача, встреча, напоминание и заметка собираются в единый preview. После одного подтверждения план выполняется один раз.", guard: "Повтор сообщения Telegram не создаёт вторую карточку или встречу."},
+  radar: {eyebrow: "ШАГ 7 · ФОН", title: "Радар сначала ищет изменение", copy: "Мониторы сравнивают hash и diff источника. Модель включается только когда на сайте, в релизе или канале действительно что-то поменялось.", guard: "Так фоновые проверки не превращаются в спам и не жгут токены."},
+  code: {eyebrow: "ШАГ 8 · КОД ОТДЕЛЬНО", title: "Кодовая задача уходит в изолированную очередь", copy: "Runner получает репозиторий, задачу и критерий готовности. Возвращает человеческий итог, diff и тесты.", guard: "Он не читает .env, не получает Docker socket и не деплоит без твоего отдельного ок."},
+};
 
 function text(value) { return String(value ?? "").trim(); }
 function field(item, ...keys) { for (const key of keys) if (item?.[key]) return text(item[key]); return "Без названия"; }
@@ -213,6 +223,24 @@ function openReport(job) {
   $("report-title").textContent = `Задача #${job.id}`;
   $("report-content").textContent = job.result_text || job.last_error || "Runner ещё не вернул отчёт.";
   $("report-dialog").showModal();
+}
+
+function showArchitectureStep(key) {
+  const step = ARCHITECTURE_STEPS[key] || ARCHITECTURE_STEPS.telegram;
+  $("architecture-detail-eyebrow").textContent = step.eyebrow;
+  $("architecture-detail-title").textContent = step.title;
+  $("architecture-detail-copy").textContent = step.copy;
+  $("architecture-detail-guard").textContent = step.guard;
+  document.querySelectorAll("[data-architecture-step]").forEach((item) => {
+    const selected = item.dataset.architectureStep === key;
+    item.classList.toggle("is-active", selected);
+    item.setAttribute("aria-pressed", String(selected));
+  });
+}
+
+function openArchitecture() {
+  showArchitectureStep("telegram");
+  $("architecture-dialog").showModal();
 }
 
 function renderMemory(snapshot) {
@@ -546,7 +574,8 @@ function init() {
   $("task-menu-open").addEventListener("click", () => { const task = state.taskMenu; closeTaskMenu(); if (task?.url) openExternal(task.url); });
   $("note-search").addEventListener("input", (event) => scheduleNoteSearch(event.target.value));
   $("knowledge-add").addEventListener("click", openKnowledgeClip); $("clip-form").addEventListener("submit", previewKnowledgeClip); $("clip-execute").addEventListener("click", executeKnowledgeClip); $("clip-cancel").addEventListener("click", () => $("clip-dialog").close());
-  $("architecture-open").addEventListener("click", () => $("architecture-dialog").showModal());
+  $("architecture-open").addEventListener("click", openArchitecture); $("architecture-open-home").addEventListener("click", openArchitecture);
+  document.querySelectorAll("[data-architecture-step]").forEach((item) => item.addEventListener("click", () => showArchitectureStep(item.dataset.architectureStep)));
   $("open-trello").addEventListener("click", () => openExternal(state.tasks.board_url || "https://trello.com/")); $("open-calendar").addEventListener("click", () => openExternal("https://calendar.google.com/"));
   window.addEventListener("hashchange", () => setView(window.location.hash.slice(1), {syncHistory: false}));
   if (VIEWS.has(window.location.hash.slice(1))) state.activeView = window.location.hash.slice(1);
