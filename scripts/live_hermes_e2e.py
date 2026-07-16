@@ -130,10 +130,18 @@ async def wait_confirmation_result(client, entity, approval, approval_text: str,
             )
         except TimeoutError:
             updated = None
-        if updated is not None and approval_button(updated, approval_text) is None:
+        if (
+            updated is not None
+            and approval_button(updated, approval_text) is None
+            and not is_transient_confirmation_ack(updated)
+        ):
             return updated
         for message in await recent_inbound_messages(client, entity, timeout=min(10.0, remaining)):
-            if int(message.id) > int(approval.id) and approval_button(message, approval_text) is None:
+            if (
+                int(message.id) > int(approval.id)
+                and approval_button(message, approval_text) is None
+                and not is_transient_confirmation_ack(message)
+            ):
                 return message
         await asyncio.sleep(1)
     raise TimeoutError("Telegram confirmation result timeout")
@@ -176,6 +184,12 @@ def has_bad_reply(message) -> bool:
             "peer должен",
         )
     )
+
+
+def is_transient_confirmation_ack(message) -> bool:
+    """Telegram acknowledges an inline click before Hermes finishes the tool call."""
+    text = str(message.message or "").strip().casefold()
+    return text.startswith(("✅ approved once", "approved once", "подтверждение принято"))
 
 
 async def send_plain(client, entity, text: str, timeout: int, *, marker: str) -> tuple[Any, int]:

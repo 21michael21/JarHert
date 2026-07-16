@@ -9,6 +9,7 @@ from scripts.live_hermes_e2e import (
     approval_button,
     cleanup_temporary_calendar_event,
     cleanup_temporary_task,
+    is_transient_confirmation_ack,
     isolated_telethon_session,
     recent_inbound_messages,
     require_live_approval,
@@ -58,6 +59,14 @@ def test_approval_button_supports_native_mcp_elicitation() -> None:
     )
 
     assert approval_button(message, "Выполнить") == "Approve Once"
+
+
+def test_live_runner_does_not_treat_telegram_callback_acknowledgement_as_a_tool_result() -> None:
+    acknowledgement = Message("✅ Approved once by A Jolly", [], id=43)
+    completed = Message("Готово: задача создана.", [], id=44)
+
+    assert is_transient_confirmation_ack(acknowledgement) is True
+    assert is_transient_confirmation_ack(completed) is False
 
 
 def test_isolated_telethon_session_uses_a_disposable_sqlite_snapshot(tmp_path) -> None:
