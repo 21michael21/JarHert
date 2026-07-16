@@ -115,6 +115,10 @@ mkdir -p "$PROFILE_DIR/state"
 printf '{"jarhert_commit":"%s","synced_at":"%s"}\n' "$COMMIT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PROFILE_DIR/state/jarhert-profile-revision.json"
 systemctl --user restart hermes-gateway-jarhert.service
 systemctl --user is-active --quiet hermes-gateway-jarhert.service
+if systemctl --user cat hermes-dashboard-jarhert.service >/dev/null 2>&1; then
+  systemctl --user restart hermes-dashboard-jarhert.service
+  systemctl --user is-active --quiet hermes-dashboard-jarhert.service
+fi
 "$HERMES_PYTHON" -m hermes_cli.main --profile jarhert skills list >/dev/null
 echo "profile_sync=ok commit=$COMMIT rollback=$ROLLBACK_DIR"
 REMOTE_SCRIPT

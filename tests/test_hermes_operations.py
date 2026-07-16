@@ -116,6 +116,7 @@ def test_profile_sync_script_preserves_runtime_state_and_live_config() -> None:
     assert "HERMES_ACTION_PLAN_RECEIPT_DELIVERY=true" in script
     assert "printf 'HERMES_NATIVE_SEND_COMMAND=%q" not in script
     assert "tools disable --platform telegram" in script
+    assert "restart hermes-dashboard-jarhert.service" in script
     assert "terminal file code_execution browser computer_use delegation cronjob" in script
     assert 'pip install --editable "$HERMES_SOURCE_DIR[mcp]"' in script
     assert '"$HERMES_SOURCE_DIR[mcp]"' in script
