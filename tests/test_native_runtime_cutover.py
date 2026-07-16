@@ -23,6 +23,7 @@ def test_native_release_gate_has_its_own_live_proof_switch() -> None:
     gate = (root / "scripts" / "native_release_gate.sh").read_text(encoding="utf-8")
 
     assert "scripts/native_check.sh" in gate
+    assert 'NATIVE_CHECK_PYTHON="$PYTHON"' in gate
     assert "NATIVE_RELEASE_ALLOW_LIVE" in gate
     assert "scripts/live_hermes_e2e.py" in gate
     assert "--allow-live" in gate
