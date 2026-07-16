@@ -69,7 +69,7 @@ class VoiceVocabularyStore:
                 applied.append(f"{entry.spoken} -> {entry.canonical}")
         return VoiceInboxPrepared(
             text=prepared,
-            mode="inbox" if _contains_action_intent(prepared) else "dictation",
+            mode=_voice_mode(prepared),
             replacements=tuple(applied),
         )
 
@@ -91,11 +91,23 @@ class VoiceVocabularyStore:
         return open_personal_os_database(self.database_path, autocommit=True)
 
 
-def _contains_action_intent(text: str) -> bool:
-    return any(
-        marker in text.casefold()
-        for marker in ("напомни", "напоминан", "сохрани", "задач", "встреч", "создай", "отправ", "перенеси")
-    )
+def _voice_mode(text: str) -> str:
+    """Classify shape only; the LLM still decides the actual action plan."""
+    normalized = text.casefold()
+    intents = {
+        "reminder": ("напомни", "напоминан"),
+        "note": ("сохрани", "запиши", "заметк"),
+        "task": ("задач",),
+        "meeting": ("встреч", "созвон", "календар"),
+        "message": ("отправ", "напиши"),
+        "move": ("перенеси",),
+    }
+    detected = {name for name, markers in intents.items() if any(marker in normalized for marker in markers)}
+    if len(detected) == 1 and len(text) <= 280:
+        return "command"
+    if detected:
+        return "inbox"
+    return "dictation"
 
 
 def _term(value: str, label: str) -> str:

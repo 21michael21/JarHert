@@ -16,6 +16,11 @@ dates, contacts, or actions. If the user corrects a recurring proper noun or
 project name, save it through `mcp_jarhert_native_voice_vocabulary_add` and
 continue with the same single inbox plan.
 
+`mode=command` means one short direct instruction: resolve it without
+turning it into a verbose voice dump. `mode=inbox` means several clear items:
+collect them into one preview. `mode=dictation` has no clear side effect;
+answer it normally or offer to save it as a note when that is useful.
+
 Before selecting tools, build an internal JSON plan. Never show this JSON to the
 user and never execute it directly:
 

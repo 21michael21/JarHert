@@ -97,6 +97,8 @@ HERMES_HOME="$PROFILE_DIR" "$HERMES_PYTHON" "$PROFILE_DIR/scripts/bootstrap_nati
 # JarHert's native MCP is part of the running gateway, not the profile venv.
 # Keep Hermes editable while aligning the MCP SDK with its pinned extra.
 "$HERMES_PYTHON" -m pip install --editable "$HERMES_SOURCE_DIR[mcp]" >/dev/null
+"$HERMES_PYTHON" "$SOURCE_DIR/deploy/vps/patch_hermes_interrupt_receipt.py" \
+  "$HERMES_SOURCE_DIR/agent/conversation_loop.py"
 # This value is consumed both by a shell and Hermes' dotenv parser. Shell-style
 # backslash escaping would make dotenv treat the complete command as one executable.
 sed -i '/^HERMES_NATIVE_SEND_COMMAND=/d' "$PROFILE_DIR/.env"

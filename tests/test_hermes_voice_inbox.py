@@ -128,3 +128,21 @@ def test_voice_inbox_uses_owner_vocabulary_without_changing_unrelated_words(tmp_
     assert prepared.mode == "inbox"
     assert prepared.text == "Завтра в 19 напомни читать Ганджубасик, а по Hub_ML сохрани мысль."
     assert prepared.replacements == ("ганджубасик -> Ганджубасик", "хаб эм эль -> Hub_ML")
+
+
+def test_voice_inbox_marks_one_short_directive_as_command_mode(tmp_path: Path) -> None:
+    vocabulary = VoiceVocabularyStore(tmp_path / "personal-os.sqlite3")
+
+    prepared = vocabulary.prepare("Напомни завтра в 12 заниматься ML")
+
+    assert prepared.mode == "command"
+
+
+def test_voice_inbox_keeps_multi_item_dump_in_one_preview_mode(tmp_path: Path) -> None:
+    vocabulary = VoiceVocabularyStore(tmp_path / "personal-os.sqlite3")
+
+    prepared = vocabulary.prepare(
+        "Завтра в 12 напомни заниматься ML, сохрани идею про Hub_ML и создай встречу с Ильёй."
+    )
+
+    assert prepared.mode == "inbox"
