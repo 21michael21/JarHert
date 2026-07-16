@@ -121,6 +121,7 @@ def test_profile_sync_script_preserves_runtime_state_and_live_config() -> None:
     assert "terminal file code_execution browser computer_use delegation cronjob" in script
     assert 'pip install --editable "$HERMES_SOURCE_DIR[mcp]"' in script
     assert '"$HERMES_SOURCE_DIR[mcp]"' in script
+    assert 'deploy/vps/systemd/hermes-dashboard-jarhert.service' in script
     assert "hermes-gateway-jarhert.service.d/override.conf" in script
     assert "systemctl --user daemon-reload" in script
     assert '"$PROFILE_DIR/auth.json"' not in script

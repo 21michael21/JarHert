@@ -112,6 +112,8 @@ chmod 600 "$PROFILE_DIR/.env"
   terminal file code_execution browser computer_use delegation cronjob >/dev/null
 install -Dm644 "$SOURCE_DIR/deploy/vps/systemd/hermes-gateway-jarhert.override.conf" \
   "$HOME/.config/systemd/user/hermes-gateway-jarhert.service.d/override.conf"
+install -Dm644 "$SOURCE_DIR/deploy/vps/systemd/hermes-dashboard-jarhert.service" \
+  "$HOME/.config/systemd/user/hermes-dashboard-jarhert.service"
 systemctl --user daemon-reload
 mkdir -p "$PROFILE_DIR/state"
 printf '{"jarhert_commit":"%s","synced_at":"%s"}\n' "$COMMIT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PROFILE_DIR/state/jarhert-profile-revision.json"
