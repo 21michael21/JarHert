@@ -37,6 +37,25 @@ def test_patch_adds_receipt_only_for_a_completed_current_turn_plan() -> None:
     assert patch_source(patched) == patched
 
 
+def test_patch_upgrades_the_previous_receipt_heuristic() -> None:
+    source = '''                else:
+                    final_response = f"{INTERRUPT_WAITING_FOR_MODEL_PREFIX}{api_elapsed:.1f}s elapsed)."
+                agent._persist_session(messages, conversation_history)
+                break
+'''
+    latest = patch_source(source)
+    previous = latest.replace(
+        '''                        '"status": "succeeded"' in _current_turn_tool_text
+                        and '"actions":' in _current_turn_tool_text
+''',
+        '''                        "action_plan" in _current_turn_tool_text
+                        and '"status": "succeeded"' in _current_turn_tool_text
+''',
+    )
+
+    assert patch_source(previous) == latest
+
+
 def test_patch_rejects_an_unknown_upstream_shape() -> None:
     try:
         patch_source("def unrelated():\n    pass\n")

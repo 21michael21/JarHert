@@ -47,11 +47,22 @@ _NEW = '''                else:
                 break
 '''
 
+_PREVIOUS_NEW = _NEW.replace(
+    '''                        '"status": "succeeded"' in _current_turn_tool_text
+                        and '"actions":' in _current_turn_tool_text
+''',
+    '''                        "action_plan" in _current_turn_tool_text
+                        and '"status": "succeeded"' in _current_turn_tool_text
+''',
+)
+
 
 def patch_source(source: str) -> str:
     """Return a patched source or fail closed when Hermes changed upstream."""
     if _NEW in source:
         return source
+    if source.count(_PREVIOUS_NEW) == 1:
+        return source.replace(_PREVIOUS_NEW, _NEW, 1)
     if source.count(_OLD) != 1:
         raise RuntimeError("Hermes interrupt receipt patch target was not found exactly once.")
     return source.replace(_OLD, _NEW, 1)
