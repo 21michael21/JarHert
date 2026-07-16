@@ -30,11 +30,11 @@ def test_patch_adds_receipt_only_for_a_completed_current_turn_plan() -> None:
 
     assert '"Готово: подтверждённый план выполнен."' in patched
     assert "_current_turn_tool_text" in patched
-    assert "agent._interrupt_message" in patched
     assert '"status": "succeeded"' in patched
     assert '"actions":' in patched
     assert "_current_turn_normalized_text" in patched
     assert '"action_plan" in _current_turn_tool_text' not in patched
+    assert "if _completed_native_plan:" in patched
     assert patch_source(patched) == patched
 
 
@@ -57,6 +57,27 @@ def test_patch_upgrades_the_previous_receipt_heuristic() -> None:
     assert patch_source(previous) == latest
 
 
+def test_patch_upgrades_the_deployed_callback_guard() -> None:
+    source = '''                else:
+                    final_response = f"{INTERRUPT_WAITING_FOR_MODEL_PREFIX}{api_elapsed:.1f}s elapsed)."
+                agent._persist_session(messages, conversation_history)
+                break
+'''
+    latest = patch_source(source)
+    previous = latest.replace(
+        '''                    # An inline confirmation may look like an interrupt to the
+                    # transport, but the durable action has already happened.
+                    # Deliver its receipt even when the callback set an interrupt
+                    # marker; ordinary interrupted generations still stay hidden.
+                    if _completed_native_plan:
+''',
+        """                    if not agent._interrupt_message and _completed_native_plan:
+""",
+    )
+
+    assert patch_source(previous) == latest
+
+
 def test_patch_upgrades_the_deployed_direct_json_heuristic() -> None:
     source = '''                else:
                     final_response = f"{INTERRUPT_WAITING_FOR_MODEL_PREFIX}{api_elapsed:.1f}s elapsed)."
@@ -65,6 +86,15 @@ def test_patch_upgrades_the_deployed_direct_json_heuristic() -> None:
 '''
     latest = patch_source(source)
     previous = latest.replace(
+        '''                    # An inline confirmation may look like an interrupt to the
+                    # transport, but the durable action has already happened.
+                    # Deliver its receipt even when the callback set an interrupt
+                    # marker; ordinary interrupted generations still stay hidden.
+                    if _completed_native_plan:
+''',
+        """                    if not agent._interrupt_message and _completed_native_plan:
+""",
+    ).replace(
         '''                    _current_turn_normalized_text = _current_turn_tool_text.replace("\\\\", "")
                     _completed_native_plan = (
                         '"status": "succeeded"' in _current_turn_normalized_text

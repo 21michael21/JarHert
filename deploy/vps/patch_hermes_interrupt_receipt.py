@@ -39,7 +39,11 @@ _NEW = '''                else:
                         '"status": "succeeded"' in _current_turn_normalized_text
                         and '"actions":' in _current_turn_normalized_text
                     )
-                    if not agent._interrupt_message and _completed_native_plan:
+                    # An inline confirmation may look like an interrupt to the
+                    # transport, but the durable action has already happened.
+                    # Deliver its receipt even when the callback set an interrupt
+                    # marker; ordinary interrupted generations still stay hidden.
+                    if _completed_native_plan:
                         final_response = "Готово: подтверждённый план выполнен."
                         interrupted = False
                     else:
@@ -48,7 +52,18 @@ _NEW = '''                else:
                 break
 '''
 
-_PREVIOUS_DIRECT_NEW = _NEW.replace(
+_PREVIOUS_NORMALIZED_NEW = _NEW.replace(
+    '''                    # An inline confirmation may look like an interrupt to the
+                    # transport, but the durable action has already happened.
+                    # Deliver its receipt even when the callback set an interrupt
+                    # marker; ordinary interrupted generations still stay hidden.
+                    if _completed_native_plan:
+''',
+    """                    if not agent._interrupt_message and _completed_native_plan:
+""",
+)
+
+_PREVIOUS_DIRECT_NEW = _PREVIOUS_NORMALIZED_NEW.replace(
     '''                    _current_turn_normalized_text = _current_turn_tool_text.replace("\\\\", "")
                     _completed_native_plan = (
                         '"status": "succeeded"' in _current_turn_normalized_text
@@ -76,7 +91,11 @@ def patch_source(source: str) -> str:
     """Return a patched source or fail closed when Hermes changed upstream."""
     if _NEW in source:
         return source
-    for previous in (_PREVIOUS_DIRECT_NEW, _PREVIOUS_ACTION_PLAN_NEW):
+    for previous in (
+        _PREVIOUS_NORMALIZED_NEW,
+        _PREVIOUS_DIRECT_NEW,
+        _PREVIOUS_ACTION_PLAN_NEW,
+    ):
         if source.count(previous) == 1:
             return source.replace(previous, _NEW, 1)
     if source.count(_OLD) != 1:
