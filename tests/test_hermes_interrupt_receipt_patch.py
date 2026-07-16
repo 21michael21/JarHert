@@ -4,7 +4,9 @@ from deploy.vps.patch_hermes_interrupt_receipt import (
     _KNOWN_BRANCHES,
     _OLD_BRANCH,
     _PARTIAL_PREFIX,
+    _PREVIOUS_RECEIPT_PREFIX,
     _RECEIPT_MARKER,
+    _SESSION_BRANCH,
     patch_source,
 )
 
@@ -27,6 +29,13 @@ def test_patch_upgrades_every_known_deployed_branch_shape() -> None:
         patched = patch_source(_PARTIAL_PREFIX + branch)
         assert _RECEIPT_MARKER in patched
         assert "Готово: подтверждённый план выполнен." in patched
+
+
+def test_patch_upgrades_the_first_receipt_revision_to_the_durable_store_check() -> None:
+    patched = patch_source(_PREVIOUS_RECEIPT_PREFIX + _SESSION_BRANCH)
+
+    assert _RECEIPT_MARKER in patched
+    assert "finished_at >= datetime('now', '-45 seconds')" in patched
 
 
 def test_patch_rejects_an_unknown_upstream_shape() -> None:

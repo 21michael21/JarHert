@@ -27,9 +27,10 @@ _PARTIAL_PREFIX = '''                _partial = agent._strip_think_blocks(
                     final_response = _partial
 '''
 
-_RECEIPT_MARKER = "# JarHert durable confirmation receipt."
+_PREVIOUS_RECEIPT_MARKER = "# JarHert durable confirmation receipt."
+_RECEIPT_MARKER = "# JarHert durable confirmation receipt v2."
 
-_RECEIPT_PREFIX = '''                _partial = agent._strip_think_blocks(
+_PREVIOUS_RECEIPT_PREFIX = '''                _partial = agent._strip_think_blocks(
                     getattr(agent, "_current_streamed_assistant_text", "") or ""
                 ).strip()
                 # JarHert durable confirmation receipt. The Codex transport
@@ -63,6 +64,43 @@ _RECEIPT_PREFIX = '''                _partial = agent._strip_think_blocks(
                     messages.append({"role": "assistant", "content": _partial})
                     final_response = _partial
 '''
+
+_RECEIPT_PREFIX = _PREVIOUS_RECEIPT_PREFIX.replace(
+    _PREVIOUS_RECEIPT_MARKER,
+    _RECEIPT_MARKER,
+    1,
+).replace(
+    '''                if _completed_native_plan:
+                    final_response = "Готово: подтверждённый план выполнен."
+''',
+    '''                # The transport may flush the tool result before the
+                # in-memory turn buffers see it. A success recorded moments
+                # ago in JarHert's own plan store is the durable fallback.
+                _recent_succeeded_plan = False
+                try:
+                    import os
+                    import sqlite3
+
+                    _plan_db = os.path.join(
+                        os.environ.get("HERMES_HOME", ""), "data", "personal-os.sqlite3"
+                    )
+                    if _plan_db:
+                        with sqlite3.connect(_plan_db) as _plan_connection:
+                            _recent_succeeded_plan = bool(
+                                _plan_connection.execute(
+                                    "SELECT 1 FROM action_plans "
+                                    "WHERE status = 'succeeded' "
+                                    "AND finished_at >= datetime('now', '-45 seconds') "
+                                    "ORDER BY id DESC LIMIT 1"
+                                ).fetchone()
+                            )
+                except Exception:
+                    pass
+                if _completed_native_plan or _recent_succeeded_plan:
+                    final_response = "Готово: подтверждённый план выполнен."
+''',
+    1,
+)
 
 _SESSION_BRANCH = '''                else:
                     # A fresh user message is a real latest-request-wins interrupt.
@@ -221,6 +259,9 @@ def patch_source(source: str) -> str:
     """Return a patched source, or fail closed for an unknown Hermes revision."""
     if _RECEIPT_MARKER in source:
         return source
+    previous_target = _PREVIOUS_RECEIPT_PREFIX + _SESSION_BRANCH
+    if source.count(previous_target) == 1:
+        return source.replace(previous_target, _RECEIPT_PREFIX + _SESSION_BRANCH, 1)
     for branch in _KNOWN_BRANCHES:
         target = _PARTIAL_PREFIX + branch
         if source.count(target) == 1:
