@@ -45,14 +45,41 @@ _NEW = '''                else:
                     # marker; ordinary interrupted generations still stay hidden.
                     if _completed_native_plan:
                         final_response = "Готово: подтверждённый план выполнен."
-                        interrupted = False
+                        messages.append({"role": "assistant", "content": final_response})
+                        agent._persist_session(messages, conversation_history)
+                        return {
+                            "final_response": final_response,
+                            "messages": messages,
+                            "api_calls": api_call_count,
+                            "completed": True,
+                            "interrupted": False,
+                        }
                     else:
                         final_response = f"{INTERRUPT_WAITING_FOR_MODEL_PREFIX}{api_elapsed:.1f}s elapsed)."
                 agent._persist_session(messages, conversation_history)
                 break
 '''
 
-_PREVIOUS_NORMALIZED_NEW = _NEW.replace(
+_PREVIOUS_RETURNLESS_NEW = _NEW.replace(
+    '''                    if _completed_native_plan:
+                        final_response = "Готово: подтверждённый план выполнен."
+                        messages.append({"role": "assistant", "content": final_response})
+                        agent._persist_session(messages, conversation_history)
+                        return {
+                            "final_response": final_response,
+                            "messages": messages,
+                            "api_calls": api_call_count,
+                            "completed": True,
+                            "interrupted": False,
+                        }
+''',
+    '''                    if _completed_native_plan:
+                        final_response = "Готово: подтверждённый план выполнен."
+                        interrupted = False
+''',
+)
+
+_PREVIOUS_NORMALIZED_NEW = _PREVIOUS_RETURNLESS_NEW.replace(
     '''                    # An inline confirmation may look like an interrupt to the
                     # transport, but the durable action has already happened.
                     # Deliver its receipt even when the callback set an interrupt
@@ -92,6 +119,7 @@ def patch_source(source: str) -> str:
     if _NEW in source:
         return source
     for previous in (
+        _PREVIOUS_RETURNLESS_NEW,
         _PREVIOUS_NORMALIZED_NEW,
         _PREVIOUS_DIRECT_NEW,
         _PREVIOUS_ACTION_PLAN_NEW,

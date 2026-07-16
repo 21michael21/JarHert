@@ -35,6 +35,8 @@ def test_patch_adds_receipt_only_for_a_completed_current_turn_plan() -> None:
     assert "_current_turn_normalized_text" in patched
     assert '"action_plan" in _current_turn_tool_text' not in patched
     assert "if _completed_native_plan:" in patched
+    assert '"completed": True' in patched
+    assert "agent._persist_session(messages, conversation_history)" in patched
     assert patch_source(patched) == patched
 
 
@@ -65,6 +67,23 @@ def test_patch_upgrades_the_deployed_callback_guard() -> None:
 '''
     latest = patch_source(source)
     previous = latest.replace(
+        '''                    if _completed_native_plan:
+                        final_response = "Готово: подтверждённый план выполнен."
+                        messages.append({"role": "assistant", "content": final_response})
+                        agent._persist_session(messages, conversation_history)
+                        return {
+                            "final_response": final_response,
+                            "messages": messages,
+                            "api_calls": api_call_count,
+                            "completed": True,
+                            "interrupted": False,
+                        }
+''',
+        '''                    if _completed_native_plan:
+                        final_response = "Готово: подтверждённый план выполнен."
+                        interrupted = False
+''',
+    ).replace(
         '''                    # An inline confirmation may look like an interrupt to the
                     # transport, but the durable action has already happened.
                     # Deliver its receipt even when the callback set an interrupt
@@ -78,6 +97,35 @@ def test_patch_upgrades_the_deployed_callback_guard() -> None:
     assert patch_source(previous) == latest
 
 
+def test_patch_upgrades_the_deployed_returnless_receipt() -> None:
+    source = '''                else:
+                    final_response = f"{INTERRUPT_WAITING_FOR_MODEL_PREFIX}{api_elapsed:.1f}s elapsed)."
+                agent._persist_session(messages, conversation_history)
+                break
+'''
+    latest = patch_source(source)
+    previous = latest.replace(
+        '''                    if _completed_native_plan:
+                        final_response = "Готово: подтверждённый план выполнен."
+                        messages.append({"role": "assistant", "content": final_response})
+                        agent._persist_session(messages, conversation_history)
+                        return {
+                            "final_response": final_response,
+                            "messages": messages,
+                            "api_calls": api_call_count,
+                            "completed": True,
+                            "interrupted": False,
+                        }
+''',
+        '''                    if _completed_native_plan:
+                        final_response = "Готово: подтверждённый план выполнен."
+                        interrupted = False
+''',
+    )
+
+    assert patch_source(previous) == latest
+
+
 def test_patch_upgrades_the_deployed_direct_json_heuristic() -> None:
     source = '''                else:
                     final_response = f"{INTERRUPT_WAITING_FOR_MODEL_PREFIX}{api_elapsed:.1f}s elapsed)."
@@ -86,6 +134,23 @@ def test_patch_upgrades_the_deployed_direct_json_heuristic() -> None:
 '''
     latest = patch_source(source)
     previous = latest.replace(
+        '''                    if _completed_native_plan:
+                        final_response = "Готово: подтверждённый план выполнен."
+                        messages.append({"role": "assistant", "content": final_response})
+                        agent._persist_session(messages, conversation_history)
+                        return {
+                            "final_response": final_response,
+                            "messages": messages,
+                            "api_calls": api_call_count,
+                            "completed": True,
+                            "interrupted": False,
+                        }
+''',
+        '''                    if _completed_native_plan:
+                        final_response = "Готово: подтверждённый план выполнен."
+                        interrupted = False
+''',
+    ).replace(
         '''                    # An inline confirmation may look like an interrupt to the
                     # transport, but the durable action has already happened.
                     # Deliver its receipt even when the callback set an interrupt
