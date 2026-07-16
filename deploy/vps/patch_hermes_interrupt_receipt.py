@@ -35,8 +35,8 @@ _NEW = '''                else:
                         _current_turn_tool_messages, ensure_ascii=False, default=str
                     )
                     _completed_native_plan = (
-                        "action_plan" in _current_turn_tool_text
-                        and '"status": "succeeded"' in _current_turn_tool_text
+                        '"status": "succeeded"' in _current_turn_tool_text
+                        and '"actions":' in _current_turn_tool_text
                     )
                     if not agent._interrupt_message and _completed_native_plan:
                         final_response = "Готово: подтверждённый план выполнен."
