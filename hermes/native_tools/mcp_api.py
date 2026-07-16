@@ -12,6 +12,7 @@ from .action_plans import ActionPlan, ActionPlanStore, execute_plan
 from .capabilities import CapabilityPolicyStore
 from .coding_jobs import NativeCodingJobStore
 from .contacts import ContactStore, MessagePlan
+from .delivery import HermesTelegramSender
 from .github_public import FetchJson as GitHubPublicFetchJson
 from .github_public import GitHubPublicReader
 from .knowledge_archive import FetchBytes as KnowledgeFetchBytes
@@ -44,6 +45,7 @@ Exporter = Callable[..., ExportResult]
 FileDownloader = Callable[..., FileDownloadResult]
 Confirmer = Callable[[str], Awaitable[bool]]
 SubscriptionSync = Callable[[list[dict[str, Any]]], None]
+PlanReceiptSender = Callable[[int, str], str | None]
 logger = logging.getLogger(__name__)
 
 
@@ -66,6 +68,7 @@ class NativeToolsAPI:
         subscription_sync: SubscriptionSync | None = None,
         knowledge_fetcher: KnowledgeFetchBytes | None = None,
         github_public_fetcher: GitHubPublicFetchJson | None = None,
+        plan_receipt_sender: PlanReceiptSender | None = None,
     ) -> None:
         self.database_path = Path(database_path or personal_os_database_path()).expanduser()
         self.adapter_factory = adapter_factory
@@ -76,6 +79,7 @@ class NativeToolsAPI:
         self.subscription_sync = subscription_sync if subscription_sync is not None else subscription_sync_from_env()
         self.knowledge_fetcher = knowledge_fetcher
         self.github_public_fetcher = github_public_fetcher
+        self.plan_receipt_sender = plan_receipt_sender
 
     def integration_health(self) -> dict[str, bool]:
         self._capabilities().require("integration.health")
@@ -909,7 +913,29 @@ class NativeToolsAPI:
             if not await confirmer(_plan_preview(plan)):
                 return _plan_payload(store.cancel(plan.id))
             store.approve(plan.id)
-        return _plan_payload(execute_plan(store, plan.id, self._action_adapter()))
+        completed = execute_plan(store, plan.id, self._action_adapter())
+        await self._deliver_plan_receipt(completed)
+        return _plan_payload(completed)
+
+    async def _deliver_plan_receipt(self, plan: ActionPlan) -> None:
+        """Send one durable success receipt when Telegram transport drops the tool turn."""
+        enabled = os.getenv("HERMES_ACTION_PLAN_RECEIPT_DELIVERY", "true").strip().casefold()
+        if enabled not in {"1", "true", "yes", "on"} or plan.status != "succeeded":
+            return
+        try:
+            chat_id = int(os.getenv("HERMES_OWNER_TELEGRAM_CHAT_ID", "0") or 0)
+        except ValueError:
+            return
+        if chat_id <= 0:
+            return
+        sender = self.plan_receipt_sender or HermesTelegramSender()
+        summary = f"Готово: план #{plan.id} выполнен."
+        try:
+            await asyncio.to_thread(sender, chat_id, summary)
+        except Exception as error:
+            # The plan has already completed durably. A gateway final response
+            # may still arrive, so a receipt delivery failure must not undo it.
+            logger.warning("Could not deliver action-plan receipt %s: %s", plan.id, error)
 
     async def action_plan_dag_confirm_execute(
         self,

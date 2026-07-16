@@ -66,6 +66,40 @@ def test_native_api_plan_round_trip_and_health_redaction(tmp_path: Path) -> None
     assert previews == ["1. task.create: MCP canary"]
 
 
+def test_confirmed_plan_delivers_one_owner_receipt_without_replaying_side_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HERMES_OWNER_TELEGRAM_CHAT_ID", "566055009")
+    monkeypatch.setenv("HERMES_ACTION_PLAN_RECEIPT_DELIVERY", "true")
+    delivered: list[tuple[int, str]] = []
+    api = NativeToolsAPI(
+        database_path=tmp_path / "personal.sqlite3",
+        adapter_factory=FakeAdapter,
+        plan_receipt_sender=lambda chat_id, text: delivered.append((chat_id, text)) or "telegram:1",
+    )
+
+    async def confirm(_preview: str) -> bool:
+        return True
+
+    first = asyncio.run(
+        api.action_plan_confirm_execute(
+            actions=[{"type": "task.create", "payload": {"title": "One receipt"}}],
+            idempotency_key="telegram-update-receipt-1",
+            confirmer=confirm,
+        )
+    )
+    replay = asyncio.run(
+        api.action_plan_confirm_execute(
+            actions=[{"type": "task.create", "payload": {"title": "One receipt"}}],
+            idempotency_key="telegram-update-receipt-1",
+            confirmer=confirm,
+        )
+    )
+
+    assert first["status"] == replay["status"] == "succeeded"
+    assert delivered == [(566055009, f"Готово: план #{first['id']} выполнен.")]
+
+
 def test_native_api_exposes_compact_plan_trace_and_tool_discovery(tmp_path: Path) -> None:
     api = NativeToolsAPI(database_path=tmp_path / "personal.sqlite3", adapter_factory=FakeAdapter)
     plan = api.action_plan_create(

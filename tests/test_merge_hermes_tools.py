@@ -30,6 +30,7 @@ def test_merge_adds_managed_native_env_without_touching_live_model(tmp_path: Pat
     source.write_text(
         "model:\n  provider: openai-api\nmcp_servers:\n  jarhert_native:\n    env:\n"
         "      HERMES_NATIVE_SEND_COMMAND: \"${HERMES_NATIVE_SEND_COMMAND}\"\n"
+        "      HERMES_ACTION_PLAN_RECEIPT_DELIVERY: \"${HERMES_ACTION_PLAN_RECEIPT_DELIVERY}\"\n"
         "      HERMES_OWNER_TELEGRAM_CHAT_ID: \"${HERMES_OWNER_TELEGRAM_CHAT_ID}\"\n"
         "    tools:\n      include:\n        - integration_health\n",
         encoding="utf-8",
@@ -42,11 +43,13 @@ def test_merge_adds_managed_native_env_without_touching_live_model(tmp_path: Pat
 
     assert merge_profile_config(source, target) == [
         "env:HERMES_NATIVE_SEND_COMMAND",
+        "env:HERMES_ACTION_PLAN_RECEIPT_DELIVERY",
         "env:HERMES_OWNER_TELEGRAM_CHAT_ID",
     ]
     updated = target.read_text(encoding="utf-8")
     assert "provider: openai-codex" in updated
     assert "HERMES_NATIVE_SEND_COMMAND: \"${HERMES_NATIVE_SEND_COMMAND}\"" in updated
+    assert "HERMES_ACTION_PLAN_RECEIPT_DELIVERY: \"${HERMES_ACTION_PLAN_RECEIPT_DELIVERY}\"" in updated
     assert "HERMES_OWNER_TELEGRAM_CHAT_ID: \"${HERMES_OWNER_TELEGRAM_CHAT_ID}\"" in updated
 
 
