@@ -116,7 +116,7 @@ def test_merge_adds_telegram_final_answer_display_defaults_without_touching_mode
     source.write_text(
         "model:\n  provider: openai-api\n"
         "display:\n"
-        "  busy_input_mode: interrupt\n"
+        "  busy_input_mode: queue\n"
         "  busy_ack_enabled: false\n"
         "  platforms:\n"
         "    telegram:\n"
@@ -132,7 +132,7 @@ def test_merge_adds_telegram_final_answer_display_defaults_without_touching_mode
     updated = target.read_text(encoding="utf-8")
     assert "provider: openai-codex" in updated
     assert "default: gpt-5.4-mini" in updated
-    assert "busy_input_mode: interrupt" in updated
+    assert "busy_input_mode: queue" in updated
     assert "interim_assistant_messages: false" in updated
 
 
@@ -146,14 +146,14 @@ def test_merge_keeps_existing_live_display_choices(tmp_path: Path) -> None:
     assert target.read_text(encoding="utf-8") == "display:\n  busy_ack_enabled: true\n"
 
 
-def test_merge_migrates_only_the_legacy_queue_mode_to_latest_request_wins(tmp_path: Path) -> None:
+def test_merge_migrates_only_the_shipped_interrupt_mode_to_callback_safe_queue(tmp_path: Path) -> None:
     source = tmp_path / "source.yaml"
     target = tmp_path / "target.yaml"
-    source.write_text("display:\n  busy_input_mode: interrupt\n", encoding="utf-8")
-    target.write_text("display:\n  busy_input_mode: queue\n", encoding="utf-8")
+    source.write_text("display:\n  busy_input_mode: queue\n", encoding="utf-8")
+    target.write_text("display:\n  busy_input_mode: interrupt\n", encoding="utf-8")
 
     assert merge_profile_config(source, target) == ["display.busy_input_mode"]
-    assert target.read_text(encoding="utf-8") == "display:\n  busy_input_mode: interrupt\n"
+    assert target.read_text(encoding="utf-8") == "display:\n  busy_input_mode: queue\n"
 
     target.write_text("display:\n  busy_input_mode: steer\n", encoding="utf-8")
     assert merge_profile_config(source, target) == []

@@ -59,10 +59,10 @@ def merge_profile_config(source: Path, target: Path) -> list[str]:
         separator = "" if not target_lines or target_lines[-1].endswith("\n\n") else "\n"
         target.write_text("".join(target_lines) + separator + "".join(display_block), encoding="utf-8")
         merged.append("display")
-    elif _migrate_legacy_busy_input_mode(source, target):
-        # JarHert previously shipped queue mode, which lets stale Telegram
-        # requests finish after the user has changed their mind. Migrate only
-        # that historical value; steer/interrupt remain an explicit live choice.
+    elif _migrate_interrupt_mode_to_callback_safe_queue(source, target):
+        # The earlier interrupt baseline could cancel an already-confirmed MCP
+        # plan when its Telegram inline callback arrived. Migrate that shipped
+        # value once; a live steer choice remains an explicit owner preference.
         merged.append("display.busy_input_mode")
     if merge_top_level_scalar(source, target, key="context_file_max_chars"):
         merged.append("context_file_max_chars")
@@ -234,19 +234,19 @@ def _top_level_block(lines: list[str], key: str) -> list[str] | None:
     return lines[start:] if start is not None else None
 
 
-def _migrate_legacy_busy_input_mode(source: Path, target: Path) -> bool:
+def _migrate_interrupt_mode_to_callback_safe_queue(source: Path, target: Path) -> bool:
     source_lines = source.read_text(encoding="utf-8").splitlines(keepends=True)
     target_lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
     source_block = _top_level_block(source_lines, "display") or []
-    if not any(re.match(r"^\s*busy_input_mode:\s*interrupt\s*$", line.rstrip()) for line in source_block):
+    if not any(re.match(r"^\s*busy_input_mode:\s*queue\s*$", line.rstrip()) for line in source_block):
         return False
     target_block = _top_level_block(target_lines, "display")
     if target_block is None:
         return False
     for index, line in enumerate(target_lines):
-        match = re.match(r"^(\s*busy_input_mode:\s*)queue(\s*(?:#.*)?\n?)$", line)
+        match = re.match(r"^(\s*busy_input_mode:\s*)interrupt(\s*(?:#.*)?\n?)$", line)
         if match:
-            target_lines[index] = f"{match.group(1)}interrupt{match.group(2)}"
+            target_lines[index] = f"{match.group(1)}queue{match.group(2)}"
             target.write_text("".join(target_lines), encoding="utf-8")
             return True
     return False

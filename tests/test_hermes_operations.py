@@ -135,7 +135,7 @@ def test_gateway_stop_timeout_override_is_bounded() -> None:
 def test_versioned_telegram_profile_is_quiet_and_final_answer_first() -> None:
     config = (Path(__file__).resolve().parents[1] / "hermes" / "config.yaml").read_text(encoding="utf-8")
 
-    assert "busy_input_mode: interrupt" in config
+    assert "busy_input_mode: queue" in config
     assert "busy_ack_enabled: false" in config
     assert "interim_assistant_messages: false" in config
     assert "long_running_notifications: false" in config

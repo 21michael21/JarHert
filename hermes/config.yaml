@@ -22,8 +22,13 @@ compression:
 # Telegram is a personal inbox. Keep only the useful final response and a
 # single approval prompt: no generated "Working", mid-turn commentary, or
 # status breadcrumbs that read like broken duplicate replies on a phone.
+#
+# Queue a new message while an approval is resolving. In interrupt mode an
+# inline confirmation can cancel its own already-approved MCP plan before the
+# final receipt reaches Telegram. The queued message is still processed as the
+# next turn; it is never discarded.
 display:
-  busy_input_mode: interrupt
+  busy_input_mode: queue
   busy_ack_enabled: false
   platforms:
     telegram:
