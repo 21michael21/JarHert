@@ -10,6 +10,7 @@ from scripts.live_hermes_e2e import (
     cleanup_temporary_calendar_event,
     cleanup_temporary_task,
     is_transient_confirmation_ack,
+    is_transient_confirmation_update,
     isolated_telethon_session,
     recent_inbound_messages,
     require_live_approval,
@@ -69,6 +70,16 @@ def test_live_runner_does_not_treat_telegram_callback_acknowledgement_as_a_tool_
     assert is_transient_confirmation_ack(completed) is False
 
 
+def test_live_runner_ignores_progress_updates_until_the_tool_has_finished() -> None:
+    progress = Message("⏳ Working — выполняю задачу", [], id=43)
+    accepted = Message("Принял, обрабатываю.", [], id=44)
+    completed = Message("Готово: задача создана.", [], id=45)
+
+    assert is_transient_confirmation_update(progress) is True
+    assert is_transient_confirmation_update(accepted) is True
+    assert is_transient_confirmation_update(completed) is False
+
+
 def test_isolated_telethon_session_uses_a_disposable_sqlite_snapshot(tmp_path) -> None:
     source = tmp_path / "owner.session"
     with sqlite3.connect(source) as connection:
@@ -100,6 +111,37 @@ def test_confirmation_result_accepts_an_edited_approval_message() -> None:
 
     result = asyncio.run(wait_confirmation_result(Client(), "bot", approval, "Выполнить", timeout=1))
     assert result is edited
+
+
+def test_confirmation_result_waits_for_the_verified_side_effect() -> None:
+    approval = Message("Выполнить этот план?", [[Button("Выполнить")]], id=42)
+    completed = Message("Готово: задача создана.", [], id=43)
+    checks = 0
+
+    class Client:
+        async def get_messages(self, entity, ids=None, limit=None):
+            if ids is not None:
+                return approval
+            return [completed]
+
+    def side_effect_completed() -> bool:
+        nonlocal checks
+        checks += 1
+        return checks > 1
+
+    result = asyncio.run(
+        wait_confirmation_result(
+            Client(),
+            "bot",
+            approval,
+            "Выполнить",
+            timeout=2,
+            completion=side_effect_completed,
+        )
+    )
+
+    assert result is completed
+    assert checks >= 2
 
 
 def test_recent_messages_times_out_without_hanging_the_runner() -> None:

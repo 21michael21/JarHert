@@ -119,7 +119,15 @@ async def wait_message(client, entity, *, after_id: int, predicate: Callable[[An
     raise TimeoutError("Telegram response timeout")
 
 
-async def wait_confirmation_result(client, entity, approval, approval_text: str, timeout: int):
+async def wait_confirmation_result(
+    client,
+    entity,
+    approval,
+    approval_text: str,
+    timeout: int,
+    *,
+    completion: Callable[[], bool] | None = None,
+):
     """Telegram callbacks may edit the approval message or send a new result."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -130,17 +138,20 @@ async def wait_confirmation_result(client, entity, approval, approval_text: str,
             )
         except TimeoutError:
             updated = None
+        completed = completion is None or completion()
         if (
-            updated is not None
+            completed
+            and updated is not None
             and approval_button(updated, approval_text) is None
-            and not is_transient_confirmation_ack(updated)
+            and not is_transient_confirmation_update(updated)
         ):
             return updated
         for message in await recent_inbound_messages(client, entity, timeout=min(10.0, remaining)):
             if (
-                int(message.id) > int(approval.id)
+                completed
+                and int(message.id) > int(approval.id)
                 and approval_button(message, approval_text) is None
-                and not is_transient_confirmation_ack(message)
+                and not is_transient_confirmation_update(message)
             ):
                 return message
         await asyncio.sleep(1)
@@ -192,6 +203,23 @@ def is_transient_confirmation_ack(message) -> bool:
     return text.startswith(("✅ approved once", "approved once", "подтверждение принято"))
 
 
+def is_transient_confirmation_update(message) -> bool:
+    """Ignore acknowledgements and progress bubbles until the action has a final result."""
+    if is_transient_confirmation_ack(message):
+        return True
+    text = str(message.message or "").strip().casefold()
+    return text.startswith(
+        (
+            "⏳",
+            "working",
+            "принял, обрабатываю",
+            "принял, выполняю",
+            "обрабатываю",
+            "выполняю",
+        )
+    )
+
+
 async def send_plain(client, entity, text: str, timeout: int, *, marker: str) -> tuple[Any, int]:
     started = time.perf_counter()
     sent = await client.send_message(entity, text)
@@ -215,6 +243,7 @@ async def send_confirmed(
     *,
     approval_text: str = "Выполнить",
     marker: str,
+    completion: Callable[[], bool] | None = None,
 ) -> tuple[Any, int]:
     started = time.perf_counter()
     sent = await client.send_message(entity, text)
@@ -227,7 +256,14 @@ async def send_confirmed(
         timeout=timeout,
     )
     await approval.click(text=approval_button(approval, approval_text))
-    result = await wait_confirmation_result(client, entity, approval, approval_text, timeout)
+    result = await wait_confirmation_result(
+        client,
+        entity,
+        approval,
+        approval_text,
+        timeout,
+        completion=completion,
+    )
     if has_bad_reply(result):
         raise RuntimeError("Confirmed action returned blocked reply")
     return result, int((time.perf_counter() - started) * 1000)
@@ -268,6 +304,7 @@ async def run(args, steps: list[Step]) -> None:
                 f"Создай в Trello задачу «{task_title}» в списке Today",
                 args.timeout,
                 marker=run_id,
+                completion=lambda: task_present(task_adapter, task_title),
             )
             if not task_present(task_adapter, task_title):
                 raise RuntimeError("Trello task was not found after the confirmed Telegram action")
@@ -278,6 +315,7 @@ async def run(args, steps: list[Step]) -> None:
                 f"Удали из Trello задачу «{task_title}»",
                 args.timeout,
                 marker=run_id,
+                completion=lambda: not task_present(task_adapter, task_title),
             )
             if task_present(task_adapter, task_title):
                 raise RuntimeError("Trello task still exists after the confirmed delete action")
