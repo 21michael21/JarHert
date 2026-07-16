@@ -33,6 +33,7 @@ def test_patch_adds_receipt_only_for_a_completed_current_turn_plan() -> None:
     assert "agent._interrupt_message" in patched
     assert '"status": "succeeded"' in patched
     assert '"actions":' in patched
+    assert "_current_turn_normalized_text" in patched
     assert '"action_plan" in _current_turn_tool_text' not in patched
     assert patch_source(patched) == patched
 
@@ -50,6 +51,30 @@ def test_patch_upgrades_the_previous_receipt_heuristic() -> None:
 ''',
         '''                        "action_plan" in _current_turn_tool_text
                         and '"status": "succeeded"' in _current_turn_tool_text
+''',
+    )
+
+    assert patch_source(previous) == latest
+
+
+def test_patch_upgrades_the_deployed_direct_json_heuristic() -> None:
+    source = '''                else:
+                    final_response = f"{INTERRUPT_WAITING_FOR_MODEL_PREFIX}{api_elapsed:.1f}s elapsed)."
+                agent._persist_session(messages, conversation_history)
+                break
+'''
+    latest = patch_source(source)
+    previous = latest.replace(
+        '''                    _current_turn_normalized_text = _current_turn_tool_text.replace("\\\\", "")
+                    _completed_native_plan = (
+                        '"status": "succeeded"' in _current_turn_normalized_text
+                        and '"actions":' in _current_turn_normalized_text
+                    )
+''',
+        '''                    _completed_native_plan = (
+                        '"status": "succeeded"' in _current_turn_tool_text
+                        and '"actions":' in _current_turn_tool_text
+                    )
 ''',
     )
 

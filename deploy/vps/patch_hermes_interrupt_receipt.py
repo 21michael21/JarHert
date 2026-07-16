@@ -34,9 +34,10 @@ _NEW = '''                else:
                     _current_turn_tool_text = json.dumps(
                         _current_turn_tool_messages, ensure_ascii=False, default=str
                     )
+                    _current_turn_normalized_text = _current_turn_tool_text.replace("\\\\", "")
                     _completed_native_plan = (
-                        '"status": "succeeded"' in _current_turn_tool_text
-                        and '"actions":' in _current_turn_tool_text
+                        '"status": "succeeded"' in _current_turn_normalized_text
+                        and '"actions":' in _current_turn_normalized_text
                     )
                     if not agent._interrupt_message and _completed_native_plan:
                         final_response = "Готово: подтверждённый план выполнен."
@@ -47,7 +48,21 @@ _NEW = '''                else:
                 break
 '''
 
-_PREVIOUS_NEW = _NEW.replace(
+_PREVIOUS_DIRECT_NEW = _NEW.replace(
+    '''                    _current_turn_normalized_text = _current_turn_tool_text.replace("\\\\", "")
+                    _completed_native_plan = (
+                        '"status": "succeeded"' in _current_turn_normalized_text
+                        and '"actions":' in _current_turn_normalized_text
+                    )
+''',
+    '''                    _completed_native_plan = (
+                        '"status": "succeeded"' in _current_turn_tool_text
+                        and '"actions":' in _current_turn_tool_text
+                    )
+''',
+)
+
+_PREVIOUS_ACTION_PLAN_NEW = _PREVIOUS_DIRECT_NEW.replace(
     '''                        '"status": "succeeded"' in _current_turn_tool_text
                         and '"actions":' in _current_turn_tool_text
 ''',
@@ -61,8 +76,9 @@ def patch_source(source: str) -> str:
     """Return a patched source or fail closed when Hermes changed upstream."""
     if _NEW in source:
         return source
-    if source.count(_PREVIOUS_NEW) == 1:
-        return source.replace(_PREVIOUS_NEW, _NEW, 1)
+    for previous in (_PREVIOUS_DIRECT_NEW, _PREVIOUS_ACTION_PLAN_NEW):
+        if source.count(previous) == 1:
+            return source.replace(previous, _NEW, 1)
     if source.count(_OLD) != 1:
         raise RuntimeError("Hermes interrupt receipt patch target was not found exactly once.")
     return source.replace(_OLD, _NEW, 1)
