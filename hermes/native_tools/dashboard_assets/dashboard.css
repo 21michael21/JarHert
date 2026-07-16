@@ -173,6 +173,14 @@ textarea { resize: vertical; }
 .preview-list { border-top: 1px solid var(--line); }
 .preview-row { border-bottom: 1px solid var(--line); padding: 11px 0; }
 .report-content { max-height: 50vh; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.architecture-sheet { gap: 16px; }
+.architecture-flow { display: grid; border-top: 1px solid var(--line); }
+.architecture-step { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 11px; border-bottom: 1px solid var(--line); padding: 13px 0; }
+.architecture-step > span { display: grid; width: 24px; height: 24px; place-items: center; border: 1px solid color-mix(in srgb, var(--accent) 46%, var(--line)); border-radius: 50%; color: var(--accent); font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.architecture-step > div { min-width: 0; }
+.architecture-step strong { display: block; line-height: 1.3; }
+.architecture-step p, .architecture-note p { margin: 3px 0 0; color: var(--muted); font-size: 14px; line-height: 1.45; }
+.architecture-note { border-left: 2px solid var(--accent); padding: 2px 0 2px 12px; }
 
 @media (prefers-reduced-motion: no-preference) {
   button, .overview-tile { transition: transform var(--motion-fast) var(--ease), opacity var(--motion-fast) ease, background var(--motion-fast) ease, border-color var(--motion-fast) ease; }

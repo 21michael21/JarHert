@@ -546,6 +546,7 @@ function init() {
   $("task-menu-open").addEventListener("click", () => { const task = state.taskMenu; closeTaskMenu(); if (task?.url) openExternal(task.url); });
   $("note-search").addEventListener("input", (event) => scheduleNoteSearch(event.target.value));
   $("knowledge-add").addEventListener("click", openKnowledgeClip); $("clip-form").addEventListener("submit", previewKnowledgeClip); $("clip-execute").addEventListener("click", executeKnowledgeClip); $("clip-cancel").addEventListener("click", () => $("clip-dialog").close());
+  $("architecture-open").addEventListener("click", () => $("architecture-dialog").showModal());
   $("open-trello").addEventListener("click", () => openExternal(state.tasks.board_url || "https://trello.com/")); $("open-calendar").addEventListener("click", () => openExternal("https://calendar.google.com/"));
   window.addEventListener("hashchange", () => setView(window.location.hash.slice(1), {syncHistory: false}));
   if (VIEWS.has(window.location.hash.slice(1))) state.activeView = window.location.hash.slice(1);

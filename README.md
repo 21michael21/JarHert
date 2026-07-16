@@ -5,6 +5,8 @@ owns the Telegram conversation, memory, cron, skills and sandbox. JarHert adds
 a small Personal OS: notes, projects, contacts, reminders, monitors, a private
 coding queue and narrow adapters for Trello and Google Calendar.
 
+The detailed Russian runtime map is in [docs/system-map.md](docs/system-map.md).
+
 The profile has one production runtime and one Personal OS SQLite database.
 There is no second Telegram service, public queue API or application database.
 

@@ -117,6 +117,7 @@ def test_profile_sync_script_preserves_runtime_state_and_live_config() -> None:
     assert "printf 'HERMES_NATIVE_SEND_COMMAND=%q" not in script
     assert "tools disable --platform telegram" in script
     assert "restart hermes-dashboard-jarhert.service" in script
+    assert "patch_hermes_telegram_approval.py" in script
     assert "terminal file code_execution browser computer_use delegation cronjob" in script
     assert 'pip install --editable "$HERMES_SOURCE_DIR[mcp]"' in script
     assert '"$HERMES_SOURCE_DIR[mcp]"' in script
@@ -142,3 +143,11 @@ def test_versioned_telegram_profile_is_quiet_and_final_answer_first() -> None:
     assert "interim_assistant_messages: false" in config
     assert "long_running_notifications: false" in config
     assert "cleanup_progress: true" in config
+
+
+def test_soul_requires_compact_russian_result_formats() -> None:
+    soul = (Path(__file__).resolve().parents[1] / "hermes" / "SOUL.md").read_text(encoding="utf-8")
+
+    assert "## Формат ответа" in soul
+    assert "**Итог**" in soul
+    assert "**Что дальше**" in soul
