@@ -119,6 +119,21 @@ _PREVIOUS_BRANCH = _SESSION_BRANCH.replace(
 )
 
 _DEBUG_SESSION_BRANCH = _SESSION_BRANCH.replace(
+    "# a native action plan has already completed. Keep that result",
+    "# a native action plan has already completed.  Keep that result",
+).replace(
+    '''                    _current_turn_tool_messages = []
+                    for _turn_messages in (messages, getattr(agent, "_session_messages", [])):
+''',
+    '''                    _current_turn_tool_messages = []
+                    # A Codex transport interruption can arrive after the
+                    # tool result is flushed from ``messages`` into the
+                    # agent's in-memory session. Inspect only the tail after
+                    # the latest user message in either current-turn view;
+                    # old completed plans must not create a new receipt.
+                    for _turn_messages in (messages, getattr(agent, "_session_messages", [])):
+''',
+).replace(
     '''                    _completed_native_plan = (
                         '"status": "succeeded"' in _current_turn_normalized_text
                         and '"actions":' in _current_turn_normalized_text
