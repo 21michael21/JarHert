@@ -30,6 +30,7 @@ def test_patch_adds_receipt_only_for_a_completed_current_turn_plan() -> None:
 
     assert '"Готово: подтверждённый план выполнен."' in patched
     assert "_current_turn_tool_text" in patched
+    assert 'getattr(agent, "_session_messages", [])' in patched
     assert '"status": "succeeded"' in patched
     assert '"actions":' in patched
     assert "_current_turn_normalized_text" in patched
