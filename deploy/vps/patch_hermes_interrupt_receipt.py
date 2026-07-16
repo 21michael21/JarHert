@@ -118,6 +118,32 @@ _PREVIOUS_BRANCH = _SESSION_BRANCH.replace(
 ''',
 )
 
+_DEBUG_SESSION_BRANCH = _SESSION_BRANCH.replace(
+    '''                    _completed_native_plan = (
+                        '"status": "succeeded"' in _current_turn_normalized_text
+                        and '"actions":' in _current_turn_normalized_text
+                    )
+                    if _completed_native_plan:
+''',
+    '''                    _completed_native_plan = (
+                        '"status": "succeeded"' in _current_turn_normalized_text
+                        and '"actions":' in _current_turn_normalized_text
+                    )
+                    logger.warning(
+                        "JarHert receipt probe: current=%d session=%d status=%s actions=%s",
+                        len(messages or []),
+                        len(getattr(agent, "_session_messages", []) or []),
+                        '"status": "succeeded"' in _current_turn_normalized_text,
+                        '"actions":' in _current_turn_normalized_text,
+                    )
+                    # An inline confirmation may look like an interrupt to the
+                    # transport, but the durable action has already happened.
+                    # Deliver its receipt even when the callback set an interrupt
+                    # marker; ordinary interrupted generations still stay hidden.
+                    if _completed_native_plan:
+''',
+)
+
 
 def _legacy_variants(branch: str) -> tuple[str, ...]:
     """Return exact older receipt branches that were shipped during recovery."""
@@ -168,7 +194,12 @@ def _legacy_variants(branch: str) -> tuple[str, ...]:
     return branch, returnless, guarded, direct, action_plan
 
 
-_KNOWN_BRANCHES = (_OLD_BRANCH, *_legacy_variants(_PREVIOUS_BRANCH), *_legacy_variants(_SESSION_BRANCH))
+_KNOWN_BRANCHES = (
+    _OLD_BRANCH,
+    *_legacy_variants(_PREVIOUS_BRANCH),
+    *_legacy_variants(_SESSION_BRANCH),
+    *_legacy_variants(_DEBUG_SESSION_BRANCH),
+)
 
 
 def patch_source(source: str) -> str:
