@@ -148,6 +148,12 @@ def _coding_queue_status(database: Path) -> dict[str, int | bool | str | None]:
             pending = connection.execute(
                 "SELECT COUNT(*) FROM native_coding_jobs WHERE delivery_status IN ('pending', 'delivering')"
             ).fetchone()
+            unresolved_failed = connection.execute(
+                """
+                SELECT COUNT(*) FROM native_coding_jobs
+                WHERE status = 'failed' AND COALESCE(delivery_status, 'pending') != 'delivered'
+                """
+            ).fetchone()
             columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(native_coding_jobs)")}
             heartbeat = (
                 connection.execute("SELECT MAX(heartbeat_at) FROM native_coding_jobs WHERE heartbeat_at IS NOT NULL").fetchone()
@@ -157,8 +163,10 @@ def _coding_queue_status(database: Path) -> dict[str, int | bool | str | None]:
     except (OSError, sqlite3.Error):
         return result
     result["available"] = True
-    for status in ("queued", "running", "failed"):
+    for status in ("queued", "running"):
         result[status] = int(statuses.get(status, 0))
+    # A delivered failure stays in the job history but is not a live runner incident.
+    result["failed"] = int(unresolved_failed[0]) if unresolved_failed else 0
     result["delivery_pending"] = int(pending[0]) if pending else 0
     result["last_heartbeat_at"] = str(heartbeat[0]) if heartbeat and heartbeat[0] else None
     result["worker_state"] = (

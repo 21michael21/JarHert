@@ -44,6 +44,7 @@ def test_system_status_reports_operational_facts_without_personal_content(tmp_pa
             INSERT INTO native_coding_jobs VALUES ('queued', 'pending');
             INSERT INTO native_coding_jobs VALUES ('running', 'delivered');
             INSERT INTO native_coding_jobs VALUES ('failed', 'pending');
+            INSERT INTO native_coding_jobs VALUES ('failed', 'delivered');
             CREATE TABLE personal_summary_deliveries (
                 id INTEGER PRIMARY KEY, summary_type TEXT, status TEXT, updated_at TEXT
             );
