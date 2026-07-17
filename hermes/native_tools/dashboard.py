@@ -30,6 +30,13 @@ CLIP_TOKEN_SECONDS = 15 * 60
 CODING_TOKEN_SECONDS = 15 * 60
 
 
+def _asset_version() -> str:
+    digest = hashlib.sha256()
+    for asset_name in ("dashboard.css", "dashboard.js"):
+        digest.update((ASSET_DIR / asset_name).read_bytes())
+    return digest.hexdigest()[:12]
+
+
 @dataclass(frozen=True)
 class DashboardSettings:
     """Runtime configuration. Secrets are read only from the profile environment."""
@@ -704,7 +711,7 @@ def _plan_preview(plan: dict[str, Any]) -> list[str]:
 def _dashboard_page() -> str:
     return """<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>JarHert</title><link rel="stylesheet" href="/assets/dashboard.css"><script src="https://telegram.org/js/telegram-web-app.js?62"></script></head>
+<title>JarHert</title><link rel="stylesheet" href="/assets/dashboard.css?v=__ASSET_VERSION__"><script src="https://telegram.org/js/telegram-web-app.js?62"></script></head>
 <body>
 <main class="shell">
   <header class="topbar">
@@ -751,7 +758,7 @@ def _dashboard_page() -> str:
 <dialog id="history-dialog"><form method="dialog"><p class="eyebrow">ИСТОРИЯ ЗАМЕТКИ</p><h2 id="history-title">Заметка</h2><div id="history-content" class="preview-list"></div><div class="dialog-actions"><button id="history-close" class="primary" type="submit">Закрыть</button></div></form></dialog>
 <dialog id="architecture-dialog"><form method="dialog" class="architecture-sheet"><p class="eyebrow">ЖИВАЯ КАРТА</p><h2>Как запрос проходит через JarHert</h2><p class="muted">Выбери сценарий: маршрут подсветит, куда уходит запрос и где остаётся твоё решение.</p><div class="architecture-scenarios" role="group" aria-label="Сценарий работы"><button class="architecture-scenario" data-architecture-scenario="question" type="button" aria-pressed="false">Вопрос</button><button class="architecture-scenario is-active" data-architecture-scenario="plan" type="button" aria-pressed="true">Задача</button><button class="architecture-scenario" data-architecture-scenario="voice" type="button" aria-pressed="false">Голос</button><button class="architecture-scenario" data-architecture-scenario="research" type="button" aria-pressed="false">Репа</button></div><section id="architecture-flow-path" class="architecture-flow-path" aria-live="polite"><div class="architecture-flow-head"><p id="architecture-flow-eyebrow" class="eyebrow">СЦЕНАРИЙ · ЗАДАЧА</p><h3 id="architecture-flow-title">От задачи до результата</h3><p id="architecture-flow-summary" class="muted"></p></div><div id="architecture-flow-nodes" class="architecture-flow-nodes" aria-label="Маршрут запроса"></div><article class="architecture-detail"><p id="architecture-detail-eyebrow" class="eyebrow">СЕЙЧАС</p><h4 id="architecture-detail-title"></h4><p id="architecture-detail-copy"></p><p id="architecture-detail-guard" class="muted"></p></article></section><div class="dialog-actions"><button class="primary" type="submit">Понятно</button></div></form></dialog>
 <dialog id="clip-dialog"><form id="clip-form"><p class="eyebrow">БАЗА ЗНАНИЙ</p><h2>Сохранить ссылку</h2><p class="muted">Страница не скачивается до твоего preview.</p><label><span>Публичный HTTPS URL</span><input id="clip-url" type="url" inputmode="url" placeholder="https://example.com/article" maxlength="2000" required></label><label><span>Проект, если нужен</span><input id="clip-project" type="text" placeholder="Hub_ML" maxlength="120"></label><div id="clip-preview" class="preview-list"></div><div class="dialog-actions"><button id="clip-cancel" class="secondary" type="button">Отмена</button><button id="clip-preview-action" class="secondary" type="submit">К preview</button><button id="clip-execute" class="primary" type="button" hidden>Сохранить</button></div></form></dialog>
-<script src="/assets/dashboard.js" defer></script></body></html>"""
+<script src="/assets/dashboard.js?v=__ASSET_VERSION__" defer></script></body></html>""".replace("__ASSET_VERSION__", _asset_version())
 
 
 app = create_app() if os.getenv("JARHERT_DASHBOARD_AUTOSTART") == "1" else None

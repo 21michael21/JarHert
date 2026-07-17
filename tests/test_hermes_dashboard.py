@@ -550,8 +550,10 @@ def test_dashboard_page_uses_telegram_webapp_and_external_assets_only() -> None:
 
     assert response.status_code == 200
     assert 'src="https://telegram.org/js/telegram-web-app.js?62"' in response.text
-    assert 'href="/assets/dashboard.css"' in response.text
-    assert 'src="/assets/dashboard.js"' in response.text
+    assert 'href="/assets/dashboard.css?v=' in response.text
+    assert 'src="/assets/dashboard.js?v=' in response.text
+    assert 'href="/assets/dashboard.css"' not in response.text
+    assert 'src="/assets/dashboard.js"' not in response.text
     assert "<script>" not in response.text
     assert "script-src 'self' https://telegram.org" in response.headers["content-security-policy"]
     assert 'id="quick-add"' in response.text
