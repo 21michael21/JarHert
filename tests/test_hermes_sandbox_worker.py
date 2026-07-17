@@ -120,6 +120,58 @@ def test_codex_worker_uses_an_ephemeral_workspace_without_dangerous_bypass(tmp_p
     assert not workspace.exists()
 
 
+def test_codex_prompt_allows_local_commit_but_keeps_push_and_deploy_off_by_default(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("HERMES_CODING_ALLOW_COMMIT", raising=False)
+    monkeypatch.delenv("HERMES_CODING_ALLOW_PUSH", raising=False)
+    monkeypatch.delenv("HERMES_CODING_ALLOW_DEPLOY", raising=False)
+    calls: list[list[str]] = []
+
+    def execute(argv, *, cwd, **_kwargs):
+        calls.append(argv)
+        if argv[1:3] == ["login", "status"]:
+            return subprocess.CompletedProcess(argv, 0, stdout="Logged in", stderr="")
+        result_path = Path(argv[argv.index("--output-last-message") + 1])
+        result_path.write_text("Готово", encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    worker = CodexWorkspaceWorker(codex_binary="codex", execute=execute, workspace_root=tmp_path)
+
+    worker.run(SandboxTask(mode="coding", prompt="Исправь баг", repository_url="https://github.com/example/repo"))
+
+    prompt = calls[0][-1].lower()
+    assert "можно создать локальную ветку и commit" in prompt
+    assert "не push" in prompt
+    assert "не deploy" in prompt
+
+
+def test_codex_prompt_can_enable_owner_approved_push_and_deploy(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HERMES_CODING_ALLOW_PUSH", "true")
+    monkeypatch.setenv("HERMES_CODING_ALLOW_DEPLOY", "true")
+    calls: list[list[str]] = []
+
+    def execute(argv, *, cwd, **_kwargs):
+        calls.append(argv)
+        result_path = Path(argv[argv.index("--output-last-message") + 1])
+        result_path.write_text("Готово", encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    worker = CodexWorkspaceWorker(codex_binary="codex", execute=execute, workspace_root=tmp_path)
+
+    worker.run(
+        SandboxTask(
+            mode="coding",
+            prompt="Сделай commit и deploy после проверки",
+            repository_url="https://github.com/example/repo",
+        )
+    )
+
+    prompt = calls[0][-1].lower()
+    assert "можно push" in prompt
+    assert "новую ветку" in prompt
+    assert "deploy можно" in prompt
+    assert "если пользователь явно попросил deploy" in prompt
+
+
 def test_non_github_or_non_https_repository_is_rejected() -> None:
     worker = SandboxedHermesWorker(docker_available=lambda: True)
 

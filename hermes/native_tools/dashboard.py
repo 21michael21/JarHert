@@ -661,12 +661,12 @@ def _coding_preview(*, mode: str, repository_url: str | None, source_urls: list[
         return [
             "Проверить гипотезу по источникам",
             f"Источники: {len(source_urls)}",
-            "Runner работает в sandbox и ничего не деплоит.",
+            "Runner работает в sandbox; внешние действия только после явного подтверждения.",
         ]
     return [
         "Поставить кодовую задачу в очередь",
         f"Репозиторий: {repository_url}",
-        "Runner работает в sandbox и ничего не деплоит.",
+        "Runner может подготовить ветку и commit; push/deploy только после отдельного подтверждения.",
     ]
 
 
@@ -738,7 +738,7 @@ def _dashboard_page() -> str:
     </section>
     <section id="view-tasks" class="view" hidden><div class="section-head"><div><p class="eyebrow">TRELLO</p><h2>Задачи</h2><p id="tasks-summary" class="section-copy muted"></p></div><button id="open-trello" class="text-button" type="button">Открыть Trello</button></div><div class="task-tools"><label class="task-search-field" for="task-search"><span>Найти задачу</span><input id="task-search" type="search" placeholder="Название, P1, Today" autocomplete="off"></label><label class="task-list-field" for="task-list-filter"><span>Список</span><select id="task-list-filter" aria-label="Список задач"></select></label></div><div id="task-list" class="work-list"></div></section>
     <section id="view-calendar" class="view" hidden><div class="section-head"><div><p class="eyebrow">7 ДНЕЙ</p><h2>Календарь</h2><p id="calendar-summary" class="section-copy muted"></p></div><button id="open-calendar" class="text-button" type="button">Открыть Calendar</button></div><div id="calendar-list" class="timeline"></div></section>
-    <section id="view-code" class="view" hidden><div class="section-head"><div><p class="eyebrow">CODE DESK</p><h2>Работа с кодом</h2><p class="muted section-copy">Дай GitHub-репозиторий для разбора кода или ссылки для проверки гипотезы. Runner вернёт причину, diff и тесты.</p><p class="muted code-guard">Работает в отдельной песочнице: не коммитит и не деплоит.</p></div><button id="coding-add" class="primary compact-primary" type="button">Новая задача</button></div><div id="coding-jobs" class="work-list"></div></section>
+    <section id="view-code" class="view" hidden><div class="section-head"><div><p class="eyebrow">CODE DESK</p><h2>Работа с кодом</h2><p class="muted section-copy">Дай GitHub-репозиторий для разбора кода или ссылки для проверки гипотезы. Runner вернёт причину, diff и тесты.</p><p class="muted code-guard">Работает в отдельной песочнице: может сделать ветку и commit; push/deploy только после твоего явного подтверждения.</p></div><button id="coding-add" class="primary compact-primary" type="button">Новая задача</button></div><div id="coding-jobs" class="work-list"></div></section>
     <section id="view-memory" class="view" hidden>
       <section class="section"><div class="section-head"><div><p class="eyebrow">НАПОМИНАНИЯ</p><h2>Ближайшее</h2></div><span id="reminder-count" class="count-pill">0</span></div><div id="reminders" class="work-list"></div></section>
       <section class="section"><div class="section-head"><div><p class="eyebrow">ЗАМЕТКИ</p><h2>Живая память</h2></div></div><label class="search-field" for="note-search"><span>Поиск по заметкам</span><input id="note-search" type="search" placeholder="OAuth, Hub_ML, идея..." autocomplete="off"></label><div id="notes" class="work-list"></div></section>

@@ -30,6 +30,13 @@ class SandboxResult:
     mode: str
 
 
+@dataclass(frozen=True)
+class CodingPermissions:
+    commit: bool
+    push: bool
+    deploy: bool
+
+
 class SandboxedHermesWorker:
     """Launch the same Hermes profile with its hardened Docker terminal backend."""
 
@@ -263,6 +270,7 @@ def _build_prompt(task: SandboxTask, allowed_hosts: set[str]) -> str:
 
     if mode == "coding":
         repository = _validate_github_repository(task.repository_url)
+        permissions = _coding_permission_text(_coding_permissions_from_env(), workspace_name="/workspace/task")
         return (
             "Работай только внутри Docker workspace. Клонируй репозиторий "
             f"{repository} в /workspace/task. Задача: {user_prompt}\n"
@@ -271,7 +279,8 @@ def _build_prompt(task: SandboxTask, allowed_hosts: set[str]) -> str:
             "Не выдавай план или пример diff за выполненную работу: сначала получи фактический результат "
             "terminal, затем верни настоящий diff и вывод проверки. "
             "Сначала изучи код, затем сделай отдельную ветку, минимальный diff и тесты. "
-            "Не читай host-файлы, не ищи credentials, не push, не merge и не deploy. "
+            f"{permissions} "
+            "Не читай host-файлы, не ищи credentials, не merge. "
             "Верни итог, проверки и diff summary."
         )
 
@@ -312,11 +321,13 @@ def _build_codex_prompt(task: SandboxTask, allowed_hosts: set[str]) -> str:
 
     if mode == "coding":
         repository = _validate_github_repository(task.repository_url)
+        permissions = _coding_permission_text(_coding_permissions_from_env(), workspace_name="./repo")
         return (
             "Ты работаешь в пустом одноразовом workspace Codex. "
             f"Клонируй {repository} в ./repo и работай только внутри ./repo. Задача: {user_prompt}\n"
             "Сначала изучи код, затем сделай минимальный diff и релевантные тесты. "
-            "Не читай файлы вне workspace, не ищи credentials, не push, не merge и не deploy. "
+            f"{permissions} "
+            "Не читай файлы вне workspace, не ищи credentials, не merge. "
             "В финале верни: причину, изменённые файлы, точные проверки и краткий diff summary."
         )
 
@@ -358,6 +369,44 @@ def _codex_binary_from_environment() -> str:
         return configured
     user_install = Path.home() / ".local" / "bin" / "codex"
     return str(user_install) if user_install.exists() else "codex"
+
+
+def _coding_permissions_from_env() -> CodingPermissions:
+    return CodingPermissions(
+        commit=_env_flag("HERMES_CODING_ALLOW_COMMIT", default=True),
+        push=_env_flag("HERMES_CODING_ALLOW_PUSH", default=False),
+        deploy=_env_flag("HERMES_CODING_ALLOW_DEPLOY", default=False),
+    )
+
+
+def _env_flag(name: str, *, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _coding_permission_text(permissions: CodingPermissions, *, workspace_name: str) -> str:
+    parts: list[str] = []
+    if permissions.commit:
+        parts.append(
+            f"Можно создать локальную ветку и commit внутри {workspace_name}, если задача явно просит готовый фикс."
+        )
+    else:
+        parts.append("Не commit: верни только diff и инструкции.")
+    if permissions.push:
+        parts.append(
+            "Можно push только в новую ветку с понятным именем, никогда не push в main/master и не force-push."
+        )
+    else:
+        parts.append("Не push: верни diff и имя предлагаемой ветки.")
+    if permissions.deploy:
+        parts.append(
+            "Deploy можно только если пользователь явно попросил deploy в текущей задаче; сначала покажи проверки и что будет выложено."
+        )
+    else:
+        parts.append("Не deploy: подготовь deploy-plan и попроси отдельное подтверждение.")
+    return " ".join(parts)
 
 
 def _validate_github_repository(value: str | None) -> str:

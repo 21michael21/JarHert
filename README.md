@@ -196,6 +196,18 @@ goes offline, the job lease expires and another configured runner may claim it.
 Set `HERMES_CODING_EXECUTOR=hermes` or pass `--executor hermes` only when you
 want the older Docker-backed Hermes runner instead.
 
+Code jobs may create a local branch and commit inside the disposable workspace.
+Push and deploy are opt-in owner actions, not default background behavior:
+
+```bash
+export HERMES_CODING_ALLOW_COMMIT=true
+export HERMES_CODING_ALLOW_PUSH=true      # pushes only a new review branch
+export HERMES_CODING_ALLOW_DEPLOY=true    # only when the job explicitly asks deploy
+```
+
+The runner still does not receive application secrets from the JarHert profile.
+Configure git credentials only on the machine that should be allowed to push.
+
 ## GitHub research
 
 Public repository links work without a token: JarHert reads repository metadata,

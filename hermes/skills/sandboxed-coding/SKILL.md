@@ -48,9 +48,10 @@ python "$HERMES_HOME/native_tools/cli.py" sandbox run \
 2. Inspect the relevant files before changing them.
 3. Write a failing test when behavior changes, then implement the smallest fix.
 4. Run the relevant checks and report exact results.
-5. Produce a diff and a short explanation before any merge, push, deploy, or
+5. Create a local branch and commit when the user asks for a ready fix.
+6. Produce a diff and a short explanation before any merge, push, deploy, or
    host-side command.
-6. For independent read-only branches, delegate at most three subagents. The
+7. For independent read-only branches, delegate at most three subagents. The
    parent owns the final diff and verification; subagents never deploy.
 
 ## Guardrails
@@ -58,6 +59,10 @@ python "$HERMES_HOME/native_tools/cli.py" sandbox run \
 - Never read `.env`, SSH keys, Docker socket, or files outside the workspace.
 - Never deploy, merge, push, delete data, or change production configuration
   without an explicit approval in the current conversation.
+- If push is enabled, push only a new review branch. Never push to main/master
+  and never force-push.
+- If deploy is enabled, run it only when the user explicitly asked for deploy
+  in the current job and after tests/checks are shown.
 - Use the Codex `workspace-write` sandbox by default. Do not use the dangerous
   bypass flag and do not pass application secrets into the runner.
 - The optional Hermes Docker worker must be selected explicitly; never silently

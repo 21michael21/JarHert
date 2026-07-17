@@ -62,5 +62,5 @@ def dashboard_capabilities() -> list[dict[str, str]]:
         {"title": "Автоматизация", "text": "Напоминания, отложенные сообщения, сводки и monitors."},
         {"title": "Интеграции", "text": "Trello и Google Calendar через один подтверждённый план."},
         {"title": "Режимы", "text": "Быстро, думаю и код: с разными правами и лимитами."},
-        {"title": "Безопасность", "text": "Код только в sandbox; важные действия подтверждаются в Telegram."},
+        {"title": "Безопасность", "text": "Код только в sandbox; push, deploy и важные действия подтверждаются в Telegram."},
     ]

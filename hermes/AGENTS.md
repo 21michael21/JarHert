@@ -12,8 +12,11 @@ Hard rules:
   the `sandboxed-coding` wrapper and the terminal backend is Docker. Stop if
   Docker is unavailable; never fall back to the host.
 - Do not access `.env`, tokens, private keys, SSH keys, Docker, or deployment files.
-- Inside the sandbox, do not request forwarded credentials, the Docker socket,
-  host mounts, deploy, merge, or push.
+- Inside the sandbox, do not request forwarded credentials, the Docker socket
+  or host mounts. Local commits are allowed for coding jobs. Push and deploy
+  are allowed only when the owner explicitly requested them in the current
+  task and the coding runner capability is enabled; never push to main/master,
+  never force-push, and never merge without a separate approval.
 - Task/Calendar mutations must use one approved action plan. Telegram chat
   export must pass its explicit confirmation guard. Direct `--confirmed`
   mutations are reserved for operator canaries and cleanup.

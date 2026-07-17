@@ -457,7 +457,7 @@ def test_dashboard_previews_coding_job_before_adding_it_to_the_queue() -> None:
     assert preview.json()["preview"] == [
         "Поставить кодовую задачу в очередь",
         "Репозиторий: https://github.com/example/reader",
-        "Runner работает в sandbox и ничего не деплоит.",
+        "Runner может подготовить ветку и commit; push/deploy только после отдельного подтверждения.",
     ]
     assert blocked.status_code == 403
     assert queued.status_code == 200
@@ -494,7 +494,7 @@ def test_dashboard_previews_source_bounded_hypothesis_before_queueing_it() -> No
     assert preview.json()["preview"] == [
         "Проверить гипотезу по источникам",
         "Источники: 1",
-        "Runner работает в sandbox и ничего не деплоит.",
+        "Runner работает в sandbox; внешние действия только после явного подтверждения.",
     ]
     assert queued.status_code == 200
     assert dashboard_api.coding_requests[0]["mode"] == "research"
@@ -600,7 +600,8 @@ def test_dashboard_tasks_and_code_desk_keep_mobile_actions_clear_and_compact() -
     assert 'id="task-search"' in page
     assert 'id="task-list-filter"' in page
     assert 'id="task-menu-dialog"' in page
-    assert "не коммитит и не деплоит" in page
+    assert "может сделать ветку и commit" in page
+    assert "push/deploy только после твоего явного подтверждения" in page
     assert "function taskMatchesQuery" in script
     assert "function openTaskMenu" in script
     assert 'statusRow("JarHert"' in script
