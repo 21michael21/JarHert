@@ -2,19 +2,50 @@ const $ = (id) => document.getElementById(id);
 const telegram = window.Telegram?.WebApp;
 const state = {
   activeView: "today", snapshot: null, tasks: {items: [], lists: [], priorities: []}, calendar: {items: []},
-  coding: {items: []}, notes: {items: []}, knowledge: {items: []}, subscriptions: {items: []}, digest: {items: []}, noteQuery: "", taskQuery: "", taskFilter: "Все", taskMenu: null, quickType: "task", edit: null, plan: null, codingDraft: null, clip: null, lastUpdatedAt: null,
+  coding: {items: []}, notes: {items: []}, knowledge: {items: []}, subscriptions: {items: []}, digest: {items: []}, noteQuery: "", taskQuery: "", taskFilter: "Все", taskMenu: null, quickType: "task", edit: null, plan: null, codingDraft: null, clip: null, architectureScenario: "plan", lastUpdatedAt: null,
 };
 const VIEWS = new Set(["today", "tasks", "calendar", "code", "memory"]);
-const ARCHITECTURE_STEPS = {
-  telegram: {eyebrow: "ШАГ 1 · ВХОД", title: "Telegram — единственная входная дверь", copy: "Текст, голос, кнопка или файл приходят в один Hermes gateway. Параллельный старый бот не обрабатывает те же сообщения.", guard: "Голос сначала превращается в текст, затем ясные пункты собираются в один план."},
-  codex: {eyebrow: "ШАГ 2 · ПОНИМАНИЕ", title: "Codex понимает, а SOUL держит тон", copy: "Основной разговорный backend работает через Codex OAuth. SOUL задаёт русский стиль, краткость и честные уточнения.", guard: "Отдельный Codex CLI нужен только для изолированных кодовых задач, не для каждого сообщения."},
-  tools: {eyebrow: "ШАГ 3 · ВЫБОР ДЕЙСТВИЯ", title: "Открывается только нужный набор", copy: "Для вопроса не подсовываются все инструменты разом: личное, планирование, исследование или код выбираются по смыслу запроса.", guard: "Меньше лишних tools — меньше путаницы, задержки и расхода токенов."},
-  memory: {eyebrow: "ШАГ 4 · ЛИЧНЫЙ КОНТЕКСТ", title: "Память живёт в Personal OS", copy: "Заметки, проекты, контакты, обещания и напоминания лежат в одной SQLite-базе с локальным поиском.", guard: "Сырые переписки и секреты не становятся памятью сами по себе."},
-  integrations: {eyebrow: "ШАГ 5 · ВНЕШНИЕ СЕРВИСЫ", title: "Trello, Calendar и GitHub — узкими адаптерами", copy: "Trello и Google Calendar выполняются через Task Command Center. GitHub MCP читает репы, PR и CI только в режиме read-only.", guard: "Внешние изменения не происходят от одной случайной фразы."},
-  plan: {eyebrow: "ШАГ 6 · ТВОЙ КОНТРОЛЬ", title: "Несколько действий — один понятный план", copy: "Задача, встреча, напоминание и заметка собираются в единый preview. После одного подтверждения план выполняется один раз.", guard: "Повтор сообщения Telegram не создаёт вторую карточку или встречу."},
-  radar: {eyebrow: "ШАГ 7 · ФОН", title: "Радар сначала ищет изменение", copy: "Мониторы сравнивают hash и diff источника. Модель включается только когда на сайте, в релизе или канале действительно что-то поменялось.", guard: "Так фоновые проверки не превращаются в спам и не жгут токены."},
-  code: {eyebrow: "ШАГ 8 · КОД ОТДЕЛЬНО", title: "Кодовая задача уходит в изолированную очередь", copy: "Runner получает репозиторий, задачу и критерий готовности. Возвращает человеческий итог, diff и тесты.", guard: "Он не читает .env, не получает Docker socket и не деплоит без твоего отдельного ок."},
+const ARCHITECTURE_SCENARIOS = {
+  question: {
+    eyebrow: "СЦЕНАРИЙ · ВОПРОС", title: "Короткий ответ без лишнего круга", summary: "Обычный вопрос не трогает внешние сервисы: JarHert понимает контекст и отвечает в чате.",
+    nodes: [
+      {label: "Telegram", title: "Сообщение приходит в gateway", copy: "Текст попадает в единственный активный вход JarHert.", guard: "Повтор одного update не запустит второй ответ."},
+      {label: "Codex + SOUL", title: "Понимание запроса и человеческий тон", copy: "Codex формирует ответ, а SOUL держит русский стиль, краткость и честность.", guard: "Необязательные инструменты не открываются."},
+      {label: "Ответ", title: "Итог возвращается в Telegram", copy: "Ты получаешь короткий ответ по делу — без очереди, preview и побочных действий.", guard: "Если данных не хватает, JarHert задаст один ясный вопрос."},
+    ],
+  },
+  plan: {
+    eyebrow: "СЦЕНАРИЙ · ЗАДАЧА", title: "Один план, одно подтверждение", summary: "Задача, встреча, напоминание и заметка могут уйти одним понятным планом.",
+    nodes: [
+      {label: "Telegram", title: "Ты пишешь как человеку", copy: "Например: «завтра в 12 напомни про ML и поставь встречу в 13».", guard: "Сообщение получает свой ключ идемпотентности."},
+      {label: "План", title: "JarHert собирает только нужные действия", copy: "Роутер разделяет фразу на задачу, календарь, напоминание или заметку.", guard: "Непонятное действие не исполняется наугад."},
+      {label: "Preview", title: "Один понятный контрольный экран", copy: "Ты видишь, что именно будет создано или изменено, и подтверждаешь весь план одной кнопкой.", guard: "До подтверждения Trello и Calendar не меняются.", gate: true},
+      {label: "Сервисы", title: "Trello и Calendar выполняют план", copy: "Очередь создаёт карточки, события и напоминания надёжно, с повторной доставкой при сбое.", guard: "Повтор запроса не создаёт дубли."},
+      {label: "Итог", title: "Результат приходит обратно сюда", copy: "В Telegram приходит компактный итог с тем, что реально создано.", guard: "Все части плана видны в trace и outbox."},
+    ],
+  },
+  voice: {
+    eyebrow: "СЦЕНАРИЙ · ГОЛОС", title: "Голосовой dump превращается в план", summary: "Можно наговорить мысли подряд: система выделит действия, но не применит их без твоего общего ок.",
+    nodes: [
+      {label: "Голос", title: "Голосовое приходит в Telegram", copy: "Исходное сообщение остаётся в твоём чате, а JarHert получает аудио для разбора.", guard: "Сначала проверяется размер и тип файла."},
+      {label: "Текст", title: "Локальная транскрипция", copy: "Голос превращается в текст; даты и время дополнительно проверяются перед созданием действий.", guard: "Неразборчивые фрагменты не выдаются за факт."},
+      {label: "Разбор", title: "Мысли раскладываются по пунктам", copy: "Заметки, задачи, встречи и обещания собираются в один список без потери исходного смысла.", guard: "Сомнительный пункт остаётся в preview, а не уходит в сервис."},
+      {label: "Preview", title: "Один ответ на весь голосовой dump", copy: "Ты подтверждаешь весь список одной кнопкой или правишь нужный пункт.", guard: "Никакой очереди уточнений по одной на каждую мысль.", gate: true},
+      {label: "Итог", title: "Сохранено и видно в кабинете", copy: "Результат появляется в Telegram, а задачи, заметки и встречи — в соответствующих разделах.", guard: "Сырой голос можно сохранить только по твоему явному выбору."},
+    ],
+  },
+  research: {
+    eyebrow: "СЦЕНАРИЙ · РЕПОЗИТОРИЙ", title: "Репозиторий разбирается отдельно", summary: "Ссылка на GitHub идёт через read-only анализ; кодовая работа — в отдельную очередь и изолированный runner.",
+    nodes: [
+      {label: "Ссылка", title: "Ты кидаешь репу или гипотезу", copy: "Вопрос и ссылка поступают через Telegram или Code Desk в кабинете.", guard: "Ничего в репозитории не меняется от одной ссылки."},
+      {label: "GitHub", title: "Read-only обзор репы, PR и CI", copy: "GitHub MCP читает структуру, последние PR, issues и статусы CI в режиме только чтения.", guard: "Push, merge и изменение репы не входят в этот маршрут."},
+      {label: "Очередь", title: "Сложная задача становится кодовым job", copy: "В job сохраняются цель, репозиторий, критерий готовности и trace.", guard: "Ты видишь состояние, а очередь переживает перезапуск."},
+      {label: "Runner", title: "Проверка идёт в песочнице", copy: "Изолированный runner возвращает diff, тесты и причину, не получая доступ к секретам или deploy.", guard: "Перед merge или deploy всегда нужен отдельный ок."},
+      {label: "Отчёт", title: "Человеческий итог в Telegram и кабинете", copy: "Вместо простыни приходит кратко: причина, что изменено, тесты и следующий выбор.", guard: "Полный отчёт остаётся доступен в Code Desk."},
+    ],
+  },
 };
+let architecturePlaybackTimer = null;
 
 function text(value) { return String(value ?? "").trim(); }
 function field(item, ...keys) { for (const key of keys) if (item?.[key]) return text(item[key]); return "Без названия"; }
@@ -225,22 +256,83 @@ function openReport(job) {
   $("report-dialog").showModal();
 }
 
-function showArchitectureStep(key) {
-  const step = ARCHITECTURE_STEPS[key] || ARCHITECTURE_STEPS.telegram;
-  $("architecture-detail-eyebrow").textContent = step.eyebrow;
-  $("architecture-detail-title").textContent = step.title;
-  $("architecture-detail-copy").textContent = step.copy;
-  $("architecture-detail-guard").textContent = step.guard;
-  document.querySelectorAll("[data-architecture-step]").forEach((item) => {
-    const selected = item.dataset.architectureStep === key;
-    item.classList.toggle("is-active", selected);
-    item.setAttribute("aria-pressed", String(selected));
+function showArchitectureNode(index) {
+  const scenario = ARCHITECTURE_SCENARIOS[state.architectureScenario] || ARCHITECTURE_SCENARIOS.plan;
+  const nodeData = scenario.nodes[index] || scenario.nodes[0];
+  $("architecture-detail-eyebrow").textContent = `ШАГ ${index + 1} · ${nodeData.label.toUpperCase()}`;
+  $("architecture-detail-title").textContent = nodeData.title;
+  $("architecture-detail-copy").textContent = nodeData.copy;
+  $("architecture-detail-guard").textContent = nodeData.guard;
+  document.querySelectorAll("[data-architecture-node]").forEach((item) => {
+    const nodeIndex = Number(item.dataset.architectureNode);
+    item.classList.toggle("is-active", nodeIndex === index);
+    item.classList.toggle("is-traversed", nodeIndex <= index);
+    item.setAttribute("aria-pressed", String(nodeIndex === index));
+  });
+  document.querySelectorAll("[data-architecture-arrow]").forEach((item) => {
+    item.classList.toggle("is-traversed", Number(item.dataset.architectureArrow) < index);
   });
 }
 
+function renderArchitectureNodes(scenario) {
+  const container = $("architecture-flow-nodes");
+  container.replaceChildren();
+  scenario.nodes.forEach((nodeData, index) => {
+    const nodeButton = button("", "architecture-flow-node", () => {
+      window.clearTimeout(architecturePlaybackTimer);
+      showArchitectureNode(index);
+    });
+    nodeButton.dataset.architectureNode = String(index);
+    nodeButton.setAttribute("aria-pressed", "false");
+    const marker = node("span", "architecture-flow-marker", String(index + 1));
+    const copy = node("span", "architecture-flow-copy");
+    copy.append(node("strong", "", nodeData.label), node("small", "", index === 0 ? "Запрос" : nodeData.gate ? "Твоё подтверждение" : "Следующий шаг"));
+    nodeButton.append(marker, copy);
+    container.append(nodeButton);
+    if (index < scenario.nodes.length - 1) {
+      const arrow = node("span", "architecture-flow-arrow", "↓");
+      arrow.dataset.architectureArrow = String(index);
+      arrow.setAttribute("aria-hidden", "true");
+      container.append(arrow);
+    }
+  });
+}
+
+function playArchitectureFlow() {
+  window.clearTimeout(architecturePlaybackTimer);
+  const scenario = ARCHITECTURE_SCENARIOS[state.architectureScenario] || ARCHITECTURE_SCENARIOS.plan;
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+    showArchitectureNode(0);
+    return;
+  }
+  let index = 0;
+  const move = () => {
+    showArchitectureNode(index);
+    index = (index + 1) % scenario.nodes.length;
+    architecturePlaybackTimer = window.setTimeout(move, 1250);
+  };
+  move();
+}
+
+function showArchitectureScenario(key) {
+  const scenario = ARCHITECTURE_SCENARIOS[key] || ARCHITECTURE_SCENARIOS.plan;
+  state.architectureScenario = ARCHITECTURE_SCENARIOS[key] ? key : "plan";
+  $("architecture-flow-eyebrow").textContent = scenario.eyebrow;
+  $("architecture-flow-title").textContent = scenario.title;
+  $("architecture-flow-summary").textContent = scenario.summary;
+  document.querySelectorAll("[data-architecture-scenario]").forEach((item) => {
+    const selected = item.dataset.architectureScenario === state.architectureScenario;
+    item.classList.toggle("is-active", selected);
+    item.setAttribute("aria-pressed", String(selected));
+  });
+  renderArchitectureNodes(scenario);
+  playArchitectureFlow();
+}
+
 function openArchitecture() {
-  showArchitectureStep("telegram");
-  $("architecture-dialog").showModal();
+  const dialog = $("architecture-dialog");
+  if (!dialog.open) dialog.showModal();
+  showArchitectureScenario("plan");
 }
 
 function renderMemory(snapshot) {
@@ -575,7 +667,8 @@ function init() {
   $("note-search").addEventListener("input", (event) => scheduleNoteSearch(event.target.value));
   $("knowledge-add").addEventListener("click", openKnowledgeClip); $("clip-form").addEventListener("submit", previewKnowledgeClip); $("clip-execute").addEventListener("click", executeKnowledgeClip); $("clip-cancel").addEventListener("click", () => $("clip-dialog").close());
   $("architecture-open").addEventListener("click", openArchitecture); $("architecture-open-home").addEventListener("click", openArchitecture);
-  document.querySelectorAll("[data-architecture-step]").forEach((item) => item.addEventListener("click", () => showArchitectureStep(item.dataset.architectureStep)));
+  document.querySelectorAll("[data-architecture-scenario]").forEach((item) => item.addEventListener("click", () => showArchitectureScenario(item.dataset.architectureScenario)));
+  $("architecture-dialog").addEventListener("close", () => window.clearTimeout(architecturePlaybackTimer));
   $("open-trello").addEventListener("click", () => openExternal(state.tasks.board_url || "https://trello.com/")); $("open-calendar").addEventListener("click", () => openExternal("https://calendar.google.com/"));
   window.addEventListener("hashchange", () => setView(window.location.hash.slice(1), {syncHistory: false}));
   if (VIEWS.has(window.location.hash.slice(1))) state.activeView = window.location.hash.slice(1);

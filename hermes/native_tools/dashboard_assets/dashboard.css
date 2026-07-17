@@ -179,15 +179,25 @@ textarea { resize: vertical; }
 .preview-row { border-bottom: 1px solid var(--line); padding: 11px 0; }
 .report-content { max-height: 50vh; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .architecture-sheet { gap: 16px; }
-.architecture-flow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.architecture-step { min-height: 52px; display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; background: var(--surface-raised); color: var(--muted); text-align: left; }
-.architecture-step.is-active { border-color: color-mix(in srgb, var(--accent) 58%, var(--line)); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); color: var(--text); }
-.architecture-step > span { display: grid; width: 24px; height: 24px; place-items: center; border: 1px solid color-mix(in srgb, var(--accent) 46%, var(--line)); border-radius: 50%; color: var(--accent); font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; }
-.architecture-step strong { min-width: 0; overflow-wrap: anywhere; font-size: 13px; line-height: 1.25; }
-.architecture-detail { display: grid; gap: 6px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 15px 0; }
-.architecture-detail h3 { margin: 0; font-size: 18px; line-height: 1.25; }
-.architecture-detail p, .architecture-note p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.45; }
-.architecture-note { border-left: 2px solid var(--accent); padding: 2px 0 2px 12px; }
+.architecture-scenarios { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.architecture-scenarios::-webkit-scrollbar { display: none; }
+.architecture-scenario { flex: 0 0 auto; min-height: 44px; border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 12px; background: var(--surface-raised); color: var(--muted); font-size: 14px; font-weight: 700; }
+.architecture-scenario.is-active { border-color: color-mix(in srgb, var(--accent) 58%, var(--line)); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); color: var(--text); }
+.architecture-flow-path { display: grid; gap: 12px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 14px 0; }
+.architecture-flow-head { display: grid; gap: 3px; }
+.architecture-flow-head h3, .architecture-detail h4 { margin: 0; font-size: 18px; line-height: 1.25; }
+.architecture-flow-head p, .architecture-detail p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.4; }
+.architecture-flow-nodes { display: grid; gap: 0; }
+.architecture-flow-node { position: relative; min-height: 48px; display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; background: var(--surface-raised); color: var(--muted); text-align: left; }
+.architecture-flow-node.is-active { border-color: color-mix(in srgb, var(--accent) 68%, var(--line)); background: color-mix(in srgb, var(--accent) 11%, var(--surface)); color: var(--text); }
+.architecture-flow-node.is-traversed .architecture-flow-marker { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
+.architecture-flow-marker { display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid color-mix(in srgb, var(--accent) 44%, var(--line)); border-radius: 50%; color: var(--accent); font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.architecture-flow-copy { display: grid; min-width: 0; gap: 1px; }
+.architecture-flow-copy strong { min-width: 0; overflow-wrap: anywhere; font-size: 14px; line-height: 1.2; }
+.architecture-flow-copy small { color: var(--muted); font-size: 12px; line-height: 1.25; }
+.architecture-flow-arrow { display: grid; height: 17px; place-items: center; color: var(--line); font-size: 18px; line-height: 1; }
+.architecture-flow-arrow.is-traversed { color: var(--accent); }
+.architecture-detail { display: grid; gap: 5px; border-left: 2px solid color-mix(in srgb, var(--accent) 72%, var(--line)); padding: 3px 0 3px 12px; }
 
 @media (prefers-reduced-motion: no-preference) {
   button, .overview-tile { transition: transform var(--motion-fast) var(--ease), opacity var(--motion-fast) ease, background var(--motion-fast) ease, border-color var(--motion-fast) ease; }
@@ -196,6 +206,8 @@ textarea { resize: vertical; }
   @keyframes sheet-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
   @keyframes view-in { from { opacity: .45; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
   @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes flow-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 38%, transparent); } 70% { box-shadow: 0 0 0 8px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+  .architecture-flow-node.is-active .architecture-flow-marker { animation: flow-pulse 1.1s var(--ease); }
 }
 
 @media (min-width: 720px) {
@@ -205,7 +217,6 @@ textarea { resize: vertical; }
   .view-tab.is-active { border-bottom-color: var(--accent); color: var(--text); font-weight: 750; }
   .bottom-nav { display: none; }
   .quick-add { bottom: 24px; }
-  .architecture-flow { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
 @media (max-width: 430px) {
