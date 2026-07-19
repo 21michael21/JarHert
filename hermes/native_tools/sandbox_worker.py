@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -208,27 +209,31 @@ class CodexWorkspaceWorker:
         prompt = _build_codex_prompt(task, self.allowed_research_hosts)
         self.workspace_root.mkdir(parents=True, exist_ok=True)
         workspace = Path(tempfile.mkdtemp(prefix="job-", dir=self.workspace_root))
+        isolated_home = workspace / "home"
+        isolated_home.mkdir()
         result_path = workspace / "result.md"
         try:
-            argv = [
-                self.codex_binary,
-                "exec",
-                "--sandbox",
-                "workspace-write",
-                "--ephemeral",
-                "--ignore-user-config",
-                "--skip-git-repo-check",
-                "--output-last-message",
-                str(result_path),
-                "--cd",
-                str(workspace),
-                prompt,
-            ]
+            argv = _maybe_seatbelt(
+                [
+                    self.codex_binary,
+                    "exec",
+                    "--sandbox",
+                    "workspace-write",
+                    "--ephemeral",
+                    "--ignore-user-config",
+                    "--skip-git-repo-check",
+                    "--output-last-message",
+                    str(result_path),
+                    "--cd",
+                    str(workspace),
+                    prompt,
+                ]
+            )
             try:
                 result = self.execute(
                     argv,
                     cwd=workspace,
-                    env=_codex_environment(),
+                    env=_codex_environment(isolated_home),
                     timeout=900,
                     text=True,
                     capture_output=True,
@@ -355,10 +360,48 @@ def _build_codex_prompt(task: SandboxTask, allowed_hosts: set[str]) -> str:
     )
 
 
-def _codex_environment() -> dict[str, str]:
-    """Keep the CLI launch minimal; do not forward application secrets."""
-    keys = ("HOME", "PATH", "TMPDIR", "LANG", "LC_ALL")
-    return {key: os.environ[key] for key in keys if os.environ.get(key)}
+def _codex_environment(home: Path) -> dict[str, str]:
+    """Keep the CLI launch minimal; do not forward application secrets.
+
+    HOME points at a throwaway directory so the agent cannot harvest
+    credentials through ~/ paths. ChatGPT auth still resolves through
+    CODEX_HOME, which Codex reads independently of HOME.
+    """
+    env = {key: os.environ[key] for key in ("PATH", "TMPDIR", "LANG", "LC_ALL") if os.environ.get(key)}
+    env["HOME"] = str(home)
+    codex_home = os.environ.get("CODEX_HOME", "").strip() or str(Path.home() / ".codex")
+    env["CODEX_HOME"] = codex_home
+    return env
+
+
+_SENSITIVE_READ_PATHS = (
+    ".ssh",
+    ".aws",
+    ".gnupg",
+    ".kube",
+    ".docker",
+    ".config/gcloud",
+    ".config/gh",
+    "Library/Keychains",
+)
+
+
+def _seatbelt_profile() -> str:
+    """macOS Seatbelt policy: allow everything except known credential stores."""
+    home = Path.home()
+    denies = "\n".join(
+        f'(deny file-read* (subpath "{home / relative}"))' for relative in _SENSITIVE_READ_PATHS
+    )
+    return f"(version 1)\n(allow default)\n{denies}\n"
+
+
+def _maybe_seatbelt(argv: list[str]) -> list[str]:
+    if sys.platform != "darwin":
+        return argv
+    seatbelt = shutil.which("sandbox-exec")
+    if seatbelt is None:
+        return argv
+    return [seatbelt, "-p", _seatbelt_profile(), *argv]
 
 
 def _codex_binary_from_environment() -> str:

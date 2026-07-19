@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -87,6 +88,37 @@ def test_codex_worker_honors_an_explicit_binary_path(monkeypatch) -> None:
     assert CodexWorkspaceWorker().codex_binary == "/opt/codex/bin/codex"
 
 
+def test_codex_worker_isolates_home_and_keeps_auth_in_codex_home(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CODEX_HOME", "/Users/test/.codex")
+    captured: dict[str, object] = {}
+
+    def execute(argv, *, cwd, env=None, **_kwargs):
+        captured["argv"] = argv
+        captured["env"] = env or {}
+        result_path = Path(argv[argv.index("--output-last-message") + 1])
+        result_path.write_text("Готово", encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    worker = CodexWorkspaceWorker(
+        codex_binary="codex",
+        execute=execute,
+        workspace_root=tmp_path,
+        allowed_research_hosts={"github.com"},
+    )
+    worker.run(SandboxTask(mode="coding", prompt="Добавь тест", repository_url="https://github.com/example/repository"))
+
+    env = captured["env"]
+    assert str(env["HOME"]).startswith(str(tmp_path))
+    assert env["CODEX_HOME"] == "/Users/test/.codex"
+    argv = captured["argv"]
+    if sys.platform == "darwin":
+        assert argv[0].endswith("sandbox-exec")
+        profile = argv[argv.index("-p") + 1]
+        assert ".ssh" in profile and "Keychains" in profile
+    else:
+        assert argv[0] == "codex"
+
+
 def test_codex_worker_uses_an_ephemeral_workspace_without_dangerous_bypass(tmp_path) -> None:
     calls: list[tuple[list[str], Path]] = []
 
@@ -112,7 +144,8 @@ def test_codex_worker_uses_an_ephemeral_workspace_without_dangerous_bypass(tmp_p
 
     argv, workspace = calls[0]
     assert result.output == "Готово: тесты прошли."
-    assert argv[:2] == ["codex", "exec"]
+    inner = argv[argv.index("exec") - 1 :] if "exec" in argv else argv
+    assert inner[0] == "codex" and inner[1] == "exec"
     assert "workspace-write" in argv
     assert "--ephemeral" in argv
     assert "--ignore-user-config" in argv
