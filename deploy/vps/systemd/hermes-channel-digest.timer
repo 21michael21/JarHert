@@ -1,0 +1,10 @@
+[Unit]
+Description=Queue JarHert channel digests at 08:30
+
+[Timer]
+OnCalendar=*-*-* 08:30:00
+Persistent=true
+Unit=hermes-channel-digest.service
+
+[Install]
+WantedBy=timers.target

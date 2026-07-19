@@ -1,0 +1,9 @@
+[Unit]
+Description=JarHert Telegram channel digest
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/.hermes/profiles/jarhert
+Environment=HERMES_HOME=%h/.hermes/profiles/jarhert
+EnvironmentFile=%h/.hermes/profiles/jarhert/.env
+ExecStart=%h/.hermes/profiles/jarhert/.venv/bin/python %h/.hermes/profiles/jarhert/scripts/dispatch_channel_digest.py
