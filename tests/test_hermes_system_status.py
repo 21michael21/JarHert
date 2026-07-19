@@ -40,11 +40,12 @@ def test_system_status_reports_operational_facts_without_personal_content(tmp_pa
     with sqlite3.connect(profile / "data" / "personal-os.sqlite3") as connection:
         connection.executescript(
             """
-            CREATE TABLE native_coding_jobs (status TEXT, delivery_status TEXT);
-            INSERT INTO native_coding_jobs VALUES ('queued', 'pending');
-            INSERT INTO native_coding_jobs VALUES ('running', 'delivered');
-            INSERT INTO native_coding_jobs VALUES ('failed', 'pending');
-            INSERT INTO native_coding_jobs VALUES ('failed', 'delivered');
+            CREATE TABLE native_coding_jobs (status TEXT, delivery_status TEXT, deliver_result INTEGER);
+            INSERT INTO native_coding_jobs VALUES ('queued', 'pending', 1);
+            INSERT INTO native_coding_jobs VALUES ('running', 'delivered', 1);
+            INSERT INTO native_coding_jobs VALUES ('failed', 'pending', 1);
+            INSERT INTO native_coding_jobs VALUES ('failed', 'pending', 0);
+            INSERT INTO native_coding_jobs VALUES ('failed', 'delivered', 1);
             CREATE TABLE personal_summary_deliveries (
                 id INTEGER PRIMARY KEY, summary_type TEXT, status TEXT, updated_at TEXT
             );

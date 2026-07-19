@@ -253,11 +253,29 @@ function codingJobRow(job) {
   const row = node("article", "work-row code-row");
   const copy = node("div", "row-copy");
   const status = codingStatus(job.status);
-  copy.append(node("strong", "row-title", field(job, "prompt")), node("span", `row-meta ${status.tone}`, `${status.label} · ${job.mode === "research" ? "исследование" : "sandbox-код"}`));
+  const title = job.source_label ? `${job.source_label}: ${field(job, "prompt")}` : field(job, "prompt");
+  copy.append(node("strong", "row-title", shorten(title, 90)));
+  const when = job.created_at ? ` · ${formatDate(job.created_at)}` : "";
+  copy.append(node("span", `row-meta ${status.tone}`, `${status.label} · ${job.mode === "research" ? "исследование" : "sandbox-код"}${when}`));
   const actions = node("div", "row-actions");
   if (job.repository_url) actions.append(button("Проект", "row-button", () => openExternal(job.repository_url)));
   if (job.result_text || job.last_error) actions.append(button("Отчёт", "row-button", () => openReport(job)));
   row.append(copy, actions); return row;
+}
+
+function shorten(value, limit) {
+  const clean = String(value || "").replace(/\s+/g, " ").trim();
+  return clean.length <= limit ? clean : `${clean.slice(0, limit - 1).trimEnd()}…`;
+}
+
+function formatDate(value) {
+  const date = new Date(String(value).replace(" ", "T"));
+  if (Number.isNaN(date.getTime())) return "";
+  const today = new Date();
+  const sameDay = date.toDateString() === today.toDateString();
+  return sameDay
+    ? date.toLocaleTimeString("ru-RU", {hour: "2-digit", minute: "2-digit"})
+    : date.toLocaleDateString("ru-RU", {day: "numeric", month: "short"});
 }
 
 function codingStatus(value) {

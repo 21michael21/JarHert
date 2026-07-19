@@ -146,12 +146,12 @@ def _coding_queue_status(database: Path) -> dict[str, int | bool | str | None]:
         with sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True) as connection:
             statuses = dict(connection.execute("SELECT status, COUNT(*) FROM native_coding_jobs GROUP BY status"))
             pending = connection.execute(
-                "SELECT COUNT(*) FROM native_coding_jobs WHERE delivery_status IN ('pending', 'delivering')"
+                "SELECT COUNT(*) FROM native_coding_jobs WHERE delivery_status IN ('pending', 'delivering') AND deliver_result = 1"
             ).fetchone()
             unresolved_failed = connection.execute(
                 """
                 SELECT COUNT(*) FROM native_coding_jobs
-                WHERE status = 'failed' AND COALESCE(delivery_status, 'pending') != 'delivered'
+                WHERE status = 'failed' AND deliver_result = 1 AND COALESCE(delivery_status, 'pending') != 'delivered'
                 """
             ).fetchone()
             columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(native_coding_jobs)")}

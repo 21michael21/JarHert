@@ -1,0 +1,10 @@
+[Unit]
+Description=Deliver finished JarHert coding results every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+Persistent=true
+Unit=hermes-coding-dispatch.service
+
+[Install]
+WantedBy=timers.target
