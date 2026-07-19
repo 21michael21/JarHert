@@ -707,3 +707,36 @@ def test_dashboard_code_desk_shows_runner_status() -> None:
     assert 'id="runner-status"' in page
     assert "function renderRunnerStatus" in script
     assert ".runner-status" in stylesheet
+
+
+def test_dashboard_snapshot_is_cached_and_invalidated_by_mutations() -> None:
+    class CountingAPI(FakeDashboardAPI):
+        def __init__(self) -> None:
+            super().__init__()
+            self.today_calls = 0
+
+        def personal_today(self):
+            self.today_calls += 1
+            return super().personal_today()
+
+    app_client, counting_api = client(CountingAPI())
+    sign_in(app_client)
+
+    first = app_client.get("/api/snapshot")
+    second = app_client.get("/api/snapshot")
+
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json()
+    assert counting_api.today_calls == 1
+
+    app_client.post(
+        "/api/plans",
+        json={
+            "request_id": "cache-buster-1",
+            "actions": [{"type": "task.done", "payload": {"title": "Не выполнять"}}],
+        },
+    )
+    third = app_client.get("/api/snapshot")
+
+    assert third.status_code == 200
+    assert counting_api.today_calls == 2

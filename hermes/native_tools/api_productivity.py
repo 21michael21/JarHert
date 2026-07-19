@@ -22,6 +22,7 @@ class ProductivityMixin:
         _trips: "NativeToolsAPI._trips"
         _subscriptions: "NativeToolsAPI._subscriptions"
         _shopping: "NativeToolsAPI._shopping"
+        _expenses: "NativeToolsAPI._expenses"
         _sync_subscriptions: "NativeToolsAPI._sync_subscriptions"
 
     def reminder_create(self, **payload: Any) -> dict[str, Any]:
@@ -233,3 +234,35 @@ class ProductivityMixin:
     def shopping_remove(self, *, item_id: int) -> dict[str, Any]:
         self._capabilities().require("shopping.write")
         return value_payload(self._shopping().remove(item_id))
+
+    def expense_add(
+        self,
+        *,
+        text: str,
+        amount: float,
+        currency: str = "RUB",
+        category: str | None = None,
+        project: str | None = None,
+        spent_at: str | None = None,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        self._capabilities().require("finance.write")
+        return value_payload(
+            self._expenses().add(
+                text=text,
+                amount=amount,
+                currency=currency,
+                category=category,
+                project=project,
+                spent_at=spent_at,
+                idempotency_key=idempotency_key,
+            )
+        )
+
+    def expense_list(self, *, limit: int = 20, category: str | None = None) -> dict[str, Any]:
+        self._capabilities().require("finance.read")
+        return {"items": [value_payload(item) for item in self._expenses().list(limit=limit, category=category)]}
+
+    def expense_monthly(self, *, month: str | None = None) -> dict[str, Any]:
+        self._capabilities().require("finance.read")
+        return self._expenses().monthly_totals(month=month)

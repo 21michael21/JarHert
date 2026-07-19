@@ -455,6 +455,49 @@ def read_export_for_analysis(
     return ExportAnalysis(path=candidate, text=text, source_chars=len(source), truncated=truncated)
 
 
+_DOCUMENT_FILE_SUFFIXES = frozenset({".txt", ".md", ".jsonl", ".pdf"})
+
+
+def read_document_excerpt(
+    path: str | Path,
+    *,
+    output_dir: str | Path | None = None,
+    max_chars: int = DEFAULT_EXPORT_ANALYSIS_CHARS,
+) -> ExportAnalysis:
+    """Read a bounded text excerpt from one downloaded document (txt/md/jsonl/pdf)."""
+    directory = Path(output_dir or telegram_export_output_directory()).expanduser().resolve()
+    candidate = Path(path).expanduser().resolve()
+    if not candidate.is_relative_to(directory):
+        raise TelegramExportError("Читать можно только файлы в папке экспортов Telegram.")
+    if candidate.suffix.casefold() not in _DOCUMENT_FILE_SUFFIXES or not candidate.is_file():
+        raise TelegramExportError("Поддерживаются только txt, md, jsonl и pdf документы.")
+    if not stat.S_ISREG(candidate.stat().st_mode):
+        raise TelegramExportError("Документ должен быть обычным файлом.")
+    cap = max(1_000, min(int(max_chars), DEFAULT_EXPORT_ANALYSIS_CHARS))
+    if candidate.suffix.casefold() == ".pdf":
+        source = _pdf_text(candidate)
+    else:
+        try:
+            source = candidate.read_text(encoding="utf-8")
+        except UnicodeDecodeError as error:
+            raise TelegramExportError("Документ должен быть UTF-8 текстом.") from error
+    text, truncated = _sample_text(source, cap)
+    return ExportAnalysis(path=candidate, text=text, source_chars=len(source), truncated=truncated)
+
+
+def _pdf_text(path: Path) -> str:
+    try:
+        from pypdf import PdfReader
+    except ModuleNotFoundError as error:  # pragma: no cover - environment guard.
+        raise TelegramExportError("Чтение PDF требует пакет pypdf в окружении профиля.") from error
+    try:
+        reader = PdfReader(str(path))
+        pages = [page.extract_text() or "" for page in reader.pages[:50]]
+    except Exception as error:
+        raise TelegramExportError(f"Не удалось прочитать PDF: {type(error).__name__}.") from error
+    return "\n\n".join(pages)
+
+
 def cleanup_expired_exports(
     output_dir: str | Path,
     *,

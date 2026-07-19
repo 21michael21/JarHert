@@ -376,6 +376,8 @@ class NativeCodingJobStore:
                     ON native_coding_jobs(status, id);
                 CREATE INDEX IF NOT EXISTS ix_native_coding_jobs_user_id
                     ON native_coding_jobs(tg_user_id, id DESC);
+                CREATE INDEX IF NOT EXISTS ix_native_coding_jobs_delivery
+                    ON native_coding_jobs(status, delivery_status, deliver_result);
                 """
             )
             _add_column(connection, "delivery_status", "TEXT NOT NULL DEFAULT 'pending'")

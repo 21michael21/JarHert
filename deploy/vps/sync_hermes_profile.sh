@@ -109,6 +109,9 @@ sed -i '/^HERMES_NATIVE_SEND_COMMAND=/d' "$PROFILE_DIR/.env"
 printf "HERMES_NATIVE_SEND_COMMAND='%s -m hermes_cli.main'\n" "$HERMES_PYTHON" >> "$PROFILE_DIR/.env"
 sed -i '/^HERMES_ACTION_PLAN_RECEIPT_DELIVERY=/d' "$PROFILE_DIR/.env"
 printf 'HERMES_ACTION_PLAN_RECEIPT_DELIVERY=true\n' >> "$PROFILE_DIR/.env"
+# A single 👀 reaction on the owner's message is the instant ack for long turns.
+sed -i '/^TELEGRAM_REACTIONS=/d' "$PROFILE_DIR/.env"
+printf 'TELEGRAM_REACTIONS=true\n' >> "$PROFILE_DIR/.env"
 chmod 600 "$PROFILE_DIR/.env"
 "$HERMES_PYTHON" -m hermes_cli.main --profile jarhert tools disable --platform telegram \
   terminal file code_execution browser computer_use delegation cronjob >/dev/null

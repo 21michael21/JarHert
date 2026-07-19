@@ -6,7 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from .api_payload import document_attachment
-from .telegram_text_export import read_export_for_analysis
+from .telegram_text_export import read_document_excerpt, read_export_for_analysis
 
 if TYPE_CHECKING:
     from .mcp_api import Confirmer, NativeToolsAPI
@@ -124,6 +124,16 @@ class TelegramExportMixin:
     def telegram_text_export_excerpt(self, *, path: str, max_chars: int = 120_000) -> dict[str, Any]:
         self._capabilities().require("telegram.export.read")
         result = read_export_for_analysis(path, max_chars=max_chars)
+        return {
+            "path": str(result.path),
+            "text": result.text,
+            "source_chars": result.source_chars,
+            "truncated": result.truncated,
+        }
+
+    def telegram_file_read_excerpt(self, *, path: str, max_chars: int = 120_000) -> dict[str, Any]:
+        self._capabilities().require("telegram.export.read")
+        result = read_document_excerpt(path, max_chars=max_chars)
         return {
             "path": str(result.path),
             "text": result.text,

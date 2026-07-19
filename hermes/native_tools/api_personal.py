@@ -247,6 +247,39 @@ class PersonalMixin:
         self._capabilities().require("personal.read")
         return self._rhythms().weekly_review(now=now, timezone_name=timezone_name)
 
+    def project_status_report(self, *, project: str) -> dict[str, Any]:
+        """One deterministic project snapshot the model turns into a shareable status."""
+        self._capabilities().require("project.read")
+        requested = " ".join(str(project or "").split())
+        if not requested:
+            raise ValueError("Укажи проект для статуса.")
+        resolved = self._personal_os().resolve_project(requested)
+        canonical = str(resolved.name) if resolved else requested
+        adapter_error: str | None = None
+        try:
+            open_tasks = self._task_calendar().list_tasks()
+        except Exception as error:
+            open_tasks = ""
+            adapter_error = str(error)[:200]
+        return {
+            "project": canonical,
+            "resolved_from_memory": resolved is not None,
+            "open_commitments": [
+                value_payload(item)
+                for item in self._personal_os().list_commitments(project=canonical, status="open", limit=10)
+            ],
+            "notes": [
+                value_payload(item)
+                for item in self._personal_os().list_memory_blocks(project=canonical, limit=10)
+            ],
+            "recent_interactions": [
+                value_payload(item)
+                for item in self._crm().list_interactions(project=canonical, limit=5)
+            ],
+            "open_tasks_text": open_tasks,
+            "adapter_error": adapter_error,
+        }
+
 
 def _memory_is_stale(value: str, *, now: datetime) -> bool:
     try:

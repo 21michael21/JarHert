@@ -164,6 +164,10 @@ mcp_servers:
         - personal_weekly_review
         - subscription_create
         - subscription_list
+        - expense_add
+        - expense_list
+        - expense_monthly
+        - project_status_report
         - subscription_update
         - subscription_cancel
         - work_mode_get
@@ -176,6 +180,7 @@ mcp_servers:
         - telegram_text_export_confirmed
         - telegram_file_download_confirmed
         - telegram_text_export_excerpt
+        - telegram_file_read_excerpt
         - telegram_text_export_queue_analysis_confirmed
       resources: false
       prompts: false

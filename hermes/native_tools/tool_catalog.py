@@ -48,6 +48,8 @@ _DISCOVERY_HINTS: dict[str, tuple[str, ...]] = {
     "knowledge": ("сайт", "ссылк", "архив", "знани", "исслед"),
     "github": ("github", "реп", "pr", "issue", "ci", "гитхаб"),
     "web": ("поиск", "гугл", "интернет", "найди", "погугл", "загугл", "веб"),
+    "expense": ("трат", "потратил", "расход", "деньг", "бюджет", "подпис"),
+    "project": ("проект", "статус", "отчёт", "прогресс", "дедлайн"),
     "coding": ("код", "реп", "баг", "тест", "diff", "codex"),
     "voice": ("голос", "голосов", "диктов", "расшифров", "термин"),
     "action_plan": ("создай", "сделай", "перенес", "план", "несколько"),
@@ -114,6 +116,8 @@ CAPABILITY_SPECS = {
     "sandbox.run": CapabilitySpec("high", _CODE_ONLY),
     "web.search": CapabilitySpec("low", _ALL_MODES),
     "github.write": CapabilitySpec("high", _ALL_MODES),
+    "finance.read": CapabilitySpec("low", _ALL_MODES),
+    "finance.write": CapabilitySpec("low", _ALL_MODES),
 }
 
 
@@ -191,6 +195,10 @@ TOOL_CATALOG = (
     _tool("trip_item_complete", "trip_item_complete", ("trip.write",), "low", ToolBundle.PERSONAL),
     _tool("trip_cancel_confirmed", "trip_cancel", ("trip.cancel",), "medium", ToolBundle.PERSONAL),
     _tool("subscription_create", "subscription_create", ("subscription.write",), "low", ToolBundle.PERSONAL),
+    _tool("expense_add", "expense_add", ("finance.write",), "low", ToolBundle.PERSONAL),
+    _tool("expense_list", "expense_list", ("finance.read",), "low", ToolBundle.PERSONAL),
+    _tool("expense_monthly", "expense_monthly", ("finance.read",), "low", ToolBundle.PERSONAL),
+    _tool("project_status_report", "project_status_report", ("project.read",), "low", ToolBundle.PERSONAL),
     _tool("subscription_list", "subscription_list", ("subscription.read",), "low", ToolBundle.PERSONAL),
     _tool("subscription_update", "subscription_update", ("subscription.write",), "low", ToolBundle.PERSONAL),
     _tool("subscription_cancel", "subscription_cancel", ("subscription.write",), "low", ToolBundle.PERSONAL),
@@ -215,6 +223,7 @@ TOOL_CATALOG = (
     _tool("telegram_text_export_confirmed", "telegram_text_export_confirmed", ("telegram.export",), "high", ToolBundle.RESEARCH),
     _tool("telegram_file_download_confirmed", "telegram_file_download_confirmed", ("telegram.export",), "high", ToolBundle.RESEARCH),
     _tool("telegram_text_export_excerpt", "telegram_text_export_excerpt", ("telegram.export.read",), "low", ToolBundle.RESEARCH),
+    _tool("telegram_file_read_excerpt", "telegram_file_read_excerpt", ("telegram.export.read",), "low", ToolBundle.RESEARCH),
     _tool("telegram_text_export_queue_analysis_confirmed", "telegram_text_export_queue_analysis", ("telegram.export.read", "research.run"), "high", ToolBundle.RESEARCH),
     _tool("coding_job_enqueue_confirmed", "coding_job_enqueue", ("coding.queue", "research.run"), "high", ToolBundle.CODE),
     _tool("coding_job_list", "coding_job_list", ("coding.read",), "low", ToolBundle.CODE),

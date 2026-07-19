@@ -23,6 +23,7 @@ from .api_telegram import TelegramExportMixin
 from .capabilities import CapabilityPolicyStore
 from .coding_jobs import NativeCodingJobStore
 from .contacts import ContactStore
+from .expenses import ExpenseStore
 from .github_public import FetchJson as GitHubPublicFetchJson
 from .github_public import GitHubPublicReader
 from .knowledge_archive import FetchBytes as KnowledgeFetchBytes
@@ -198,6 +199,9 @@ class NativeToolsAPI(
 
     def _shopping(self) -> ShoppingStore:
         return self._store("shopping", lambda: ShoppingStore(self.database_path))
+
+    def _expenses(self) -> ExpenseStore:
+        return self._store("expenses", lambda: ExpenseStore(self.database_path))
 
     def _trips(self) -> TripStore:
         return self._store("trips", lambda: TripStore(self.database_path))

@@ -9,6 +9,7 @@ dependencies = [
   "telethon>=1.44",
   "mcp>=1.26",
   "pydantic>=2.7",
+  "pypdf>=5.0",
 ]
 
 [project.optional-dependencies]

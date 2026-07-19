@@ -28,6 +28,7 @@ TELEGRAM_AUTH_MAX_AGE_SECONDS = 60 * 60
 TELEGRAM_AUTH_FUTURE_SKEW_SECONDS = 5 * 60
 CLIP_TOKEN_SECONDS = 15 * 60
 PLAN_TOKEN_SECONDS = 15 * 60
+SNAPSHOT_CACHE_SECONDS = 60
 CODING_TOKEN_SECONDS = 15 * 60
 
 
@@ -100,6 +101,11 @@ def create_app(
             raise HTTPException(status_code=401, detail="telegram session required")
         return user_id
 
+    snapshot_cache: dict[int, tuple[float, dict[str, Any]]] = {}
+
+    def invalidate_snapshot(user_id: int) -> None:
+        snapshot_cache.pop(user_id, None)
+
     @app.get("/", response_class=HTMLResponse)
     async def page() -> HTMLResponse:
         return HTMLResponse(_dashboard_page())
@@ -130,8 +136,14 @@ def create_app(
 
     @app.get("/api/snapshot")
     async def snapshot(request: Request) -> JSONResponse:
-        require_user(request)
-        return JSONResponse(build_dashboard_snapshot(dashboard_api))
+        user_id = require_user(request)
+        now = clock()
+        cached = snapshot_cache.get(user_id)
+        if cached is not None and now - cached[0] < SNAPSHOT_CACHE_SECONDS:
+            return JSONResponse(cached[1])
+        payload = build_dashboard_snapshot(dashboard_api)
+        snapshot_cache[user_id] = (now, payload)
+        return JSONResponse(payload)
 
     @app.get("/api/tasks")
     async def tasks(request: Request) -> JSONResponse:
@@ -182,6 +194,7 @@ def create_app(
     @app.post("/api/coding/jobs/execute")
     async def execute_coding_job(request: Request) -> JSONResponse:
         user_id = require_user(request)
+        invalidate_snapshot(user_id)
         payload = await _request_payload(request)
         request_id = _request_id(payload.get("request_id"))
         prompt = _required_text(payload.get("prompt"), label="Кодовая задача", limit=3_000)
@@ -250,7 +263,7 @@ def create_app(
 
     @app.put("/api/monitors/{monitor_id}/schedule")
     async def update_monitor_schedule(monitor_id: int, request: Request) -> JSONResponse:
-        require_user(request)
+        invalidate_snapshot(require_user(request))
         payload = await _request_payload(request)
         quiet_hours = str(payload.get("quiet_hours") or "").strip() or None
         if quiet_hours is not None and len(quiet_hours) > 20:
@@ -295,6 +308,7 @@ def create_app(
     @app.post("/api/knowledge/clips/execute")
     async def execute_knowledge_clip(request: Request) -> JSONResponse:
         user_id = require_user(request)
+        invalidate_snapshot(user_id)
         payload = await _request_payload(request)
         request_id = _request_id(payload.get("request_id"))
         url = _call_write(lambda: {"url": validate_archive_url(str(payload.get("url") or ""))})["url"]
@@ -313,6 +327,7 @@ def create_app(
     @app.post("/api/plans")
     async def create_plan(request: Request) -> JSONResponse:
         user_id = require_user(request)
+        invalidate_snapshot(user_id)
         payload = await _request_payload(request)
         request_id = str(payload.get("request_id") or "")
         actions = payload.get("actions")
@@ -336,6 +351,7 @@ def create_app(
     @app.post("/api/plans/{plan_id}/execute")
     async def execute_plan(plan_id: int, request: Request) -> JSONResponse:
         user_id = require_user(request)
+        invalidate_snapshot(user_id)
         payload = await _request_payload(request)
         safe_plan_id = _positive_id(plan_id)
         _require_plan_token(payload.get("plan_token"), user_id, safe_plan_id, config.session_secret, clock=clock)
@@ -344,6 +360,7 @@ def create_app(
     @app.post("/api/plans/{plan_id}/cancel")
     async def cancel_plan(plan_id: int, request: Request) -> JSONResponse:
         user_id = require_user(request)
+        invalidate_snapshot(user_id)
         payload = await _request_payload(request)
         safe_plan_id = _positive_id(plan_id)
         _require_plan_token(payload.get("plan_token"), user_id, safe_plan_id, config.session_secret, clock=clock)
@@ -351,7 +368,7 @@ def create_app(
 
     @app.post("/api/reminders/{reminder_id}/reschedule")
     async def reschedule_reminder(reminder_id: int, request: Request) -> JSONResponse:
-        require_user(request)
+        invalidate_snapshot(require_user(request))
         payload = await _request_payload(request)
         remind_at = _required_text(payload.get("remind_at"), label="Время напоминания", limit=80)
         recurrence = str(payload.get("recurrence") or "keep")
@@ -369,19 +386,19 @@ def create_app(
 
     @app.post("/api/reminders/{reminder_id}/cancel")
     async def cancel_reminder(reminder_id: int, request: Request) -> JSONResponse:
-        require_user(request)
+        invalidate_snapshot(require_user(request))
         return JSONResponse(_call_write(lambda: dashboard_api.reminder_cancel(reminder_id=_positive_id(reminder_id))))
 
     @app.put("/api/notes/{note_id}")
     async def edit_note(note_id: int, request: Request) -> JSONResponse:
-        require_user(request)
+        invalidate_snapshot(require_user(request))
         payload = await _request_payload(request)
         content = _required_text(payload.get("content"), label="Текст заметки", limit=4000)
         return JSONResponse(_call_write(lambda: dashboard_api.note_edit(note_id=_positive_id(note_id), content=content)))
 
     @app.delete("/api/notes/{note_id}")
     async def delete_note(note_id: int, request: Request) -> JSONResponse:
-        require_user(request)
+        invalidate_snapshot(require_user(request))
         return JSONResponse(_call_write(lambda: dashboard_api.note_delete(note_id=_positive_id(note_id))))
 
     @app.get("/assets/{asset_name}")

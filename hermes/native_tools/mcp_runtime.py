@@ -455,6 +455,49 @@ async def github_repo_create_confirmed(
 
 
 @native_tool()
+def expense_add(
+    text: str,
+    amount: float,
+    idempotency_key: str,
+    currency: str = "RUB",
+    category: str | None = None,
+    project: str | None = None,
+    spent_at: str | None = None,
+) -> dict[str, object]:
+    """Record one one-off expense with an idempotency key."""
+    return api.expense_add(
+        text=text,
+        amount=amount,
+        currency=currency,
+        category=category,
+        project=project,
+        spent_at=spent_at,
+        idempotency_key=idempotency_key,
+    )
+
+
+@native_tool()
+def expense_list(
+    limit: Annotated[int, Field(ge=1, le=200)] = 20,
+    category: str | None = None,
+) -> dict[str, object]:
+    """List recent expenses, newest first."""
+    return api.expense_list(limit=limit, category=category)
+
+
+@native_tool()
+def expense_monthly(month: str | None = None) -> dict[str, object]:
+    """Show expense totals per currency and category for one month (YYYY-MM)."""
+    return api.expense_monthly(month=month)
+
+
+@native_tool()
+def project_status_report(project: str) -> dict[str, object]:
+    """Collect one project snapshot: commitments, notes, CRM and open tasks."""
+    return api.project_status_report(project=project)
+
+
+@native_tool()
 def shopping_add(
     text: str,
     idempotency_key: str,
@@ -970,6 +1013,15 @@ def telegram_text_export_excerpt(
 ) -> dict[str, object]:
     """Read an owner-requested bounded excerpt from one temporary Telegram text export."""
     return api.telegram_text_export_excerpt(path=path, max_chars=max_chars)
+
+
+@native_tool()
+def telegram_file_read_excerpt(
+    path: str,
+    max_chars: Annotated[int, Field(ge=1_000, le=120_000)] = 120_000,
+) -> dict[str, object]:
+    """Read a bounded text excerpt from one downloaded txt/md/jsonl/pdf document."""
+    return api.telegram_file_read_excerpt(path=path, max_chars=max_chars)
 
 
 @native_tool()
