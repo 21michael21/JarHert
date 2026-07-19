@@ -27,6 +27,7 @@ SESSION_SECONDS = 12 * 60 * 60
 TELEGRAM_AUTH_MAX_AGE_SECONDS = 60 * 60
 TELEGRAM_AUTH_FUTURE_SKEW_SECONDS = 5 * 60
 CLIP_TOKEN_SECONDS = 15 * 60
+PLAN_TOKEN_SECONDS = 15 * 60
 CODING_TOKEN_SECONDS = 15 * 60
 
 
@@ -61,6 +62,8 @@ class DashboardSettings:
                 "JARHERT_DASHBOARD_SESSION_SECRET, TELEGRAM_BOT_TOKEN and "
                 "JARHERT_DASHBOARD_ALLOWED_TG_USER_IDS (or TELEGRAM_ALLOWED_USERS) are required"
             )
+        if len(session_secret) < 32:
+            raise RuntimeError("JARHERT_DASHBOARD_SESSION_SECRET должен содержать минимум 32 символа.")
         return cls(
             bot_token=bot_token,
             session_secret=session_secret,
@@ -325,7 +328,7 @@ def create_app(
         return JSONResponse(
             {
                 **plan,
-                "plan_token": _new_plan_token(user_id, plan_id, config.session_secret),
+                "plan_token": _new_plan_token(user_id, plan_id, config.session_secret, clock=clock),
                 "preview": _plan_preview(plan),
             }
         )
@@ -335,7 +338,7 @@ def create_app(
         user_id = require_user(request)
         payload = await _request_payload(request)
         safe_plan_id = _positive_id(plan_id)
-        _require_plan_token(payload.get("plan_token"), user_id, safe_plan_id, config.session_secret)
+        _require_plan_token(payload.get("plan_token"), user_id, safe_plan_id, config.session_secret, clock=clock)
         return JSONResponse(_call_write(lambda: dashboard_api.action_plan_execute(plan_id=safe_plan_id, confirmed=True)))
 
     @app.post("/api/plans/{plan_id}/cancel")
@@ -343,7 +346,7 @@ def create_app(
         user_id = require_user(request)
         payload = await _request_payload(request)
         safe_plan_id = _positive_id(plan_id)
-        _require_plan_token(payload.get("plan_token"), user_id, safe_plan_id, config.session_secret)
+        _require_plan_token(payload.get("plan_token"), user_id, safe_plan_id, config.session_secret, clock=clock)
         return JSONResponse(_call_write(lambda: dashboard_api.action_plan_cancel(plan_id=safe_plan_id)))
 
     @app.post("/api/reminders/{reminder_id}/reschedule")
@@ -462,16 +465,27 @@ def _valid_session(token: str, secret: str, *, clock: Callable[[], float]) -> in
     return int(user_id)
 
 
-def _new_plan_token(user_id: int, plan_id: int, secret: str) -> str:
-    payload = f"dashboard-plan.{int(user_id)}.{int(plan_id)}"
+def _new_plan_token(user_id: int, plan_id: int, secret: str, *, clock: Callable[[], float]) -> str:
+    expires_at = int(clock()) + PLAN_TOKEN_SECONDS
+    payload = f"dashboard-plan.{int(user_id)}.{int(plan_id)}.{expires_at}"
     signature = hmac.new(secret.encode("utf-8"), payload.encode("ascii"), hashlib.sha256).hexdigest()
     return f"{payload}.{signature}"
 
 
-def _require_plan_token(token: Any, user_id: int, plan_id: int, secret: str) -> None:
-    expected = _new_plan_token(user_id, plan_id, secret)
-    if not isinstance(token, str) or not hmac.compare_digest(token, expected):
-        raise HTTPException(status_code=403, detail="plan confirmation is not valid for this session")
+def _require_plan_token(
+    token: Any, user_id: int, plan_id: int, secret: str, *, clock: Callable[[], float]
+) -> None:
+    parts = (token or "").split(".") if isinstance(token, str) else []
+    detail = "plan confirmation is not valid for this session"
+    if len(parts) != 5 or parts[0] != "dashboard-plan":
+        raise HTTPException(status_code=403, detail=detail)
+    _, token_user, token_plan, expires_at, signature = parts
+    if not expires_at.isdigit() or int(expires_at) < int(clock()):
+        raise HTTPException(status_code=403, detail="plan confirmation expired")
+    payload = ".".join(parts[:4])
+    expected = hmac.new(secret.encode("utf-8"), payload.encode("ascii"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature, expected) or token_user != str(int(user_id)) or token_plan != str(int(plan_id)):
+        raise HTTPException(status_code=403, detail=detail)
 
 
 def _new_clip_token(
@@ -738,7 +752,7 @@ def _dashboard_page() -> str:
     </section>
     <section id="view-tasks" class="view" hidden><div class="section-head"><div><p class="eyebrow">TRELLO</p><h2>Задачи</h2><p id="tasks-summary" class="section-copy muted"></p></div><button id="open-trello" class="text-button" type="button">Открыть Trello</button></div><div class="task-tools"><label class="task-search-field" for="task-search"><span>Найти задачу</span><input id="task-search" type="search" placeholder="Название, P1, Today" autocomplete="off"></label><label class="task-list-field" for="task-list-filter"><span>Список</span><select id="task-list-filter" aria-label="Список задач"></select></label></div><div id="task-list" class="work-list"></div></section>
     <section id="view-calendar" class="view" hidden><div class="section-head"><div><p class="eyebrow">7 ДНЕЙ</p><h2>Календарь</h2><p id="calendar-summary" class="section-copy muted"></p></div><button id="open-calendar" class="text-button" type="button">Открыть Calendar</button></div><div id="calendar-list" class="timeline"></div></section>
-    <section id="view-code" class="view" hidden><div class="section-head"><div><p class="eyebrow">CODE DESK</p><h2>Работа с кодом</h2><p class="muted section-copy">Дай GitHub-репозиторий для разбора кода или ссылки для проверки гипотезы. Runner вернёт причину, diff и тесты.</p><p class="muted code-guard">Работает в отдельной песочнице: может сделать ветку и commit; push/deploy только после твоего явного подтверждения.</p></div><button id="coding-add" class="primary compact-primary" type="button">Новая задача</button></div><div id="coding-jobs" class="work-list"></div></section>
+    <section id="view-code" class="view" hidden><div class="section-head"><div><p class="eyebrow">CODE DESK</p><h2>Работа с кодом</h2><p class="muted section-copy">Дай GitHub-репозиторий для разбора кода или ссылки для проверки гипотезы. Runner вернёт причину, diff и тесты.</p><p class="muted code-guard">Работает в отдельной песочнице: может сделать ветку и commit; push/deploy только после твоего явного подтверждения.</p></div><button id="coding-add" class="primary compact-primary" type="button">Новая задача</button></div><p id="runner-status" class="runner-status" data-tone="muted">Проверяю раннер…</p><div id="coding-jobs" class="work-list"></div></section>
     <section id="view-memory" class="view" hidden>
       <section class="section"><div class="section-head"><div><p class="eyebrow">НАПОМИНАНИЯ</p><h2>Ближайшее</h2></div><span id="reminder-count" class="count-pill">0</span></div><div id="reminders" class="work-list"></div></section>
       <section class="section"><div class="section-head"><div><p class="eyebrow">ЗАМЕТКИ</p><h2>Живая память</h2></div></div><label class="search-field" for="note-search"><span>Поиск по заметкам</span><input id="note-search" type="search" placeholder="OAuth, Hub_ML, идея..." autocomplete="off"></label><div id="notes" class="work-list"></div></section>

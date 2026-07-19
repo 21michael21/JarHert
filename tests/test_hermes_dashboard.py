@@ -646,3 +646,64 @@ def test_dashboard_runner_resolves_native_tools_when_executed_as_a_script() -> N
     )
 
     assert result.stdout.strip() == str(runner_path.parents[1])
+
+
+def test_dashboard_plan_token_expires() -> None:
+    now = time.time()
+
+    def clock() -> float:
+        return now
+
+    app = create_app(
+        api=FakeDashboardAPI(),
+        settings=DashboardSettings(
+            bot_token=BOT_TOKEN,
+            session_secret="test-secret",
+            allowed_user_ids=frozenset({OWNER_ID}),
+            secure_cookie=False,
+        ),
+        clock=clock,
+    )
+    app_client = TestClient(app)
+    sign_in(app_client)
+    draft = app_client.post(
+        "/api/plans",
+        json={
+            "request_id": "token-ttl-001",
+            "actions": [{"type": "task.done", "payload": {"title": "Не выполнять"}}],
+        },
+    )
+    token = draft.json()["plan_token"]
+
+    assert app_client.post("/api/plans/41/execute", json={"plan_token": token}).status_code == 200
+
+    now += 16 * 60
+
+    expired = app_client.post("/api/plans/41/execute", json={"plan_token": token})
+
+    assert expired.status_code == 403
+    assert expired.json()["detail"] == "plan confirmation expired"
+
+
+def test_dashboard_settings_reject_short_session_secret(monkeypatch) -> None:
+    monkeypatch.setenv("JARHERT_DASHBOARD_SESSION_SECRET", "short")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", BOT_TOKEN)
+    monkeypatch.setenv("JARHERT_DASHBOARD_ALLOWED_TG_USER_IDS", str(OWNER_ID))
+
+    try:
+        DashboardSettings.from_env()
+    except RuntimeError as error:
+        assert "32" in str(error)
+    else:  # pragma: no cover - protects against a security regression.
+        raise AssertionError("short session secret was accepted")
+
+
+def test_dashboard_code_desk_shows_runner_status() -> None:
+    app_client, _ = client()
+    page = app_client.get("/").text
+    script = (Path(__file__).parents[1] / "hermes" / "native_tools" / "dashboard_assets" / "dashboard.js").read_text()
+    stylesheet = (Path(__file__).parents[1] / "hermes" / "native_tools" / "dashboard_assets" / "dashboard.css").read_text()
+
+    assert 'id="runner-status"' in page
+    assert "function renderRunnerStatus" in script
+    assert ".runner-status" in stylesheet

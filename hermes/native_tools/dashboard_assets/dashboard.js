@@ -229,7 +229,24 @@ function compactEventRow(event) {
 }
 
 function renderCode() {
+  renderRunnerStatus();
   list("coding-jobs", state.coding.items || [], codingJobRow, "Кодовых задач пока нет. Добавь первую одной фразой.");
+}
+
+function renderRunnerStatus() {
+  const box = $("runner-status");
+  if (!box) return;
+  const queue = state.snapshot?.status?.coding_queue || {};
+  if (!queue.available) {
+    box.textContent = "Очередь кодинга недоступна";
+    box.dataset.tone = "muted";
+    return;
+  }
+  const states = {busy: "в работе", attention: "требует внимания", idle: "ждёт задачи", unknown: "статус неизвестен"};
+  const heartbeatAt = queue.last_heartbeat_at ? new Date(String(queue.last_heartbeat_at).replace(" ", "T")) : null;
+  const heartbeat = heartbeatAt && !Number.isNaN(heartbeatAt.getTime()) ? ` · heartbeat ${formatTime(heartbeatAt)}` : "";
+  box.textContent = `Раннер: ${states[queue.worker_state] || queue.worker_state}${heartbeat} · в очереди ${queue.queued || 0}`;
+  box.dataset.tone = {attention: "danger", busy: "warn", idle: "good"}[queue.worker_state] || "muted";
 }
 
 function codingJobRow(job) {
