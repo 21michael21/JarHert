@@ -1,3 +1,5 @@
+# Устаревший пример эпохи ADR 0001 (gateway-runtime, tools выключены).
+# Актуальный пример конфигурации: jarhert-native-config.yaml.example.
 model:
   provider: gemini
   default: gemini-2.5-flash-lite

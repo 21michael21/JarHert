@@ -44,6 +44,9 @@ def scan_repository(root: Path = PROJECT_ROOT) -> list[str]:
         r"gh[pousr]_[A-Za-z0-9]{30,})"
     )
     for revision in _git(root, "rev-list", "--all").splitlines():
+        for name in _git(root, "ls-tree", "-r", "--name-only", revision).splitlines():
+            if Path(name).name in SENSITIVE_NAMES:
+                findings.append(f"history-sensitive-file:{revision[:12]}:{name}")
         result = subprocess.run(
             ["git", "grep", "-n", "-I", "-E", grep_pattern, revision, "--"],
             cwd=root,

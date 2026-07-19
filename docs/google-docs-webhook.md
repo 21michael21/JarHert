@@ -1,5 +1,10 @@
 # Google Docs webhook
 
+> **Obsolete.** Этот документ относится к старому gateway-runtime (до
+> [ADR 0002](adr/0002-hermes-native-personal-os.md)). В текущем Hermes-native
+> профиле нет кода, который читает `GOOGLE_DOCS_WEBHOOK_URL/TOKEN` или
+> вызывает этот webhook. Оставлено как справка на случай возврата функции.
+
 Бот сохраняет идеи и напоминания локально всегда. Чтобы дополнительно писать их в Google Docs, сделай Google Apps Script webhook.
 
 ## 1. Создай Apps Script

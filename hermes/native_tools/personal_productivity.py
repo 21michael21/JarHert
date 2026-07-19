@@ -8,6 +8,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .database import open_personal_os_database
+from .validation import allowed, optional, required
 
 
 RECURRENCES = frozenset({"daily", "weekly", "monthly"})
@@ -42,7 +43,7 @@ class PersonalProductivityStore:
         source_type: str | None = None,
         source_id: int | None = None,
     ) -> PersonalReminder:
-        key = _required(idempotency_key, "Idempotency key", limit=220)
+        key = required(idempotency_key, "Idempotency key", limit=220)
         clean_recurrence = _recurrence(recurrence)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -62,11 +63,11 @@ class PersonalProductivityStore:
                     ) VALUES (?, ?, ?, 'active', ?, ?, ?, CURRENT_TIMESTAMP)
                     """,
                     (
-                        _required(text, "Reminder text", limit=1000),
+                        required(text, "Reminder text", limit=1000),
                         _utc_timestamp(remind_at),
                         clean_recurrence,
                         key,
-                        _optional(source_type, limit=40),
+                        optional(source_type, limit=40),
                         int(source_id) if source_id is not None else None,
                     ),
                 ).lastrowid
@@ -78,7 +79,7 @@ class PersonalProductivityStore:
         return _reminder_from_row(row)
 
     def list_reminders(self, *, status: str = "active", limit: int = 100) -> list[PersonalReminder]:
-        clean_status = _allowed(status, frozenset({"active", "sent", "cancelled"}), "Reminder status")
+        clean_status = allowed(status, frozenset({"active", "sent", "cancelled"}), "Reminder status")
         with self._connect() as connection:
             rows = connection.execute(
                 """
@@ -157,7 +158,7 @@ class PersonalProductivityStore:
                 SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
                 WHERE source_type = ? AND source_id = ? AND status = 'active'
                 """,
-                (_required(source_type, "Source type", limit=40), int(source_id)),
+                (required(source_type, "Source type", limit=40), int(source_id)),
             )
 
     def sync_source_reminder(
@@ -172,7 +173,7 @@ class PersonalProductivityStore:
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT id FROM personal_reminders WHERE source_type = ? AND source_id = ?",
-                (_required(source_type, "Source type", limit=40), int(source_id)),
+                (required(source_type, "Source type", limit=40), int(source_id)),
             ).fetchone()
             if row is not None:
                 connection.execute(
@@ -181,7 +182,7 @@ class PersonalProductivityStore:
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
-                    (_required(text, "Reminder text", limit=1000), _utc_timestamp(remind_at), int(row["id"])),
+                    (required(text, "Reminder text", limit=1000), _utc_timestamp(remind_at), int(row["id"])),
                 )
                 updated = connection.execute(
                     "SELECT * FROM personal_reminders WHERE id = ?", (int(row["id"]),)
@@ -393,26 +394,4 @@ def _next_occurrence(previous: datetime, recurrence: str, current: datetime) -> 
 def _recurrence(value: str | None) -> str | None:
     if value is None or not str(value).strip() or str(value).casefold() == "none":
         return None
-    return _allowed(str(value), RECURRENCES, "Recurrence")
-
-
-def _allowed(value: str, allowed: frozenset[str], label: str) -> str:
-    clean = _required(value, label, limit=40).casefold()
-    if clean not in allowed:
-        raise ValueError(f"{label} отсутствует в allowlist.")
-    return clean
-
-
-def _required(value: str, label: str, *, limit: int) -> str:
-    clean = " ".join(str(value or "").split())
-    if not clean:
-        raise ValueError(f"{label} не должен быть пустым.")
-    if len(clean) > limit:
-        raise ValueError(f"{label} превышает лимит {limit} символов.")
-    return clean
-
-
-def _optional(value: str | None, *, limit: int) -> str | None:
-    if value is None or not str(value).strip():
-        return None
-    return _required(value, "Value", limit=limit)
+    return allowed(str(value), RECURRENCES, "Recurrence")

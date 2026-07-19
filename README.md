@@ -62,10 +62,12 @@ Trello and Calendar canary. Run it only against the owner profile.
 
 ## Fast, quiet conversations
 
-Telegram uses Hermes `interrupt` input mode: when you replace a question while
-the assistant is working, the newer request wins instead of waiting behind an
-old reply. The JarHert sync migrates only its previous `queue` setting; any
-other explicit live display choice stays untouched.
+Telegram uses Hermes `queue` input mode: a message sent while the assistant
+is working waits as the next turn instead of interrupting it. In `interrupt`
+mode an inline confirmation could cancel its own already-approved MCP plan
+before the final receipt reached Telegram, so the profile deliberately stays
+on `queue`. The JarHert sync migrates only its previous `interrupt` setting;
+any other explicit live display choice stays untouched.
 
 For a voice dump, say everything naturally. Hermes first applies the compact
 owner vocabulary, keeps clear items, and shows one preview for the whole set

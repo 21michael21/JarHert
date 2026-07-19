@@ -8,11 +8,9 @@ def test_primary_local_check_is_hermes_native_only() -> None:
     check = (root / "scripts" / "native_check.sh").read_text(encoding="utf-8")
     local_check = (root / "scripts" / "local_check.sh").read_text(encoding="utf-8")
 
-    assert "test_hermes_personal_os.py" in check
-    assert "test_hermes_personal_database.py" in check
-    assert "test_hermes_dashboard.py" in check
-    assert "test_live_hermes_e2e_helpers.py" in check
+    assert "pytest -q tests/" in check
     assert "compileall hermes/native_tools hermes/scripts deploy/vps" in check
+    assert "security_scan.py" in check
     assert "scripts/native_check.sh" in local_check
     for legacy_runtime in ("gateway_bot", "assistant/", "backend/", "reminders", "telegram_collector", "scripts/migrate.sh"):
         assert legacy_runtime not in check

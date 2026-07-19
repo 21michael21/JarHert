@@ -48,6 +48,21 @@ def test_unknown_capability_is_denied(tmp_path: Path) -> None:
     assert decision.reason == "capability_not_allowlisted"
 
 
+def test_capability_denial_is_audited(tmp_path: Path, caplog) -> None:
+    policy = CapabilityPolicyStore(tmp_path / "personal-os.sqlite3")
+
+    with caplog.at_level("WARNING", logger="hermes.native_tools.capabilities"):
+        try:
+            policy.require("root.shell")
+        except PermissionError:
+            pass
+
+    assert any(
+        "Capability denied: root.shell" in record.message and "capability_not_allowlisted" in record.message
+        for record in caplog.records
+    )
+
+
 def test_native_api_exposes_mode_without_exposing_policy_mutation(tmp_path: Path) -> None:
     api = NativeToolsAPI(database_path=tmp_path / "personal-os.sqlite3")
 

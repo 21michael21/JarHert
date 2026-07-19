@@ -1,0 +1,28 @@
+name: native-check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  native-check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # security_scan.py checks the git history
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package
+        run: python -m pip install -e ".[dev]"
+
+      - name: Native check
+        run: NATIVE_CHECK_PYTHON="$(command -v python)" scripts/native_check.sh

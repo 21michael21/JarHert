@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .database import open_personal_os_database
+from .validation import optional, required
 
 
 MEMORY_BLOCK_TYPES = frozenset({"note", "profile", "person", "project", "commitment", "preference"})
@@ -82,9 +83,9 @@ class PersonalOSStore:
         project: str | None = None,
     ) -> MemoryBlock:
         kind = _allowed(block_type, MEMORY_BLOCK_TYPES, "Memory block type")
-        clean_subject = _required(subject, "Memory subject", limit=160)
-        clean_content = _required(content, "Memory content", limit=4000)
-        clean_project = _optional(project, limit=120)
+        clean_subject = required(subject, "Memory subject", limit=160)
+        clean_content = required(content, "Memory content", limit=4000)
+        clean_project = optional(project, limit=120)
         project_key = clean_project or ""
         with self._connect() as connection:
             existing = connection.execute(
@@ -128,7 +129,7 @@ class PersonalOSStore:
             values.append(_allowed(block_type, MEMORY_BLOCK_TYPES, "Memory block type"))
         if project:
             clauses.append("project_key = ?")
-            values.append(_required(project, "Project", limit=120))
+            values.append(required(project, "Project", limit=120))
         query = "SELECT * FROM memory_blocks"
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
@@ -146,7 +147,7 @@ class PersonalOSStore:
         clauses = ["memory_blocks_fts MATCH ?"]
         if project:
             clauses.append("blocks.project_key = ?")
-            values.append(_required(project, "Project", limit=120))
+            values.append(required(project, "Project", limit=120))
         values.append(max(1, min(int(limit), 100)))
         with self._connect() as connection:
             rows = connection.execute(
@@ -175,7 +176,7 @@ class PersonalOSStore:
         values: list[Any] = []
         if project:
             clauses.append("project_key = ?")
-            values.append(_required(project, "Project", limit=120))
+            values.append(required(project, "Project", limit=120))
         sql = "SELECT * FROM memory_blocks"
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
@@ -190,7 +191,7 @@ class PersonalOSStore:
         return matches[: max(1, min(int(limit), 20))]
 
     def edit_note(self, note_id: int, *, content: str) -> MemoryBlock:
-        clean_content = _required(content, "Note content", limit=4000)
+        clean_content = required(content, "Note content", limit=4000)
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT * FROM memory_blocks WHERE id = ? AND block_type = 'note'", (int(note_id),)
@@ -256,8 +257,8 @@ class PersonalOSStore:
         tools: list[str] | None = None,
         context_note: str | None = None,
     ) -> ProjectContext:
-        clean_key = _required(key, "Project key", limit=80)
-        clean_name = _required(name, "Project name", limit=160)
+        clean_key = required(key, "Project key", limit=80)
+        clean_name = required(name, "Project name", limit=160)
         clean_tools = _unique(tools or [])
         unknown = sorted(set(clean_tools) - PROJECT_TOOL_ALLOWLIST)
         if unknown:
@@ -286,12 +287,12 @@ class PersonalOSStore:
                     clean_key,
                     clean_name,
                     _json(clean_aliases),
-                    _optional(trello_board, limit=160),
-                    _optional(trello_list, limit=160),
-                    _optional(calendar_id, limit=240),
+                    optional(trello_board, limit=160),
+                    optional(trello_list, limit=160),
+                    optional(calendar_id, limit=240),
                     _json(_unique(contacts or [])),
                     _json(clean_tools),
-                    _optional(context_note, limit=2000),
+                    optional(context_note, limit=2000),
                 ),
             )
             row = connection.execute(
@@ -310,7 +311,7 @@ class PersonalOSStore:
         return [_project_from_row(row) for row in rows]
 
     def resolve_project(self, text: str) -> ProjectContext | None:
-        haystack = _normalize(_required(text, "Text", limit=4000))
+        haystack = _normalize(required(text, "Text", limit=4000))
         matches: list[tuple[int, ProjectContext]] = []
         for project in self.list_projects():
             lengths = [len(alias) for alias in project.aliases if _normalize(alias) in haystack]
@@ -333,7 +334,7 @@ class PersonalOSStore:
         due_at: str | None = None,
         idempotency_key: str | None = None,
     ) -> Commitment:
-        clean_key = _optional(idempotency_key, limit=220)
+        clean_key = optional(idempotency_key, limit=220)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             if clean_key:
@@ -351,10 +352,10 @@ class PersonalOSStore:
                     ) VALUES (?, ?, ?, ?, ?, 'open', ?)
                     """,
                     (
-                        _required(subject, "Commitment subject", limit=200),
-                        _required(content, "Commitment content", limit=2000),
-                        _optional(contact, limit=160),
-                        _optional(project, limit=120),
+                        required(subject, "Commitment subject", limit=200),
+                        required(content, "Commitment content", limit=2000),
+                        optional(contact, limit=160),
+                        optional(project, limit=120),
                         _utc_timestamp(due_at),
                         clean_key,
                     ),
@@ -375,10 +376,10 @@ class PersonalOSStore:
         values: list[Any] = [_allowed(status, frozenset({"open", "done", "cancelled"}), "Status")]
         if contact:
             clauses.append("contact = ? COLLATE NOCASE")
-            values.append(_required(contact, "Contact", limit=160))
+            values.append(required(contact, "Contact", limit=160))
         if project:
             clauses.append("project_key = ? COLLATE NOCASE")
-            values.append(_required(project, "Project", limit=120))
+            values.append(required(project, "Project", limit=120))
         values.append(max(1, min(int(limit), 200)))
         with self._connect() as connection:
             rows = connection.execute(
@@ -524,25 +525,10 @@ def _commitment_from_row(row: sqlite3.Row) -> Commitment:
 
 
 def _allowed(value: str, allowed: frozenset[str], label: str) -> str:
-    clean = _required(value, label, limit=80).casefold()
+    clean = required(value, label, limit=80).casefold()
     if clean not in allowed:
         raise ValueError(f"{label} отсутствует в allowlist.")
     return clean
-
-
-def _required(value: str, label: str, *, limit: int) -> str:
-    clean = " ".join(str(value or "").split())
-    if not clean:
-        raise ValueError(f"{label} не должен быть пустым.")
-    if len(clean) > limit:
-        raise ValueError(f"{label} превышает лимит {limit} символов.")
-    return clean
-
-
-def _optional(value: str | None, *, limit: int) -> str | None:
-    if value is None or not str(value).strip():
-        return None
-    return _required(value, "Value", limit=limit)
 
 
 def _fts_query(value: str) -> str:
@@ -554,7 +540,7 @@ def _unique(values: list[str]) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
     for value in values:
-        clean = _required(value, "List item", limit=160)
+        clean = required(value, "List item", limit=160)
         key = _normalize(clean)
         if key not in seen:
             result.append(clean)

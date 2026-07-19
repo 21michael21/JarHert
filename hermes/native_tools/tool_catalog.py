@@ -139,7 +139,7 @@ TOOL_CATALOG = (
     _tool("tool_catalog_discover", "tool_catalog_discover", (), "low", ToolBundle.OPERATIONS),
     _tool("tool_catalog_invoke", "tool_catalog_invoke", (), "low", ToolBundle.OPERATIONS),
     _tool("work_mode_get", "work_mode_get", (), "low", ToolBundle.OPERATIONS),
-    _tool("work_mode_set", "work_mode_set", (), "medium", ToolBundle.OPERATIONS),
+    _tool("work_mode_set", "work_mode_set", ("planner.control",), "medium", ToolBundle.OPERATIONS),
     _tool("voice_inbox_prepare", "voice_inbox_prepare", ("memory.read",), "low", ToolBundle.PERSONAL),
     _tool("voice_vocabulary_add", "voice_vocabulary_add", ("memory.write",), "low", ToolBundle.PERSONAL),
     _tool("voice_vocabulary_list", "voice_vocabulary_list", ("memory.read",), "low", ToolBundle.PERSONAL),

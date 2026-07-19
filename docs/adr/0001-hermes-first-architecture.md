@@ -2,7 +2,9 @@
 
 ## Статус
 
-Accepted for local MVP.
+Superseded by [ADR 0002](0002-hermes-native-personal-os.md). Описанный здесь
+вариант со своим gateway, пользователями и выключенными tools был заменён на
+Hermes-native Personal OS. Документ оставлен как исторический контекст.
 
 ## Контекст
 

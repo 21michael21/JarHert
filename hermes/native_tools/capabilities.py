@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
 from .database import open_personal_os_database
 from .tool_catalog import CAPABILITY_SPECS
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -82,6 +86,12 @@ class CapabilityPolicyStore:
     def require(self, capability: str) -> CapabilityDecision:
         decision = self.decide(capability)
         if decision.decision == "deny":
+            logger.warning(
+                "Capability denied: %s (mode=%s, reason=%s)",
+                decision.capability,
+                decision.mode,
+                decision.reason,
+            )
             raise PermissionError(f"Capability {capability} запрещена в режиме {decision.mode}.")
         return decision
 

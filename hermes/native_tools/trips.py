@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .database import open_personal_os_database
+from .validation import allowed, required
 
 
 TRIP_STATUSES = frozenset({"active", "completed", "cancelled"})
@@ -56,7 +57,7 @@ class TripStore:
         starts_at: str | None = None,
         ends_at: str | None = None,
     ) -> Trip:
-        key = _required(idempotency_key, "Idempotency key", limit=220)
+        key = required(idempotency_key, "Idempotency key", limit=220)
         start = _utc_timestamp(starts_at) if starts_at else None
         end = _utc_timestamp(ends_at) if ends_at else None
         if start and end and start >= end:
@@ -73,8 +74,8 @@ class TripStore:
                     VALUES (?, ?, ?, ?, 'active', ?)
                     """,
                     (
-                        _required(name, "Название поездки", limit=200),
-                        _required(destination, "Направление", limit=200),
+                        required(name, "Название поездки", limit=200),
+                        required(destination, "Направление", limit=200),
                         start,
                         end,
                         key,
@@ -91,7 +92,7 @@ class TripStore:
                 SELECT * FROM trips WHERE status = ?
                 ORDER BY starts_at IS NULL, starts_at, id DESC LIMIT ?
                 """,
-                (_allowed(status, TRIP_STATUSES, "Статус поездки"), max(1, min(int(limit), 200))),
+                (allowed(status, TRIP_STATUSES, "Статус поездки"), max(1, min(int(limit), 200))),
             ).fetchall()
         return [_trip_from_row(row) for row in rows]
 
@@ -112,7 +113,7 @@ class TripStore:
         details: str | None = None,
         due_at: str | None = None,
     ) -> TripItem:
-        key = _required(idempotency_key, "Idempotency key", limit=220)
+        key = required(idempotency_key, "Idempotency key", limit=220)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             trip = connection.execute("SELECT status FROM trips WHERE id = ?", (int(trip_id),)).fetchone()
@@ -131,8 +132,8 @@ class TripStore:
                     """,
                     (
                         int(trip_id),
-                        _allowed(kind, TRIP_ITEM_KINDS, "Тип пункта"),
-                        _required(title, "Пункт поездки", limit=240),
+                        allowed(kind, TRIP_ITEM_KINDS, "Тип пункта"),
+                        required(title, "Пункт поездки", limit=240),
                         _optional(details, limit=4000),
                         _utc_timestamp(due_at) if due_at else None,
                         key,
@@ -270,21 +271,5 @@ def _utc_timestamp(value: str) -> str:
     return parsed.astimezone(timezone.utc).isoformat()
 
 
-def _allowed(value: str, allowed: frozenset[str], label: str) -> str:
-    clean = _required(value, label, limit=40).casefold()
-    if clean not in allowed:
-        raise ValueError(f"{label} отсутствует в allowlist.")
-    return clean
-
-
-def _required(value: str, label: str, *, limit: int) -> str:
-    clean = " ".join(str(value or "").split())
-    if not clean:
-        raise ValueError(f"{label} не должен быть пустым.")
-    if len(clean) > limit:
-        raise ValueError(f"{label} превышает лимит {limit} символов.")
-    return clean
-
-
 def _optional(value: str | None, *, limit: int) -> str | None:
-    return _required(value, "Значение", limit=limit) if value is not None and str(value).strip() else None
+    return required(value, "Значение", limit=limit) if value is not None and str(value).strip() else None

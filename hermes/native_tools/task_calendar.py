@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from .validation import bounded
+
 
 class TaskCalendarError(RuntimeError):
     pass
@@ -227,14 +229,14 @@ class TaskCalendarAdapter:
         output = (result.stdout or "").strip()
         if result.returncode != 0:
             detail = (result.stderr or output or f"exit={result.returncode}").strip()
-            raise TaskCalendarError(_bounded(detail, 500))
-        return _bounded(output or "Готово.", max_output_chars)
+            raise TaskCalendarError(bounded(detail, 500))
+        return bounded(output or "Готово.", max_output_chars)
 
     def _probe(self, argv: list[str]) -> tuple[bool, str]:
         try:
             return True, self._run(argv)
         except TaskCalendarError as error:
-            return False, _bounded(str(error), 300)
+            return False, bounded(str(error), 300)
 
 
 def _required(value: str, label: str) -> str:
@@ -257,10 +259,6 @@ def _normalize_calendar_datetime(value: str) -> str:
     except ValueError:
         return clean
     return parsed.strftime("%Y-%m-%d %H:%M")
-
-
-def _bounded(value: str, limit: int) -> str:
-    return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"
 
 
 _CALENDAR_HEALTH_SCRIPT = """

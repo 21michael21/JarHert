@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .database import open_personal_os_database
+from .validation import allowed, optional, required
 
 
 INTERACTION_KINDS = frozenset({"message", "call", "meeting", "agreement", "note"})
@@ -40,7 +41,7 @@ class PersonalCRMStore:
         occurred_at: str | None = None,
         next_contact_at: str | None = None,
     ) -> CRMInteraction:
-        key = _required(idempotency_key, "Idempotency key", limit=220)
+        key = required(idempotency_key, "Idempotency key", limit=220)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
@@ -58,10 +59,10 @@ class PersonalCRMStore:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        _required(contact, "Contact", limit=160),
-                        _allowed(kind, INTERACTION_KINDS, "Interaction kind"),
-                        _required(summary, "Summary", limit=2000),
-                        _optional(project, limit=120),
+                        required(contact, "Contact", limit=160),
+                        allowed(kind, INTERACTION_KINDS, "Interaction kind"),
+                        required(summary, "Summary", limit=2000),
+                        optional(project, limit=120),
                         _utc_timestamp(occurred_at) if occurred_at else datetime.now(timezone.utc).isoformat(),
                         _utc_timestamp(next_contact_at) if next_contact_at else None,
                         key,
@@ -85,10 +86,10 @@ class PersonalCRMStore:
         values: list[object] = []
         if contact:
             clauses.append("contact = ? COLLATE NOCASE")
-            values.append(_required(contact, "Contact", limit=160))
+            values.append(required(contact, "Contact", limit=160))
         if project:
             clauses.append("project_key = ? COLLATE NOCASE")
-            values.append(_required(project, "Project", limit=120))
+            values.append(required(project, "Project", limit=120))
         query = "SELECT * FROM crm_interactions"
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
@@ -158,24 +159,3 @@ def _utc_timestamp(value: str) -> str:
         raise ValueError("Время CRM должно содержать timezone.")
     return parsed.astimezone(timezone.utc).isoformat()
 
-
-def _allowed(value: str, allowed: frozenset[str], label: str) -> str:
-    clean = _required(value, label, limit=40).casefold()
-    if clean not in allowed:
-        raise ValueError(f"{label} отсутствует в allowlist.")
-    return clean
-
-
-def _required(value: str, label: str, *, limit: int) -> str:
-    clean = " ".join(str(value or "").split())
-    if not clean:
-        raise ValueError(f"{label} не должен быть пустым.")
-    if len(clean) > limit:
-        raise ValueError(f"{label} превышает лимит {limit} символов.")
-    return clean
-
-
-def _optional(value: str | None, *, limit: int) -> str | None:
-    if value is None or not str(value).strip():
-        return None
-    return _required(value, "Value", limit=limit)

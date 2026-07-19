@@ -11,6 +11,17 @@ env_requires:
   - name: TELEGRAM_ALLOWED_USERS
     description: "Разрешённые Telegram user ID через запятую"
     required: true
+  - name: HERMES_OWNER_TELEGRAM_CHAT_ID
+    description: "Telegram chat ID владельца; без него scheduled delivery и receipts не стартуют"
+    required: true
+  - name: HERMES_TIMEZONE
+    description: "IANA timezone для напоминаний, daily brief и weekly review"
+    required: false
+    default: "Europe/Moscow"
+  - name: PERSONAL_OS_DB
+    description: "Path to the single Personal OS SQLite database"
+    required: false
+    default: "~/.hermes/profiles/jarhert/data/personal-os.sqlite3"
   - name: JARHERT_DASHBOARD_SESSION_SECRET
     description: "Random secret for signed Telegram Mini App sessions; never commit it"
     required: false
@@ -19,6 +30,14 @@ env_requires:
     description: "Optional stricter Telegram user allowlist for the personal Mini App"
     required: false
     default: ""
+  - name: JARHERT_DASHBOARD_HOST
+    description: "Dashboard bind address; keep loopback behind the HTTPS reverse proxy"
+    required: false
+    default: "127.0.0.1"
+  - name: JARHERT_DASHBOARD_PORT
+    description: "Dashboard bind port"
+    required: false
+    default: "8788"
   - name: OPENROUTER_API_KEY
     description: "OpenRouter, если используется free/cheap provider"
     required: false
@@ -31,6 +50,14 @@ env_requires:
     description: "Comma-separated HTTPS hosts allowed as declared research sources"
     required: false
     default: "github.com,api.github.com"
+  - name: GITHUB_MCP_ENABLED
+    description: "Enable the read-only GitHub MCP only after binary and token are installed"
+    required: false
+    default: "false"
+  - name: GITHUB_PERSONAL_ACCESS_TOKEN
+    description: "Fine-grained read-only token for the GitHub MCP; never commit it"
+    required: false
+    default: ""
   - name: TASK_COMMAND_CENTER_DIR
     description: "External Task Command Center directory on this host"
     required: true
@@ -38,6 +65,10 @@ env_requires:
     description: "Python executable relative to Task Command Center"
     required: false
     default: ".venv/bin/python"
+  - name: TASK_COMMAND_CENTER_TIMEOUT_SECONDS
+    description: "Timeout for one Task Command Center adapter call"
+    required: false
+    default: "45"
   - name: TELEGRAM_API_ID
     description: "Telegram MTProto application ID for owner-authorized exports"
     required: false
@@ -50,6 +81,50 @@ env_requires:
     description: "Path to the owner-authorized Telethon session"
     required: false
     default: ""
+  - name: TELEGRAM_EXPORT_DIR
+    description: "Short-lived directory for text-only Telegram exports"
+    required: false
+    default: "~/.hermes/profiles/jarhert/exports/telegram"
+  - name: TELEGRAM_EXPORT_RETENTION_HOURS
+    description: "Export retention before automatic cleanup (1-168)"
+    required: false
+    default: "48"
+  - name: HERMES_TOOL_SURFACE
+    description: "MCP surface: catalog (recommended) or full one-tool-per-function"
+    required: false
+    default: "catalog"
+  - name: HERMES_TOOL_BUNDLES
+    description: "Comma-separated capability bundles behind discovery, or all"
+    required: false
+    default: "all"
+  - name: HERMES_ACTION_PLAN_RECEIPT_DELIVERY
+    description: "Send one durable receipt after a confirmed plan completes"
+    required: false
+    default: "true"
+  - name: MONITOR_DAILY_LLM_BUDGET
+    description: "Daily LLM call budget for monitor summaries"
+    required: false
+    default: "10"
+  - name: HERMES_CODING_QUEUE_SSH
+    description: "SSH target the Mac runner uses to claim coding jobs"
+    required: false
+    default: ""
+  - name: HERMES_CODING_EXECUTOR
+    description: "Coding runner executor: codex (default) or legacy hermes Docker"
+    required: false
+    default: "codex"
+  - name: HERMES_CODING_ALLOW_COMMIT
+    description: "Allow the runner to commit inside its disposable workspace"
+    required: false
+    default: "true"
+  - name: HERMES_CODING_ALLOW_PUSH
+    description: "Allow the runner to push a new review branch"
+    required: false
+    default: "false"
+  - name: HERMES_CODING_ALLOW_DEPLOY
+    description: "Allow deploy only when the job explicitly asks for it"
+    required: false
+    default: "false"
 
 distribution_owned:
   - SOUL.md
