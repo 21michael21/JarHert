@@ -126,6 +126,8 @@ if systemctl --user cat hermes-dashboard-jarhert.service >/dev/null 2>&1; then
   systemctl --user is-active --quiet hermes-dashboard-jarhert.service
 fi
 "$HERMES_PYTHON" -m hermes_cli.main --profile jarhert skills list >/dev/null
+# Rollback snapshots pile up one per sync; keep a month of history, not forever.
+find "$PROFILE_DIR/backups" -maxdepth 1 -type d -name 'profile-sync-*' -mtime +30 -print -exec rm -rf {} + 2>/dev/null | sed 's/^/pruned=/'
 echo "profile_sync=ok commit=$COMMIT rollback=$ROLLBACK_DIR"
 REMOTE_SCRIPT
 
