@@ -242,6 +242,47 @@ def create_app(
         require_user(request)
         return JSONResponse(_call_read(lambda: dashboard_api.note_history(note_id=_positive_id(note_id))))
 
+    @app.post("/api/notes")
+    async def create_note(request: Request) -> JSONResponse:
+        user_id = require_user(request)
+        invalidate_snapshot(user_id)
+        payload = await _request_payload(request)
+        subject = _required_text(payload.get("subject"), label="Тема заметки", limit=200)
+        content = _required_text(payload.get("content"), label="Текст заметки", limit=4000)
+        project = _optional_text(payload.get("project"), limit=120)
+        return JSONResponse(
+            _call_write(
+                lambda: dashboard_api.memory_block_upsert(
+                    block_type="note",
+                    subject=subject,
+                    content=content,
+                    project=project,
+                )
+            )
+        )
+
+    @app.post("/api/reminders")
+    async def create_reminder(request: Request) -> JSONResponse:
+        user_id = require_user(request)
+        invalidate_snapshot(user_id)
+        payload = await _request_payload(request)
+        request_id = _request_id(payload.get("request_id"))
+        text = _required_text(payload.get("text"), label="Текст напоминания", limit=500)
+        remind_at = _required_text(payload.get("remind_at"), label="Время напоминания", limit=80)
+        recurrence = str(payload.get("recurrence") or "none")
+        if recurrence not in {"none", "daily", "weekly", "monthly"}:
+            raise HTTPException(status_code=422, detail="unknown recurrence")
+        return JSONResponse(
+            _call_write(
+                lambda: dashboard_api.reminder_create(
+                    text=text,
+                    remind_at=remind_at,
+                    recurrence=recurrence,
+                    idempotency_key=f"dashboard:reminder:{user_id}:{request_id}",
+                )
+            )
+        )
+
     @app.get("/api/knowledge/sources")
     async def knowledge_sources(request: Request, project: str | None = None) -> JSONResponse:
         require_user(request)
@@ -818,8 +859,8 @@ def _dashboard_page() -> str:
       <section class="section"><div class="section-head"><div><p class="eyebrow">ТРАТЫ</p><h2>Последние записи</h2></div><span id="expense-count" class="count-pill">0</span></div><div id="expenses" class="work-list"></div></section>
     </section>
     <section id="view-memory" class="view" hidden>
-      <section class="section"><div class="section-head"><div><p class="eyebrow">НАПОМИНАНИЯ</p><h2>Ближайшее</h2></div><span id="reminder-count" class="count-pill">0</span></div><div id="reminders" class="work-list"></div></section>
-      <section class="section"><div class="section-head"><div><p class="eyebrow">ЗАМЕТКИ</p><h2>Живая память</h2></div></div><label class="search-field" for="note-search"><span>Поиск по заметкам</span><input id="note-search" type="search" placeholder="OAuth, Hub_ML, идея..." autocomplete="off"></label><div id="notes" class="work-list"></div></section>
+      <section class="section"><div class="section-head"><div><p class="eyebrow">НАПОМИНАНИЯ</p><h2>Ближайшее</h2></div><div class="section-actions"><span id="reminder-count" class="count-pill">0</span><button id="reminder-add" class="text-button" type="button">Новое</button></div></div><div id="reminders" class="work-list"></div></section>
+      <section class="section"><div class="section-head"><div><p class="eyebrow">ЗАМЕТКИ</p><h2>Живая память</h2></div><button id="note-add" class="text-button" type="button">Новая</button></div><label class="search-field" for="note-search"><span>Поиск по заметкам</span><input id="note-search" type="search" placeholder="OAuth, Hub_ML, идея..." autocomplete="off"></label><div id="notes" class="work-list"></div></section>
       <section class="section"><div class="section-head"><div><p class="eyebrow">ИСТОЧНИКИ</p><h2>База знаний</h2></div><button id="knowledge-add" class="text-button" type="button">Добавить ссылку</button></div><p class="muted section-copy">Только явно добавленная публичная страница. Сначала preview, потом сохранение.</p><div id="knowledge-sources" class="work-list"></div></section>
       <section class="section status-section"><div class="section-head"><div><p class="eyebrow">СИСТЕМА</p><h2>Статус</h2></div><button id="architecture-open" class="text-button" type="button">Как работает</button></div><div id="system" class="status-list"></div></section>
     </section>
@@ -832,6 +873,8 @@ def _dashboard_page() -> str:
 <dialog id="task-menu-dialog"><form method="dialog"><p class="eyebrow">ЗАДАЧА</p><h2 id="task-menu-title">Задача</h2><div class="task-menu-actions"><button id="task-menu-move" class="secondary" type="button">Перенести</button><button id="task-menu-priority" class="secondary" type="button">Изменить приоритет</button><button id="task-menu-open" class="secondary" type="button">Открыть в Trello</button></div><div class="dialog-actions"><button id="task-menu-close" class="primary" type="submit">Готово</button></div></form></dialog>
 <dialog id="edit-dialog"><form id="edit-form"><p class="eyebrow" id="edit-eyebrow">КОРРЕКТИРОВКА</p><h2 id="edit-title">Изменить</h2><p id="edit-help" class="muted"></p><label id="edit-field-label"><span id="edit-field-name">Значение</span><input id="edit-date" type="datetime-local" hidden><input id="edit-end" type="datetime-local" hidden><select id="edit-choice" hidden></select><textarea id="edit-value" rows="5"></textarea></label><label id="recurrence-field" hidden><span>Повтор</span><select id="edit-recurrence"><option value="keep">Не менять</option><option value="none">Не повторять</option><option value="daily">Каждый день</option><option value="weekly">Каждую неделю</option><option value="monthly">Каждый месяц</option></select></label><div class="dialog-actions"><button id="dialog-cancel" class="secondary" type="button">Отмена</button><button id="dialog-save" class="primary" type="submit">К preview</button></div></form></dialog>
 <dialog id="plan-dialog"><form id="plan-form"><p class="eyebrow">ПРОВЕРЬ И ПОДТВЕРДИ</p><h2>План действий</h2><div id="plan-preview" class="preview-list"></div><p class="muted">Изменения применятся один раз после подтверждения.</p><div class="dialog-actions"><button id="plan-cancel" class="secondary" type="button">Отмена</button><button id="plan-execute" class="primary" type="submit">Применить</button></div></form></dialog>
+<dialog id="note-dialog"><form id="note-form"><p class="eyebrow">ПАМЯТЬ</p><h2>Новая заметка</h2><label><span>Тема</span><input id="note-subject" type="text" maxlength="200" placeholder="OAuth, идея, договорённость" required></label><label><span>Текст</span><textarea id="note-content" rows="4" maxlength="4000" placeholder="Суть своими словами" required></textarea></label><label><span>Проект, если нужен</span><input id="note-project" type="text" maxlength="120" placeholder="NoManual"></label><div class="dialog-actions"><button id="note-cancel" class="secondary" type="button">Отмена</button><button class="primary" type="submit">Сохранить</button></div></form></dialog>
+<dialog id="reminder-dialog"><form id="reminder-form"><p class="eyebrow">НАПОМИНАНИЕ</p><h2>Новое напоминание</h2><label><span>О чём напомнить</span><input id="reminder-text" type="text" maxlength="500" placeholder="Позвонить врачу" required></label><label><span>Когда</span><input id="reminder-at" type="datetime-local" required></label><label><span>Повтор</span><select id="reminder-recurrence"><option value="none" selected>Не повторять</option><option value="daily">Каждый день</option><option value="weekly">Каждую неделю</option><option value="monthly">Каждый месяц</option></select></label><div class="dialog-actions"><button id="reminder-cancel" class="secondary" type="button">Отмена</button><button class="primary" type="submit">Создать</button></div></form></dialog>
 <dialog id="expense-dialog"><form id="expense-form"><p class="eyebrow">ДЕНЬГИ</p><h2>Новая трата</h2><label><span>Сумма</span><input id="expense-amount" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="1200" required></label><label><span>Валюта</span><select id="expense-currency"><option value="RUB" selected>RUB</option><option value="USD">USD</option><option value="EUR">EUR</option></select></label><label><span>За что</span><input id="expense-text" type="text" maxlength="200" placeholder="AWS, такси, кофе" required></label><label><span>Категория, если нужна</span><input id="expense-category" type="text" maxlength="60" placeholder="infra, food, transport"></label><label><span>Проект, если нужен</span><input id="expense-project" type="text" maxlength="120" placeholder="NoManual"></label><div class="dialog-actions"><button id="expense-cancel" class="secondary" type="button">Отмена</button><button class="primary" type="submit">Записать</button></div></form></dialog>
 <dialog id="report-dialog"><form method="dialog"><p class="eyebrow">ОТЧЁТ RUNNER</p><h2 id="report-title">Работа</h2><pre id="report-content" class="report-content"></pre><div class="dialog-actions"><button id="report-close" class="primary" type="submit">Закрыть</button></div></form></dialog>
 <dialog id="history-dialog"><form method="dialog"><p class="eyebrow">ИСТОРИЯ ЗАМЕТКИ</p><h2 id="history-title">Заметка</h2><div id="history-content" class="preview-list"></div><div class="dialog-actions"><button id="history-close" class="primary" type="submit">Закрыть</button></div></form></dialog>

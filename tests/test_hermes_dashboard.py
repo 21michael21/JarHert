@@ -215,6 +215,14 @@ class FakeDashboardAPI:
         self.added_expense = payload
         return {"id": 4, "text": payload["text"], "amount": payload["amount"], "currency": payload["currency"]}
 
+    def memory_block_upsert(self, **payload):
+        self.created_note = payload
+        return {"id": 9, "subject": payload["subject"], "content": payload["content"], "project": payload.get("project")}
+
+    def reminder_create(self, **payload):
+        self.created_reminder = payload
+        return {"id": 11, "text": payload["text"], "remind_at": payload["remind_at"]}
+
 
 def test_dashboard_read_model_is_independent_from_http_routes() -> None:
     snapshot = build_dashboard_snapshot(FakeDashboardAPI())
@@ -797,3 +805,27 @@ def test_dashboard_expenses_endpoints_round_trip() -> None:
     assert dashboard_api.added_expense["amount"] == 500.0
     assert dashboard_api.added_expense["currency"] == "RUB"
     assert dashboard_api.added_expense["idempotency_key"].startswith(f"dashboard:expense:{OWNER_ID}:")
+
+
+def test_dashboard_note_and_reminder_creation() -> None:
+    app_client, dashboard_api = client()
+    sign_in(app_client)
+
+    note = app_client.post("/api/notes", json={"subject": "Идея", "content": "Сделать дайджест", "project": "NoManual"})
+    assert note.status_code == 200
+    assert dashboard_api.created_note == {
+        "block_type": "note",
+        "subject": "Идея",
+        "content": "Сделать дайджест",
+        "project": "NoManual",
+    }
+
+    reminder = app_client.post(
+        "/api/reminders",
+        json={"request_id": "rem-0001", "text": "Позвонить", "remind_at": "2030-01-01 10:00", "recurrence": "weekly"},
+    )
+    assert reminder.status_code == 200
+    assert dashboard_api.created_reminder["recurrence"] == "weekly"
+    assert dashboard_api.created_reminder["idempotency_key"].startswith(f"dashboard:reminder:{OWNER_ID}:")
+
+    assert app_client.post("/api/reminders", json={"request_id": "rem-0002", "text": "X", "remind_at": "2030-01-01 10:00", "recurrence": "hourly"}).status_code == 422

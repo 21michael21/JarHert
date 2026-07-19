@@ -319,6 +319,38 @@ async function submitExpense(event) {
   await refresh();
 }
 
+async function submitNote(event) {
+  event.preventDefault();
+  const payload = {
+    subject: $("note-subject").value.trim(),
+    content: $("note-content").value.trim(),
+    project: $("note-project").value.trim() || null,
+  };
+  if (!payload.subject || !payload.content) return;
+  await request("/api/notes", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(payload)});
+  $("note-dialog").close();
+  haptic("notificationOccurred", "success");
+  showNotice("Заметка сохранена");
+  await refresh();
+}
+
+async function submitReminder(event) {
+  event.preventDefault();
+  const at = $("reminder-at").value;
+  const payload = {
+    request_id: crypto.randomUUID().replaceAll("-", "").slice(0, 24),
+    text: $("reminder-text").value.trim(),
+    remind_at: at ? at.replace("T", " ") : "",
+    recurrence: $("reminder-recurrence").value,
+  };
+  if (!payload.text || !payload.remind_at) return;
+  await request("/api/reminders", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(payload)});
+  $("reminder-dialog").close();
+  haptic("notificationOccurred", "success");
+  showNotice("Напоминание создано");
+  await refresh();
+}
+
 function renderRunnerStatus() {
   const box = $("runner-status");
   if (!box) return;
@@ -779,6 +811,8 @@ function init() {
   $("quick-form").addEventListener("submit", (event) => { event.preventDefault(); try { const action = quickAction(); $("quick-dialog").close(); preparePlan([action]); } catch (error) { showNotice(friendlyError(error)); } });
   $("coding-add").addEventListener("click", openCoding); $("coding-cancel").addEventListener("click", () => $("coding-dialog").close()); $("coding-mode").addEventListener("change", updateCodingForm); $("coding-form").addEventListener("submit", previewCoding);
   $("expense-add").addEventListener("click", openExpenseDialog); $("expense-cancel").addEventListener("click", () => $("expense-dialog").close()); $("expense-form").addEventListener("submit", (event) => submitExpense(event).catch((error) => showNotice(friendlyError(error))));
+  $("note-add").addEventListener("click", () => { $("note-form").reset(); $("note-dialog").showModal(); }); $("note-cancel").addEventListener("click", () => $("note-dialog").close()); $("note-form").addEventListener("submit", (event) => submitNote(event).catch((error) => showNotice(friendlyError(error))));
+  $("reminder-add").addEventListener("click", () => { $("reminder-form").reset(); $("reminder-dialog").showModal(); }); $("reminder-cancel").addEventListener("click", () => $("reminder-dialog").close()); $("reminder-form").addEventListener("submit", (event) => submitReminder(event).catch((error) => showNotice(friendlyError(error))));
   $("edit-form").addEventListener("submit", saveEdit); $("dialog-cancel").addEventListener("click", () => $("edit-dialog").close());
   $("plan-form").addEventListener("submit", executePlan); $("plan-cancel").addEventListener("click", cancelPlan);
   $("task-search").addEventListener("input", (event) => { state.taskQuery = event.target.value; renderTasks(); });
