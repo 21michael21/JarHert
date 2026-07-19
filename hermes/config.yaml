@@ -125,6 +125,8 @@ mcp_servers:
         - knowledge_source_excerpt
         - knowledge_list_sources
         - github_public_repository
+        - web_search
+        - github_repo_create_confirmed
         - shopping_add
         - shopping_list
         - shopping_mark_bought

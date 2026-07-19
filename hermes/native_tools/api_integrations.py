@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from .api_payload import value_payload
+from .github_write import create_repository
+from .web_search import search_web
 
 if TYPE_CHECKING:
     from .mcp_api import Confirmer, NativeToolsAPI
@@ -183,6 +186,36 @@ class IntegrationsMixin:
     def github_public_repository(self, *, url: str) -> dict[str, Any]:
         self._capabilities().require("github.read")
         return self._github_public().inspect_repository(url)
+
+    def web_search(self, *, query: str, limit: int = 6) -> dict[str, Any]:
+        self._capabilities().require("web.search")
+        return {"items": [asdict(item) for item in search_web(query, limit=limit)]}
+
+    def github_repo_create(
+        self,
+        *,
+        name: str,
+        description: str = "",
+        private: bool = True,
+        confirmed: bool = False,
+    ) -> dict[str, Any]:
+        if not confirmed:
+            raise ValueError("Создание репозитория требует одно явное подтверждение пользователя.")
+        return create_repository(name, description=description, private=private)
+
+    async def github_repo_create_confirmed(
+        self,
+        *,
+        name: str,
+        description: str = "",
+        private: bool = True,
+        confirmer: Confirmer,
+    ) -> dict[str, Any]:
+        self._capabilities().require("github.write")
+        visibility = "приватный" if private else "публичный"
+        if not await confirmer(f"Создать {visibility} репозиторий {name} в твоём GitHub?"):
+            return {"status": "cancelled", "name": name}
+        return self.github_repo_create(name=name, description=description, private=private, confirmed=True)
 
     def skill_feedback(
         self,

@@ -430,6 +430,31 @@ def github_public_repository(url: str) -> dict[str, object]:
 
 
 @native_tool()
+def web_search(
+    query: str,
+    limit: Annotated[int, Field(ge=1, le=10)] = 6,
+) -> dict[str, object]:
+    """Search the web for a plain-text query and return titles, URLs and snippets."""
+    return api.web_search(query=query, limit=limit)
+
+
+@native_tool()
+async def github_repo_create_confirmed(
+    name: str,
+    ctx: Context,
+    description: str = "",
+    private: bool = True,
+) -> dict[str, object]:
+    """Create one GitHub repository after one explicit confirmation."""
+    return await api.github_repo_create_confirmed(
+        name=name,
+        description=description,
+        private=private,
+        confirmer=lambda preview: _confirm(ctx, preview),
+    )
+
+
+@native_tool()
 def shopping_add(
     text: str,
     idempotency_key: str,

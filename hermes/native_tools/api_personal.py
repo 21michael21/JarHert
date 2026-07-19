@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -180,16 +181,19 @@ class PersonalMixin:
         ]
         adapter = self._task_calendar()
         errors: dict[str, str] = {}
-        try:
-            tasks = adapter.list_tasks(list_name="Today")
-        except Exception as error:
-            tasks = ""
-            errors["tasks"] = str(error)[:200]
-        try:
-            calendar = adapter.list_calendar_events(when="today")
-        except Exception as error:
-            calendar = ""
-            errors["calendar"] = str(error)[:200]
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            tasks_future = pool.submit(adapter.list_tasks, list_name="Today")
+            calendar_future = pool.submit(adapter.list_calendar_events, when="today")
+            try:
+                tasks = tasks_future.result()
+            except Exception as error:
+                tasks = ""
+                errors["tasks"] = str(error)[:200]
+            try:
+                calendar = calendar_future.result()
+            except Exception as error:
+                calendar = ""
+                errors["calendar"] = str(error)[:200]
         priorities = [
             *(
                 {"type": "reminder", "id": item.id, "title": item.text, "due_at": item.remind_at}

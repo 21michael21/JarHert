@@ -111,6 +111,8 @@ CAPABILITY_SPECS = {
     "planner.control": CapabilitySpec("medium", _ALL_MODES),
     "research.run": CapabilitySpec("high", _ALL_MODES),
     "sandbox.run": CapabilitySpec("high", _CODE_ONLY),
+    "web.search": CapabilitySpec("low", _ALL_MODES),
+    "github.write": CapabilitySpec("high", _ALL_MODES),
 }
 
 
@@ -207,6 +209,8 @@ TOOL_CATALOG = (
     _tool("knowledge_source_excerpt", "knowledge_source_excerpt", ("knowledge.read",), "low", ToolBundle.RESEARCH),
     _tool("knowledge_list_sources", "knowledge_list_sources", ("knowledge.read",), "low", ToolBundle.RESEARCH),
     _tool("github_public_repository", "github_public_repository", ("github.read",), "low", ToolBundle.RESEARCH),
+    _tool("web_search", "web_search", ("web.search",), "low", ToolBundle.RESEARCH),
+    _tool("github_repo_create_confirmed", "github_repo_create_confirmed", ("github.write",), "high", ToolBundle.CODE),
     _tool("telegram_text_export_confirmed", "telegram_text_export_confirmed", ("telegram.export",), "high", ToolBundle.RESEARCH),
     _tool("telegram_file_download_confirmed", "telegram_file_download_confirmed", ("telegram.export",), "high", ToolBundle.RESEARCH),
     _tool("telegram_text_export_excerpt", "telegram_text_export_excerpt", ("telegram.export.read",), "low", ToolBundle.RESEARCH),

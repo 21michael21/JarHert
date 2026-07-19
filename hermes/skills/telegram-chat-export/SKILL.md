@@ -9,6 +9,15 @@ This uses the owner's MTProto session, not the bot token. It works only for a
 numeric peer ID or `@username` present in that account's dialogs. Never ask for
 a Telegram login code in chat.
 
+## Forwarded messages reveal the source chat
+
+When the owner forwards messages, the gateway prepends `[Переслано из: ...]`
+to the text. Treat that label as the chat the owner means: if the request is
+"спарси этот чат", "последние 1000 сообщений отсюда" or similar, resolve the
+peer from the label — prefer the `@username` when present, otherwise ask once
+for the numeric ID or username instead of refusing. Do not ask the owner to
+name a chat that is already identified by the prefix.
+
 ## Text export
 
 Choose the message count from the request: `последние N` means exactly N,
