@@ -123,8 +123,24 @@ def main() -> int:
         client.ping()
         print("coding_runner_ready=true")
         return 0
+    error_streak = 0
     while True:
-        worked = run_once(client=client, worker=worker, worker_id=args.worker_id)
+        try:
+            worked = run_once(client=client, worker=worker, worker_id=args.worker_id)
+            error_streak = 0
+        except Exception as error:
+            # A flaky network must not kill the runner; back off and keep polling.
+            error_streak += 1
+            backoff = min(60, 5 * error_streak)
+            print(
+                f"coding_runner_poll_error={type(error).__name__} retry_in={backoff}s",
+                file=sys.stderr,
+                flush=True,
+            )
+            if args.once and error_streak >= 5:
+                raise
+            time.sleep(backoff)
+            continue
         if args.once:
             return 0
         if not worked:

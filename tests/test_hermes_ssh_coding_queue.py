@@ -43,8 +43,11 @@ def test_ssh_client_sends_json_over_stdin_to_fixed_profile_cli() -> None:
 
     assert claimed == {"id": 8, "mode": "coding"}
     argv, kwargs = calls[0]
-    assert argv[:4] == ["ssh", "-o", "BatchMode=yes", "deploy@example.test"]
-    assert "coding_queue_cli.py claim" in argv[4]
+    assert argv[:4] == ["ssh", "-o", "BatchMode=yes", "-o"]
+    host_index = argv.index("deploy@example.test")
+    assert "ControlMaster=auto" in argv
+    assert any("ControlPersist" in part for part in argv)
+    assert "coding_queue_cli.py claim" in argv[host_index + 1]
     assert kwargs["input"] == '{"worker_id": "mac-main"}'
 
 
@@ -56,5 +59,7 @@ def test_ssh_client_ping_does_not_claim_a_job() -> None:
         return subprocess.CompletedProcess(argv, 0, stdout='{"ok": true}', stderr="")
 
     assert SshNativeCodingQueueClient("deploy@example.test", execute=execute).ping() is True
-    assert "coding_queue_cli.py ping" in calls[0][0][4]
+    argv = calls[0][0]
+    host_index = argv.index("deploy@example.test")
+    assert "coding_queue_cli.py ping" in argv[host_index + 1]
     assert calls[0][1]["input"] == "{}"

@@ -50,7 +50,19 @@ class SshNativeCodingQueueClient:
             f"{shlex.quote(operation)}"
         )
         result = self.execute(
-            ["ssh", "-o", "BatchMode=yes", self.ssh_host, command],
+            [
+                "ssh",
+                "-o", "BatchMode=yes",
+                # Reuse one warm connection for polling: a fresh handshake per
+                # claim is slow and noisy on both sides.
+                "-o", "ControlMaster=auto",
+                "-o", f"ControlPath={Path.home() / '.ssh' / 'jarhert-queue-%C'}",
+                "-o", "ControlPersist=120",
+                "-o", "ServerAliveInterval=15",
+                "-o", "ServerAliveCountMax=2",
+                self.ssh_host,
+                command,
+            ],
             input=json.dumps(payload, ensure_ascii=False),
             text=True,
             capture_output=True,
