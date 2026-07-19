@@ -62,6 +62,40 @@ def test_unapproved_plan_cannot_execute(tmp_path) -> None:
         execute_plan(store, plan.id, FakeAdapter())
 
 
+def test_pause_during_execution_stops_plan_and_resume_continues(tmp_path) -> None:
+    store = ActionPlanStore(tmp_path / "personal-os.sqlite3")
+    plan = store.create(
+        [
+            {"type": "task.create", "payload": {"title": "Task"}},
+            {
+                "type": "calendar.create",
+                "payload": {"title": "Event", "start": "2030-01-02 12:00", "end": "2030-01-02 12:30"},
+            },
+        ],
+        idempotency_key="pause-mid-run",
+    )
+
+    class PausingAdapter(FakeAdapter):
+        def create_task(self, **payload):
+            self.calls.append(("task.create", payload))
+            store.pause(plan.id)
+            return "Created"
+
+    adapter = PausingAdapter()
+    store.approve(plan.id)
+
+    paused = execute_plan(store, plan.id, adapter)
+
+    assert paused.status == "paused"
+    assert [call[0] for call in adapter.calls] == ["task.create"]
+
+    store.resume(plan.id)
+    completed = execute_plan(store, plan.id, adapter)
+
+    assert completed.status == "succeeded"
+    assert [call[0] for call in adapter.calls] == ["task.create", "calendar.create"]
+
+
 def test_unknown_action_and_bad_payload_are_rejected(tmp_path) -> None:
     store = ActionPlanStore(tmp_path / "personal-os.sqlite3")
 

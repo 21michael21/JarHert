@@ -1,4 +1,5 @@
 import asyncio
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -132,6 +133,44 @@ def test_native_api_cancelled_plan_has_no_side_effect(tmp_path: Path) -> None:
 
     assert result["status"] == "cancelled"
     assert result["actions"][0]["status"] == "pending"
+
+
+def test_confirmed_plan_execution_does_not_block_the_event_loop(tmp_path: Path) -> None:
+    class SlowAdapter(FakeAdapter):
+        def create_task(self, **payload: object) -> str:
+            time.sleep(0.3)
+            return super().create_task(**payload)
+
+    api = NativeToolsAPI(database_path=tmp_path / "personal.sqlite3", adapter_factory=SlowAdapter)
+
+    async def confirm(_preview: str) -> bool:
+        return True
+
+    async def scenario() -> tuple[dict[str, object], int]:
+        ticks = 0
+
+        async def ticker() -> None:
+            nonlocal ticks
+            while True:
+                ticks += 1
+                await asyncio.sleep(0.01)
+
+        ticker_task = asyncio.create_task(ticker())
+        try:
+            completed = await api.action_plan_confirm_execute(
+                actions=[{"type": "task.create", "payload": {"title": "Slow plan"}}],
+                idempotency_key="slow-plan-loop",
+                confirmer=confirm,
+            )
+        finally:
+            ticker_task.cancel()
+            await asyncio.gather(ticker_task, return_exceptions=True)
+        return completed, ticks
+
+    completed, ticks = asyncio.run(scenario())
+
+    assert completed["status"] == "succeeded"
+    assert ticks >= 2
 
 
 def test_native_api_executes_one_confirmed_dependency_plan(tmp_path: Path) -> None:

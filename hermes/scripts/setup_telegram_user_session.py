@@ -39,6 +39,10 @@ async def main() -> int:
         authorized = await client.is_user_authorized()
     finally:
         await client.disconnect()
+    session_file = Path(str(session_path) + ".session")
+    if session_file.exists():
+        # A Telethon session grants full account access: owner-only, like .env.
+        os.chmod(session_file, 0o600)
     print("MTProto session authorized." if authorized else "MTProto session is not authorized.")
     return 0 if authorized else 1
 

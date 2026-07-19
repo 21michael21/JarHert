@@ -3,6 +3,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from hermes.native_tools.database import open_personal_os_database
 from hermes.native_tools.mcp_api import NativeToolsAPI
 
@@ -30,6 +32,27 @@ def test_personal_database_supports_explicit_autocommit_for_claiming_workers(tmp
         assert connection.isolation_level is None
     finally:
         connection.close()
+
+
+def test_personal_database_connection_closes_after_with_block(tmp_path: Path) -> None:
+    connection = open_personal_os_database(tmp_path / "personal.sqlite3")
+    with connection:
+        connection.execute("CREATE TABLE item (value TEXT)")
+
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connection.execute("SELECT 1")
+
+
+def test_personal_database_rolls_back_and_closes_on_error(tmp_path: Path) -> None:
+    connection = open_personal_os_database(tmp_path / "personal.sqlite3")
+    with pytest.raises(sqlite3.IntegrityError):
+        with connection:
+            connection.execute("CREATE TABLE item (value TEXT UNIQUE)")
+            connection.execute("INSERT INTO item VALUES ('one')")
+            connection.execute("INSERT INTO item VALUES ('one')")
+
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connection.execute("SELECT 1")
 
 
 def test_native_stores_use_the_shared_personal_database_factory() -> None:

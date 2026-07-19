@@ -55,6 +55,19 @@ def test_dispatcher_does_not_dispatch_bootstrap_tools_recursively() -> None:
         )
 
 
+def test_dispatcher_forbidden_name_cannot_be_bypassed_with_whitespace() -> None:
+    with pytest.raises(ValueError, match="не найден"):
+        asyncio.run(
+            invoke_catalog_handler(
+                {"tool_catalog_invoke": lambda: {}},
+                name="  tool_catalog_invoke  ",
+                payload={},
+                ctx=object(),
+                forbidden_names=frozenset({"tool_catalog_invoke"}),
+            )
+        )
+
+
 def test_dispatcher_validates_declared_field_types() -> None:
     def handler(limit: int) -> dict[str, int]:
         return {"limit": limit}

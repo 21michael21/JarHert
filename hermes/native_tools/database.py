@@ -9,6 +9,21 @@ from pathlib import Path
 DEFAULT_BUSY_TIMEOUT_MS = 10_000
 
 
+class _ClosingConnection(sqlite3.Connection):
+    """Connection that closes itself at the end of a ``with`` block.
+
+    sqlite3's own context manager only commits or rolls back; it never
+    closes. Every Personal OS store goes through ``with self._connect()``,
+    so closing here keeps that call pattern while releasing the handle.
+    """
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        try:
+            super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 def open_personal_os_database(
     database_path: str | Path,
     *,
@@ -22,6 +37,7 @@ def open_personal_os_database(
         path,
         timeout=timeout_seconds,
         isolation_level=None if autocommit else "DEFERRED",
+        factory=_ClosingConnection,
     )
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")

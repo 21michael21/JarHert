@@ -24,6 +24,11 @@ class TelegramExportError(RuntimeError):
     pass
 
 
+def _restrict_to_owner(path: Path) -> None:
+    """Exports contain private chat text: never leave them group/world-readable."""
+    os.chmod(path, 0o600)
+
+
 @dataclass(frozen=True)
 class ExportMessage:
     message_id: int
@@ -129,6 +134,7 @@ class TelegramTextExporter:
             raise TelegramExportError("Этот peer нет среди диалогов авторизованного Telegram-аккаунта.")
         title = _entity_title(entity, str(peer))
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.output_dir, 0o700)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         destination = self.output_dir / f"{_safe_filename(title)}_{stamp}.{file_format}"
         partial = destination.with_suffix(destination.suffix + ".part")
@@ -137,6 +143,7 @@ class TelegramTextExporter:
         truncated = False
         try:
             with partial.open("wb") as handle:
+                _restrict_to_owner(partial)
                 async for message in client.iter_text_messages(entity, limit=limit):
                     block = _serialize_message(message, file_format)
                     encoded = block.encode("utf-8")
@@ -149,6 +156,7 @@ class TelegramTextExporter:
             if count == 0:
                 raise TelegramExportError("В выбранном диапазоне нет текстовых сообщений.")
             partial.replace(destination)
+            _restrict_to_owner(destination)
         except Exception:
             partial.unlink(missing_ok=True)
             raise
@@ -198,6 +206,7 @@ class TelegramFileDownloader:
             raise TelegramExportError("Этот peer нет среди диалогов авторизованного Telegram-аккаунта.")
         title = _entity_title(entity, str(peer))
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.output_dir, 0o700)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         downloaded: list[FileDownloadItem] = []
         skipped_oversized = 0
@@ -214,6 +223,7 @@ class TelegramFileDownloader:
                 if written <= 0 or written > self.max_file_bytes:
                     raise TelegramExportError("Telegram вернул файл с недопустимым размером.")
                 partial.replace(destination)
+                _restrict_to_owner(destination)
             except Exception:
                 partial.unlink(missing_ok=True)
                 raise

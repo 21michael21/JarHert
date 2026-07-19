@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -161,6 +162,32 @@ def test_export_does_not_create_an_empty_document(tmp_path) -> None:
 
     assert not list(tmp_path.glob("*.txt"))
     assert not list(tmp_path.glob("*.part"))
+
+
+def test_exported_files_and_directory_are_owner_readable_only(tmp_path) -> None:
+    exporter = TelegramTextExporter(output_dir=tmp_path / "exports")
+
+    result = asyncio.run(
+        exporter.export(FakeClient([message(1, "Приватное")]), peer="@test_chat", output_format="txt")
+    )
+
+    assert stat.S_IMODE(result.path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(result.path.parent.stat().st_mode) == 0o700
+
+
+def test_downloaded_files_are_owner_readable_only(tmp_path) -> None:
+    downloader = TelegramFileDownloader(output_dir=tmp_path / "exports")
+
+    result = asyncio.run(
+        downloader.download(
+            FakeFileClient([file_message(10, "plan.txt", b"read me")]),
+            peer="@test_chat",
+            file_limit=5,
+            scan_limit=20,
+        )
+    )
+
+    assert stat.S_IMODE(result.items[0].path.stat().st_mode) == 0o600
 
 
 def test_telethon_reader_collects_requested_texts_past_recent_media() -> None:

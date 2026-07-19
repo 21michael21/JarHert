@@ -46,8 +46,9 @@ async def invoke_catalog_handler(
     forbidden_names: frozenset[str] = frozenset(),
 ) -> object:
     """Call one registered handler while rejecting unknown and missing fields."""
-    handler = handlers.get(str(name or "").strip())
-    if handler is None or name in forbidden_names:
+    normalized_name = str(name or "").strip()
+    handler = handlers.get(normalized_name)
+    if handler is None or normalized_name in forbidden_names:
         raise ValueError("Инструмент не найден в каталоге.")
     if payload is None:
         values: dict[str, Any] = {}

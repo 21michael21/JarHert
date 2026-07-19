@@ -759,6 +759,7 @@ class NativeToolsAPI:
         return _value_payload(self._capabilities().get_mode())
 
     def work_mode_set(self, *, mode: str) -> dict[str, Any]:
+        self._capabilities().require("planner.control")
         return _value_payload(self._capabilities().set_mode(mode))
 
     def voice_inbox_prepare(self, *, transcript: str) -> dict[str, Any]:
@@ -913,7 +914,7 @@ class NativeToolsAPI:
             if not await confirmer(_plan_preview(plan)):
                 return _plan_payload(store.cancel(plan.id))
             store.approve(plan.id)
-        completed = execute_plan(store, plan.id, self._action_adapter())
+        completed = await asyncio.to_thread(execute_plan, store, plan.id, self._action_adapter())
         await self._deliver_plan_receipt(completed)
         return _plan_payload(completed)
 
@@ -954,7 +955,8 @@ class NativeToolsAPI:
             if not await confirmer(_plan_preview(plan)):
                 return _plan_payload(store.cancel(plan.id))
             store.approve(plan.id)
-        return _plan_payload(execute_plan(store, plan.id, self._action_adapter()))
+        completed = await asyncio.to_thread(execute_plan, store, plan.id, self._action_adapter())
+        return _plan_payload(completed)
 
     def telegram_text_export(
         self,
