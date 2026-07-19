@@ -183,12 +183,34 @@ class ActionPlanStore:
     def pause(self, plan_id: int) -> ActionPlan:
         with self._connect() as connection:
             cursor = connection.execute(
-                "UPDATE action_plans SET status = 'paused' WHERE id = ? AND status IN ('draft', 'approved')",
+                "UPDATE action_plans SET status = 'paused' WHERE id = ? AND status IN ('draft', 'approved', 'running')",
                 (plan_id,),
             )
             if cursor.rowcount != 1:
-                raise ActionPlanError("Можно приостановить только draft или approved plan.")
+                raise ActionPlanError("Можно приостановить только draft, approved или выполняющийся plan.")
         return self.get(plan_id)
+
+    def claim_execution(self, plan_id: int) -> bool:
+        """Atomically move approved -> running; False when another executor holds it."""
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE action_plans SET status = 'running', started_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'approved'",
+                (plan_id,),
+            )
+        return cursor.rowcount == 1
+
+    def recover_stale_execution(self, plan_id: int, *, stale_minutes: int = 15) -> bool:
+        """Return a plan stuck in running (crashed executor) back to approved."""
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE action_plans SET status = 'approved'
+                WHERE id = ? AND status = 'running'
+                  AND COALESCE(started_at, approved_at, created_at) <= datetime('now', ?)
+                """,
+                (plan_id, f"-{max(1, int(stale_minutes))} minutes"),
+            )
+        return cursor.rowcount == 1
 
     def resume(self, plan_id: int) -> ActionPlan:
         with self._connect() as connection:
@@ -315,6 +337,9 @@ class ActionPlanStore:
                 connection.execute("UPDATE plan_actions SET node_key = 'action-' || (position + 1) WHERE node_key = ''")
             if "depends_on_json" not in columns:
                 connection.execute("ALTER TABLE plan_actions ADD COLUMN depends_on_json TEXT NOT NULL DEFAULT '[]'")
+            plan_columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(action_plans)")}
+            if "started_at" not in plan_columns:
+                connection.execute("ALTER TABLE action_plans ADD COLUMN started_at TEXT")
 
     def _connect(self) -> sqlite3.Connection:
         return open_personal_os_database(self.database_path, timeout_seconds=5)
@@ -324,11 +349,17 @@ def execute_plan(store: ActionPlanStore, plan_id: int, adapter: Any) -> ActionPl
     plan = store.get(plan_id)
     if plan.status in {"succeeded", "partial", "failed"}:
         return plan
-    if plan.status != "approved":
+    if plan.status == "running":
+        if not store.recover_stale_execution(plan_id):
+            # Another executor is genuinely working on it; never run actions twice.
+            return store.get(plan_id)
+    if plan.status != "approved" and plan.status != "running":
         raise ActionPlanError("Plan должен быть подтверждён перед выполнением.")
+    if not store.claim_execution(plan_id):
+        return store.get(plan_id)
     while True:
         current = store.get(plan_id)
-        if current.status != "approved":
+        if current.status != "running":
             # Paused (или другой внешний сдвиг статуса) во время выполнения:
             # останавливаемся без финального статуса; resume продолжит с pending.
             return current

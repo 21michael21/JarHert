@@ -96,6 +96,54 @@ def test_pause_during_execution_stops_plan_and_resume_continues(tmp_path) -> Non
     assert [call[0] for call in adapter.calls] == ["task.create", "calendar.create"]
 
 
+def test_concurrent_execution_claim_never_runs_actions_twice(tmp_path) -> None:
+    store = ActionPlanStore(tmp_path / "personal-os.sqlite3")
+    plan = store.create(
+        [
+            {"type": "task.create", "payload": {"title": "Task"}},
+            {"type": "calendar.create", "payload": {"title": "Event", "start": "2030-01-02 12:00", "end": "2030-01-02 12:30"}},
+        ],
+        idempotency_key="claim-race",
+    )
+
+    class SlowAdapter(FakeAdapter):
+        def create_task(self, **payload):
+            self.calls.append(("task.create", payload))
+            # Второй executor приходит mid-run: claim уже наш, дубля быть не должно.
+            replay = execute_plan(store, plan.id, FakeAdapter())
+            assert replay.status == "running"
+            return "Created"
+
+    adapter = SlowAdapter()
+    store.approve(plan.id)
+
+    completed = execute_plan(store, plan.id, adapter)
+
+    assert completed.status == "succeeded"
+    assert [call[0] for call in adapter.calls] == ["task.create", "calendar.create"]
+
+
+def test_stale_running_plan_recovers_and_completes(tmp_path) -> None:
+    store = ActionPlanStore(tmp_path / "personal-os.sqlite3")
+    plan = store.create(
+        [{"type": "task.create", "payload": {"title": "Task"}}],
+        idempotency_key="stale-running",
+    )
+    store.approve(plan.id)
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE action_plans SET status = 'running', started_at = datetime('now', '-1 hour') WHERE id = ?",
+            (plan.id,),
+        )
+        connection.commit()
+    adapter = FakeAdapter()
+
+    completed = execute_plan(store, plan.id, adapter)
+
+    assert completed.status == "succeeded"
+    assert [call[0] for call in adapter.calls] == ["task.create"]
+
+
 def test_unknown_action_and_bad_payload_are_rejected(tmp_path) -> None:
     store = ActionPlanStore(tmp_path / "personal-os.sqlite3")
 

@@ -45,7 +45,7 @@ from .telegram_text_export import (
     run_telegram_export,
     run_telegram_file_download,
 )
-from .tool_catalog import ToolBundle, discover_tool_specs, tool_catalog_entry
+from .tool_catalog import ToolBundle, discover_tool_specs, tool_catalog_entry, tool_is_active
 from .trips import TripStore
 from .voice_inbox import VoiceVocabularyStore
 
@@ -129,6 +129,8 @@ class NativeToolsAPI(
         mode = self._capabilities().get_mode().name
         items = []
         for spec in discover_tool_specs(query, bundle=selected_bundle, limit=limit):
+            if not tool_is_active(spec, os.getenv("HERMES_TOOL_BUNDLES")):
+                continue
             decisions = [self._capabilities().decide(capability) for capability in spec.capabilities]
             if any(decision.decision == "deny" for decision in decisions):
                 continue

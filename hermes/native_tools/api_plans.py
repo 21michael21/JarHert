@@ -43,11 +43,15 @@ class ActionPlansMixin:
         return _plan_payload(self._plans().approve(plan_id))
 
     def action_plan_execute(self, *, plan_id: int, confirmed: bool = False) -> dict[str, Any]:
-        if not confirmed:
-            raise ValueError("Plan execution требует подтверждение пользователя.")
         store = self._plans()
+        decisions = []
         for action in store.get(plan_id).actions:
-            self._capabilities().require(action.action_type)
+            decision = self._capabilities().require(action.action_type)
+            decisions.append(decision)
+        # Подтверждение диктует capability-policy: план из auto-действий может
+        # идти сразу, confirm/preview требуют явного согласия.
+        if not confirmed and any(decision.decision != "auto" for decision in decisions):
+            raise ValueError("Plan execution требует подтверждение пользователя.")
         if store.get(plan_id).status == "draft":
             store.approve(plan_id)
         return _plan_payload(execute_plan(store, plan_id, self._action_adapter()))

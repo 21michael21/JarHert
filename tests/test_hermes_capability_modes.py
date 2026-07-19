@@ -63,6 +63,29 @@ def test_capability_denial_is_audited(tmp_path: Path, caplog) -> None:
     )
 
 
+def test_auto_only_plan_executes_without_confirmation_but_risky_plan_cannot(tmp_path: Path) -> None:
+    api = NativeToolsAPI(database_path=tmp_path / "personal-os.sqlite3")
+
+    auto_plan = api.action_plan_create(
+        actions=[{"type": "reminder.create", "payload": {"text": "Позвонить", "remind_at": "2030-01-01T10:00:00+00:00"}}],
+        idempotency_key="auto-plan",
+    )
+    executed = api.action_plan_execute(plan_id=auto_plan["id"])
+    assert executed["status"] == "succeeded"
+
+    risky_plan = api.action_plan_create(
+        actions=[{"type": "task.create", "payload": {"title": "Нельзя без ок"}}],
+        idempotency_key="risky-plan",
+    )
+    try:
+        api.action_plan_execute(plan_id=risky_plan["id"])
+    except ValueError as error:
+        assert "подтверждение" in str(error)
+    else:  # pragma: no cover
+        raise AssertionError("risky plan executed without confirmation")
+    assert api.action_plan_get(plan_id=risky_plan["id"])["status"] == "draft"
+
+
 def test_native_api_exposes_mode_without_exposing_policy_mutation(tmp_path: Path) -> None:
     api = NativeToolsAPI(database_path=tmp_path / "personal-os.sqlite3")
 

@@ -266,6 +266,13 @@ async def tool_catalog_invoke(
     ctx: Context,
 ) -> object:
     """Invoke one catalogued native tool after discovery, with strict payload fields."""
+    clean_name = str(name or "").strip()
+    try:
+        spec = tool_spec(clean_name)
+    except KeyError:
+        spec = None
+    if spec is not None and not tool_is_active(spec, os.getenv("HERMES_TOOL_BUNDLES")):
+        raise ValueError(f"Инструмент {clean_name} недоступен в активном наборе bundles.")
     return await invoke_catalog_handler(
         _NATIVE_HANDLERS,
         name=name,

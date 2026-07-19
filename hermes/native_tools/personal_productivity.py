@@ -203,8 +203,21 @@ class PersonalProductivityStore:
         limit: int = 20,
     ) -> list[PersonalReminder]:
         current = _as_utc_datetime(now).isoformat()
+        # updated_at хранится в формате CURRENT_TIMESTAMP ('YYYY-MM-DD HH:MM:SS'),
+        # поэтому cutoff приводим к тому же виду для корректного сравнения строк.
+        stale_cutoff = (_as_utc_datetime(now) - timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            # A dispatcher that died mid-send leaves rows in 'sending' forever;
+            # after ten minutes the reminder is safe to claim again.
+            connection.execute(
+                """
+                UPDATE personal_reminders
+                SET status = 'active', updated_at = CURRENT_TIMESTAMP
+                WHERE status = 'sending' AND updated_at <= ?
+                """,
+                (stale_cutoff,),
+            )
             rows = connection.execute(
                 """
                 SELECT id FROM personal_reminders
