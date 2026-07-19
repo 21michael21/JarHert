@@ -201,6 +201,20 @@ class FakeDashboardAPI:
             "monthly_totals": {"USD": "20"},
         }
 
+    def expense_list(self, *, limit: int = 20, category: str | None = None):
+        return {
+            "items": [
+                {"id": 3, "text": "AWS", "amount": 12000.0, "currency": "RUB", "category": "infra", "spent_at": "2026-07-19T10:00:00"}
+            ]
+        }
+
+    def expense_monthly(self, *, month: str | None = None):
+        return {"month": month, "items": [{"currency": "RUB", "category": "infra", "total": 12000.0, "count": 1}]}
+
+    def expense_add(self, **payload):
+        self.added_expense = payload
+        return {"id": 4, "text": payload["text"], "amount": payload["amount"], "currency": payload["currency"]}
+
 
 def test_dashboard_read_model_is_independent_from_http_routes() -> None:
     snapshot = build_dashboard_snapshot(FakeDashboardAPI())
@@ -709,6 +723,23 @@ def test_dashboard_code_desk_shows_runner_status() -> None:
     assert ".runner-status" in stylesheet
 
 
+def test_dashboard_money_desk_is_wired() -> None:
+    app_client, _ = client()
+    page = app_client.get("/").text
+    script = (Path(__file__).parents[1] / "hermes" / "native_tools" / "dashboard_assets" / "dashboard.js").read_text()
+    stylesheet = (Path(__file__).parents[1] / "hermes" / "native_tools" / "dashboard_assets" / "dashboard.css").read_text()
+
+    assert 'data-view="money"' in page
+    assert 'id="view-money"' in page
+    assert 'id="money-bars"' in page
+    assert 'id="expense-add"' in page
+    assert 'id="expense-dialog"' in page
+    assert "function renderMoney" in script
+    assert "function submitExpense" in script
+    assert 'request("/api/expenses' in script
+    assert ".money-bar-fill" in stylesheet
+
+
 def test_dashboard_snapshot_is_cached_and_invalidated_by_mutations() -> None:
     class CountingAPI(FakeDashboardAPI):
         def __init__(self) -> None:
@@ -740,3 +771,29 @@ def test_dashboard_snapshot_is_cached_and_invalidated_by_mutations() -> None:
 
     assert third.status_code == 200
     assert counting_api.today_calls == 2
+
+
+def test_dashboard_expenses_endpoints_round_trip() -> None:
+    app_client, dashboard_api = client()
+
+    assert app_client.get("/api/expenses").status_code == 401
+    sign_in(app_client)
+
+    listed = app_client.get("/api/expenses")
+    monthly = app_client.get("/api/expenses/monthly")
+    bad_month = app_client.get("/api/expenses/monthly?month=19-2026")
+
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["text"] == "AWS"
+    assert monthly.json()["items"][0]["total"] == 12000.0
+    assert bad_month.status_code == 422
+
+    added = app_client.post(
+        "/api/expenses",
+        json={"request_id": "expense-001", "text": "Такси", "amount": 500, "currency": "rub", "category": "transport"},
+    )
+
+    assert added.status_code == 200
+    assert dashboard_api.added_expense["amount"] == 500.0
+    assert dashboard_api.added_expense["currency"] == "RUB"
+    assert dashboard_api.added_expense["idempotency_key"].startswith(f"dashboard:expense:{OWNER_ID}:")

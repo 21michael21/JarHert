@@ -256,6 +256,47 @@ def create_app(
         require_user(request)
         return JSONResponse(_call_read(lambda: dashboard_api.subscription_list(status="active")))
 
+    @app.get("/api/expenses")
+    async def expenses(request: Request, limit: int = 30) -> JSONResponse:
+        require_user(request)
+        bounded_limit = max(1, min(int(limit), 100))
+        return JSONResponse(_call_read(lambda: dashboard_api.expense_list(limit=bounded_limit)))
+
+    @app.get("/api/expenses/monthly")
+    async def expenses_monthly(request: Request, month: str | None = None) -> JSONResponse:
+        require_user(request)
+        clean_month = str(month or "").strip() or None
+        if clean_month is not None and not re.fullmatch(r"\d{4}-\d{2}", clean_month):
+            raise HTTPException(status_code=422, detail="month must be YYYY-MM")
+        return JSONResponse(_call_read(lambda: dashboard_api.expense_monthly(month=clean_month)))
+
+    @app.post("/api/expenses")
+    async def add_expense(request: Request) -> JSONResponse:
+        user_id = require_user(request)
+        invalidate_snapshot(user_id)
+        payload = await _request_payload(request)
+        request_id = _request_id(payload.get("request_id"))
+        text = _required_text(payload.get("text"), label="Трата", limit=200)
+        try:
+            amount = float(payload.get("amount"))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="amount must be a number")
+        currency = str(payload.get("currency") or "RUB").strip().upper()[:10] or "RUB"
+        category = _optional_text(payload.get("category"), limit=60)
+        project = _optional_text(payload.get("project"), limit=120)
+        return JSONResponse(
+            _call_write(
+                lambda: dashboard_api.expense_add(
+                    text=text,
+                    amount=amount,
+                    currency=currency,
+                    category=category,
+                    project=project,
+                    idempotency_key=f"dashboard:expense:{user_id}:{request_id}",
+                )
+            )
+        )
+
     @app.get("/api/monitors/digest")
     async def monitor_digest(request: Request) -> JSONResponse:
         require_user(request)
@@ -753,7 +794,7 @@ def _dashboard_page() -> str:
   <section id="cabinet" hidden>
     <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
     <nav class="view-tabs" aria-label="Разделы">
-      <button class="view-tab is-active" data-view="today" type="button" aria-current="page">Сегодня</button><button class="view-tab" data-view="tasks" type="button">Задачи</button><button class="view-tab" data-view="calendar" type="button">Календарь</button><button class="view-tab" data-view="code" type="button">Код</button><button class="view-tab" data-view="memory" type="button">Память</button>
+      <button class="view-tab is-active" data-view="today" type="button" aria-current="page">Сегодня</button><button class="view-tab" data-view="tasks" type="button">Задачи</button><button class="view-tab" data-view="calendar" type="button">Календарь</button><button class="view-tab" data-view="money" type="button">Деньги</button><button class="view-tab" data-view="code" type="button">Код</button><button class="view-tab" data-view="memory" type="button">Память</button>
     </nav>
     <section id="view-today" class="view">
       <section class="overview-grid" aria-label="Сводка">
@@ -770,6 +811,12 @@ def _dashboard_page() -> str:
     <section id="view-tasks" class="view" hidden><div class="section-head"><div><p class="eyebrow">TRELLO</p><h2>Задачи</h2><p id="tasks-summary" class="section-copy muted"></p></div><button id="open-trello" class="text-button" type="button">Открыть Trello</button></div><div class="task-tools"><label class="task-search-field" for="task-search"><span>Найти задачу</span><input id="task-search" type="search" placeholder="Название, P1, Today" autocomplete="off"></label><label class="task-list-field" for="task-list-filter"><span>Список</span><select id="task-list-filter" aria-label="Список задач"></select></label></div><div id="task-list" class="work-list"></div></section>
     <section id="view-calendar" class="view" hidden><div class="section-head"><div><p class="eyebrow">7 ДНЕЙ</p><h2>Календарь</h2><p id="calendar-summary" class="section-copy muted"></p></div><button id="open-calendar" class="text-button" type="button">Открыть Calendar</button></div><div id="calendar-list" class="timeline"></div></section>
     <section id="view-code" class="view" hidden><div class="section-head"><div><p class="eyebrow">CODE DESK</p><h2>Работа с кодом</h2><p class="muted section-copy">Дай GitHub-репозиторий для разбора кода или ссылки для проверки гипотезы. Runner вернёт причину, diff и тесты.</p><p class="muted code-guard">Работает в отдельной песочнице: может сделать ветку и commit; push/deploy только после твоего явного подтверждения.</p></div><button id="coding-add" class="primary compact-primary" type="button">Новая задача</button></div><p id="runner-status" class="runner-status" data-tone="muted">Проверяю раннер…</p><div id="coding-jobs" class="work-list"></div></section>
+    <section id="view-money" class="view" hidden>
+      <div class="section-head"><div><p class="eyebrow">ДЕНЬГИ</p><h2>Финансы месяца</h2><p id="money-summary" class="section-copy muted"></p></div><button id="expense-add" class="primary compact-primary" type="button">Добавить трату</button></div>
+      <section class="section"><div class="section-head"><div><p class="eyebrow">ИТОГИ МЕСЯЦА</p><h2>По категориям</h2></div></div><div id="money-bars" class="money-bars"></div></section>
+      <section class="section"><div class="section-head"><div><p class="eyebrow">ПОДПИСКИ</p><h2>Регулярные списания</h2></div><span id="subscriptions-total" class="count-pill"></span></div><div id="subscriptions" class="work-list"></div></section>
+      <section class="section"><div class="section-head"><div><p class="eyebrow">ТРАТЫ</p><h2>Последние записи</h2></div><span id="expense-count" class="count-pill">0</span></div><div id="expenses" class="work-list"></div></section>
+    </section>
     <section id="view-memory" class="view" hidden>
       <section class="section"><div class="section-head"><div><p class="eyebrow">НАПОМИНАНИЯ</p><h2>Ближайшее</h2></div><span id="reminder-count" class="count-pill">0</span></div><div id="reminders" class="work-list"></div></section>
       <section class="section"><div class="section-head"><div><p class="eyebrow">ЗАМЕТКИ</p><h2>Живая память</h2></div></div><label class="search-field" for="note-search"><span>Поиск по заметкам</span><input id="note-search" type="search" placeholder="OAuth, Hub_ML, идея..." autocomplete="off"></label><div id="notes" class="work-list"></div></section>
@@ -779,12 +826,13 @@ def _dashboard_page() -> str:
   </section>
 </main>
 <button id="quick-add" class="quick-add" type="button" aria-label="Быстро добавить задачу, встречу, напоминание или заметку"><span aria-hidden="true">+</span><span>Добавить</span></button>
-<nav id="bottom-nav" class="bottom-nav" aria-label="Навигация"><button class="nav-button is-active" data-view="today" type="button" aria-current="page">Сегодня</button><button class="nav-button" data-view="tasks" type="button">Задачи</button><button class="nav-button" data-view="calendar" type="button">План</button><button class="nav-button" data-view="code" type="button">Код</button><button class="nav-button" data-view="memory" type="button">Память</button></nav>
+<nav id="bottom-nav" class="bottom-nav" aria-label="Навигация"><button class="nav-button is-active" data-view="today" type="button" aria-current="page">Сегодня</button><button class="nav-button" data-view="tasks" type="button">Задачи</button><button class="nav-button" data-view="calendar" type="button">План</button><button class="nav-button" data-view="money" type="button">Деньги</button><button class="nav-button" data-view="code" type="button">Код</button><button class="nav-button" data-view="memory" type="button">Память</button></nav>
 <dialog id="quick-dialog"><form id="quick-form"><p class="eyebrow">ДОБАВИТЬ</p><h2 id="quick-title">Новая задача</h2><div class="quick-types" aria-label="Тип записи"><button class="type-button is-active" data-quick-type="task" type="button">Задача</button><button class="type-button" data-quick-type="event" type="button">Встреча</button><button class="type-button" data-quick-type="reminder" type="button">Напомнить</button><button class="type-button" data-quick-type="note" type="button">Заметка</button></div><label><span id="quick-label">Что сделать</span><textarea id="quick-text" rows="3" maxlength="1000" placeholder="Напиши как есть" required></textarea></label><p id="quick-help" class="muted form-help">Задача попадёт в Inbox без приоритета. Это можно изменить позже.</p><label id="quick-project-field" hidden><span>Проект, если нужен</span><input id="quick-project" type="text" placeholder="Hub_ML" maxlength="120"></label><label id="quick-start-field" hidden><span id="quick-start-label">Когда</span><input id="quick-start" type="datetime-local"></label><label id="quick-end-field" hidden><span>До</span><input id="quick-end" type="datetime-local"></label><div class="dialog-actions"><button id="quick-cancel" class="secondary" type="button">Отмена</button><button class="primary" type="submit">Продолжить</button></div></form></dialog>
 <dialog id="coding-dialog"><form id="coding-form"><p class="eyebrow">CODE DESK</p><h2>Поставить кодовую задачу</h2><p class="muted form-help">Один preview перед очередью. Runner не получает секреты и не меняет сервер.</p><label><span>Режим</span><select id="coding-mode"><option value="coding">Разобрать GitHub-репозиторий</option><option value="research">Проверить гипотезу</option></select></label><label><span>Что проверить</span><textarea id="coding-prompt" rows="4" maxlength="3000" placeholder="PDF тупит при перелистывании: найди причину и подготовь фикс с тестами" required></textarea></label><label id="coding-repository-field"><span>GitHub-репозиторий</span><input id="coding-repository" type="url" inputmode="url" placeholder="https://github.com/owner/repo" maxlength="500"></label><label id="coding-sources-field" hidden><span>Ссылки для проверки</span><textarea id="coding-sources" rows="3" maxlength="5000" placeholder="По одной HTTPS ссылке в строке"></textarea></label><div class="dialog-actions"><button id="coding-cancel" class="secondary" type="button">Отмена</button><button class="primary" type="submit">К preview</button></div></form></dialog>
 <dialog id="task-menu-dialog"><form method="dialog"><p class="eyebrow">ЗАДАЧА</p><h2 id="task-menu-title">Задача</h2><div class="task-menu-actions"><button id="task-menu-move" class="secondary" type="button">Перенести</button><button id="task-menu-priority" class="secondary" type="button">Изменить приоритет</button><button id="task-menu-open" class="secondary" type="button">Открыть в Trello</button></div><div class="dialog-actions"><button id="task-menu-close" class="primary" type="submit">Готово</button></div></form></dialog>
 <dialog id="edit-dialog"><form id="edit-form"><p class="eyebrow" id="edit-eyebrow">КОРРЕКТИРОВКА</p><h2 id="edit-title">Изменить</h2><p id="edit-help" class="muted"></p><label id="edit-field-label"><span id="edit-field-name">Значение</span><input id="edit-date" type="datetime-local" hidden><input id="edit-end" type="datetime-local" hidden><select id="edit-choice" hidden></select><textarea id="edit-value" rows="5"></textarea></label><label id="recurrence-field" hidden><span>Повтор</span><select id="edit-recurrence"><option value="keep">Не менять</option><option value="none">Не повторять</option><option value="daily">Каждый день</option><option value="weekly">Каждую неделю</option><option value="monthly">Каждый месяц</option></select></label><div class="dialog-actions"><button id="dialog-cancel" class="secondary" type="button">Отмена</button><button id="dialog-save" class="primary" type="submit">К preview</button></div></form></dialog>
 <dialog id="plan-dialog"><form id="plan-form"><p class="eyebrow">ПРОВЕРЬ И ПОДТВЕРДИ</p><h2>План действий</h2><div id="plan-preview" class="preview-list"></div><p class="muted">Изменения применятся один раз после подтверждения.</p><div class="dialog-actions"><button id="plan-cancel" class="secondary" type="button">Отмена</button><button id="plan-execute" class="primary" type="submit">Применить</button></div></form></dialog>
+<dialog id="expense-dialog"><form id="expense-form"><p class="eyebrow">ДЕНЬГИ</p><h2>Новая трата</h2><label><span>Сумма</span><input id="expense-amount" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="1200" required></label><label><span>Валюта</span><select id="expense-currency"><option value="RUB" selected>RUB</option><option value="USD">USD</option><option value="EUR">EUR</option></select></label><label><span>За что</span><input id="expense-text" type="text" maxlength="200" placeholder="AWS, такси, кофе" required></label><label><span>Категория, если нужна</span><input id="expense-category" type="text" maxlength="60" placeholder="infra, food, transport"></label><label><span>Проект, если нужен</span><input id="expense-project" type="text" maxlength="120" placeholder="NoManual"></label><div class="dialog-actions"><button id="expense-cancel" class="secondary" type="button">Отмена</button><button class="primary" type="submit">Записать</button></div></form></dialog>
 <dialog id="report-dialog"><form method="dialog"><p class="eyebrow">ОТЧЁТ RUNNER</p><h2 id="report-title">Работа</h2><pre id="report-content" class="report-content"></pre><div class="dialog-actions"><button id="report-close" class="primary" type="submit">Закрыть</button></div></form></dialog>
 <dialog id="history-dialog"><form method="dialog"><p class="eyebrow">ИСТОРИЯ ЗАМЕТКИ</p><h2 id="history-title">Заметка</h2><div id="history-content" class="preview-list"></div><div class="dialog-actions"><button id="history-close" class="primary" type="submit">Закрыть</button></div></form></dialog>
 <dialog id="architecture-dialog"><form method="dialog" class="architecture-sheet"><p class="eyebrow">ЖИВАЯ КАРТА</p><h2>Как запрос проходит через JarHert</h2><p class="muted">Выбери сценарий: маршрут подсветит, куда уходит запрос и где остаётся твоё решение.</p><div class="architecture-scenarios" role="group" aria-label="Сценарий работы"><button class="architecture-scenario" data-architecture-scenario="question" type="button" aria-pressed="false">Вопрос</button><button class="architecture-scenario is-active" data-architecture-scenario="plan" type="button" aria-pressed="true">Задача</button><button class="architecture-scenario" data-architecture-scenario="voice" type="button" aria-pressed="false">Голос</button><button class="architecture-scenario" data-architecture-scenario="research" type="button" aria-pressed="false">Репа</button></div><section id="architecture-flow-path" class="architecture-flow-path" aria-live="polite"><div class="architecture-flow-head"><p id="architecture-flow-eyebrow" class="eyebrow">СЦЕНАРИЙ · ЗАДАЧА</p><h3 id="architecture-flow-title">От задачи до результата</h3><p id="architecture-flow-summary" class="muted"></p></div><div id="architecture-flow-nodes" class="architecture-flow-nodes" aria-label="Маршрут запроса"></div><article class="architecture-detail"><p id="architecture-detail-eyebrow" class="eyebrow">СЕЙЧАС</p><h4 id="architecture-detail-title"></h4><p id="architecture-detail-copy"></p><p id="architecture-detail-guard" class="muted"></p></article></section><div class="dialog-actions"><button class="primary" type="submit">Понятно</button></div></form></dialog>

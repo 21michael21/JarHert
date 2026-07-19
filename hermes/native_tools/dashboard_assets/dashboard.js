@@ -2,9 +2,9 @@ const $ = (id) => document.getElementById(id);
 const telegram = window.Telegram?.WebApp;
 const state = {
   activeView: "today", snapshot: null, tasks: {items: [], lists: [], priorities: []}, calendar: {items: []},
-  coding: {items: []}, notes: {items: []}, knowledge: {items: []}, subscriptions: {items: []}, digest: {items: []}, noteQuery: "", taskQuery: "", taskFilter: "Все", taskMenu: null, quickType: "task", edit: null, plan: null, codingDraft: null, clip: null, architectureScenario: "plan", lastUpdatedAt: null,
+  coding: {items: []}, notes: {items: []}, knowledge: {items: []}, subscriptions: {items: []}, digest: {items: []}, expenses: {items: []}, expensesMonthly: {items: []}, noteQuery: "", taskQuery: "", taskFilter: "Все", taskMenu: null, quickType: "task", edit: null, plan: null, codingDraft: null, clip: null, architectureScenario: "plan", lastUpdatedAt: null,
 };
-const VIEWS = new Set(["today", "tasks", "calendar", "code", "memory"]);
+const VIEWS = new Set(["today", "tasks", "calendar", "money", "code", "memory"]);
 const ARCHITECTURE_SCENARIOS = {
   question: {
     eyebrow: "СЦЕНАРИЙ · ВОПРОС", title: "Короткий ответ без лишнего круга", summary: "Обычный вопрос не трогает внешние сервисы: JarHert понимает контекст и отвечает в чате.",
@@ -85,8 +85,8 @@ async function refresh() {
   showNotice("Обновляю…");
   const snapshot = await request("/api/snapshot");
   const noteUrl = state.noteQuery ? `/api/notes?query=${encodeURIComponent(state.noteQuery)}` : "/api/notes";
-  const [taskResult, calendarResult, codingResult, noteResult, knowledgeResult, subscriptionResult, digestResult] = await Promise.allSettled([
-    request("/api/tasks"), request("/api/calendar"), request("/api/coding/jobs"), request(noteUrl), request("/api/knowledge/sources"), request("/api/subscriptions"), request("/api/monitors/digest"),
+  const [taskResult, calendarResult, codingResult, noteResult, knowledgeResult, subscriptionResult, digestResult, expenseResult, monthlyResult] = await Promise.allSettled([
+    request("/api/tasks"), request("/api/calendar"), request("/api/coding/jobs"), request(noteUrl), request("/api/knowledge/sources"), request("/api/subscriptions"), request("/api/monitors/digest"), request("/api/expenses"), request("/api/expenses/monthly"),
   ]);
   state.snapshot = snapshot;
   state.tasks = taskResult.status === "fulfilled" ? taskResult.value : {items: [], lists: [], priorities: []};
@@ -96,6 +96,8 @@ async function refresh() {
   state.knowledge = knowledgeResult.status === "fulfilled" ? knowledgeResult.value : {items: []};
   state.subscriptions = subscriptionResult.status === "fulfilled" ? subscriptionResult.value : {items: []};
   state.digest = digestResult.status === "fulfilled" ? digestResult.value : {items: []};
+  state.expenses = expenseResult.status === "fulfilled" ? expenseResult.value : {items: []};
+  state.expensesMonthly = monthlyResult.status === "fulfilled" ? monthlyResult.value : {items: []};
   state.lastUpdatedAt = new Date();
   render(); showNotice("");
 }
@@ -107,6 +109,7 @@ function render() {
   renderToday(snapshot);
   renderTasks();
   renderCalendar();
+  renderMoney();
   renderCode();
   renderMemory(snapshot);
   setView(state.activeView);
@@ -231,6 +234,89 @@ function compactEventRow(event) {
 function renderCode() {
   renderRunnerStatus();
   list("coding-jobs", state.coding.items || [], codingJobRow, "Кодовых задач пока нет. Добавь первую одной фразой.");
+}
+
+function renderMoney() {
+  const monthlyItems = state.expensesMonthly.items || [];
+  const currencies = [...new Set(monthlyItems.map((item) => item.currency))];
+  const totalsByCurrency = currencies.map((currency) => {
+    const total = monthlyItems.filter((item) => item.currency === currency).reduce((sum, item) => sum + item.total, 0);
+    return `${formatAmount(total)} ${currency}`;
+  });
+  $("money-summary").textContent = monthlyItems.length ? `В этом месяце: ${totalsByCurrency.join(" · ")}` : "В этом месяце трат пока нет.";
+  const maxTotal = Math.max(1, ...monthlyItems.map((item) => item.total));
+  const bars = $("money-bars");
+  bars.replaceChildren();
+  if (!monthlyItems.length) {
+    bars.append(node("p", "empty", "Записей пока нет — добавь первую трату кнопкой выше."));
+  }
+  for (const item of monthlyItems) {
+    const row = node("div", "money-bar-row");
+    const width = Math.max(6, Math.round((item.total / maxTotal) * 100));
+    row.append(
+      node("span", "money-bar-label", item.category || "без категории"),
+      Object.assign(node("span", "money-bar-track"), {append: Object.assign(node("span", "money-bar-fill"), {style: `width:${width}%`})}),
+      node("span", "money-bar-value", `${formatAmount(item.total)} ${item.currency}`),
+    );
+    bars.append(row);
+  }
+  const subscriptions = state.subscriptions.items || [];
+  $("subscriptions-total").textContent = state.subscriptions.monthly_totals
+    ? Object.entries(state.subscriptions.monthly_totals).map(([currency, total]) => `${total} ${currency}/мес`).join(" · ")
+    : "";
+  list("subscriptions", subscriptions, subscriptionRow, "Подписок нет.");
+  const expenses = state.expenses.items || [];
+  $("expense-count").textContent = String(expenses.length);
+  list("expenses", expenses, expenseRow, "Трат пока нет. Одна запись — два тапа.");
+}
+
+function formatAmount(value) {
+  const number = Number(value) || 0;
+  return number.toLocaleString("ru-RU", {maximumFractionDigits: 2});
+}
+
+function subscriptionRow(item) {
+  const row = node("article", "work-row");
+  const copy = node("div", "row-copy");
+  copy.append(node("strong", "row-title", field(item, "name")));
+  copy.append(node("span", "row-meta", `${item.amount} ${item.currency} · следующее списание ${formatDate(item.next_charge_at)}`));
+  row.append(copy);
+  return row;
+}
+
+function expenseRow(item) {
+  const row = node("article", "work-row");
+  const copy = node("div", "row-copy");
+  copy.append(node("strong", "row-title", field(item, "text")));
+  const meta = [`${formatAmount(item.amount)} ${item.currency}`];
+  if (item.category) meta.push(item.category);
+  meta.push(formatDate(item.spent_at));
+  copy.append(node("span", "row-meta", meta.join(" · ")));
+  row.append(copy);
+  return row;
+}
+
+function openExpenseDialog() {
+  $("expense-form").reset();
+  $("expense-dialog").showModal();
+}
+
+async function submitExpense(event) {
+  event.preventDefault();
+  const payload = {
+    request_id: crypto.randomUUID().replaceAll("-", "").slice(0, 24),
+    text: $("expense-text").value.trim(),
+    amount: Number($("expense-amount").value),
+    currency: $("expense-currency").value,
+    category: $("expense-category").value.trim() || null,
+    project: $("expense-project").value.trim() || null,
+  };
+  if (!payload.text || !(payload.amount > 0)) return;
+  await request("/api/expenses", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(payload)});
+  $("expense-dialog").close();
+  haptic("notificationOccurred", "success");
+  showNotice("Трата записана");
+  await refresh();
 }
 
 function renderRunnerStatus() {
@@ -692,6 +778,7 @@ function init() {
   document.querySelectorAll("[data-quick-type]").forEach((item) => item.addEventListener("click", () => { state.quickType = item.dataset.quickType; updateQuickForm(); }));
   $("quick-form").addEventListener("submit", (event) => { event.preventDefault(); try { const action = quickAction(); $("quick-dialog").close(); preparePlan([action]); } catch (error) { showNotice(friendlyError(error)); } });
   $("coding-add").addEventListener("click", openCoding); $("coding-cancel").addEventListener("click", () => $("coding-dialog").close()); $("coding-mode").addEventListener("change", updateCodingForm); $("coding-form").addEventListener("submit", previewCoding);
+  $("expense-add").addEventListener("click", openExpenseDialog); $("expense-cancel").addEventListener("click", () => $("expense-dialog").close()); $("expense-form").addEventListener("submit", (event) => submitExpense(event).catch((error) => showNotice(friendlyError(error))));
   $("edit-form").addEventListener("submit", saveEdit); $("dialog-cancel").addEventListener("click", () => $("edit-dialog").close());
   $("plan-form").addEventListener("submit", executePlan); $("plan-cancel").addEventListener("click", cancelPlan);
   $("task-search").addEventListener("input", (event) => { state.taskQuery = event.target.value; renderTasks(); });

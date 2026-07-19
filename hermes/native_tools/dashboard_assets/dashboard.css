@@ -151,6 +151,30 @@ h2 { font-size: 21px; line-height: 1.18; }
 .runner-status[data-tone="warn"] { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
 .runner-status[data-tone="danger"] { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
 .runner-status[data-tone="muted"] { color: var(--muted); }
+.money-bars { display: grid; gap: 8px; }
+.money-bar-row {
+  display: grid;
+  grid-template-columns: minmax(72px, auto) 1fr auto;
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
+}
+.money-bar-label { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.money-bar-track {
+  display: block;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--surface-soft, rgba(127, 127, 127, .15));
+  overflow: hidden;
+}
+.money-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--good), #7be495);
+  transition: width .5s cubic-bezier(.22, 1, .36, 1);
+}
+.money-bar-value { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .row-actions { flex: 0 0 auto; justify-content: flex-end; flex-wrap: nowrap; }
 .task-title { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .task-complete { min-width: 76px; }
