@@ -223,6 +223,38 @@ class FakeDashboardAPI:
         self.created_reminder = payload
         return {"id": 11, "text": payload["text"], "remind_at": payload["remind_at"]}
 
+    def commitment_list(self, **_kwargs):
+        return {"items": [{"id": 5, "subject": "Илья", "content": "Прислать оффер", "due_at": "2026-07-20T10:00:00+03:00"}]}
+
+    def commitment_complete(self, *, commitment_id: int):
+        self.completed_commitment = commitment_id
+        return {"id": commitment_id, "status": "done"}
+
+    def trip_list(self, **_kwargs):
+        return {"items": [{"id": 2, "name": "Казань", "destination": "Казань", "starts_at": "2026-08-01T10:00:00+03:00"}]}
+
+    def trip_details(self, *, trip_id: int):
+        return {"trip": {"id": trip_id}, "items": [{"id": 1, "status": "open"}, {"id": 2, "status": "done"}]}
+
+    def project_context_list(self):
+        return {"items": [{"name": "NoManual"}]}
+
+    def project_status_report(self, *, project: str):
+        return {
+            "project": project,
+            "open_commitments": [{"subject": "Илья", "content": "Прислать оффер"}],
+            "notes": [{"subject": "Пилот", "project": project}],
+            "recent_interactions": [],
+            "open_tasks_text": "- Задача А [open]",
+            "adapter_error": None,
+        }
+
+    def note_search(self, **_kwargs):
+        return {"items": [{"id": 4, "subject": "OAuth", "content": "Проверить callback"}]}
+
+    def knowledge_search(self, **_kwargs):
+        return {"items": [{"title": "Статья про OAuth", "url": "https://example.com/oauth"}]}
+
 
 def test_dashboard_read_model_is_independent_from_http_routes() -> None:
     snapshot = build_dashboard_snapshot(FakeDashboardAPI())
@@ -829,3 +861,32 @@ def test_dashboard_note_and_reminder_creation() -> None:
     assert dashboard_api.created_reminder["idempotency_key"].startswith(f"dashboard:reminder:{OWNER_ID}:")
 
     assert app_client.post("/api/reminders", json={"request_id": "rem-0002", "text": "X", "remind_at": "2030-01-01 10:00", "recurrence": "hourly"}).status_code == 422
+
+
+def test_dashboard_context_endpoints() -> None:
+    app_client, dashboard_api = client()
+    sign_in(app_client)
+
+    commitments = app_client.get("/api/commitments")
+    assert commitments.status_code == 200
+    assert commitments.json()["items"][0]["subject"] == "Илья"
+
+    completed = app_client.post("/api/commitments/5/complete")
+    assert completed.status_code == 200
+    assert dashboard_api.completed_commitment == 5
+
+    trips = app_client.get("/api/trips")
+    assert trips.status_code == 200
+    assert trips.json()["items"][0]["open_items"] == 1
+    assert trips.json()["items"][0]["total_items"] == 2
+
+    status = app_client.get("/api/projects/status?project=NoManual")
+    assert status.status_code == 200
+    assert status.json()["project"] == "NoManual"
+    assert app_client.get("/api/projects/status?project=+").status_code == 422
+
+    search = app_client.get("/api/search?query=oauth")
+    assert search.status_code == 200
+    assert search.json()["notes"][0]["subject"] == "OAuth"
+    assert search.json()["knowledge"][0]["url"].startswith("https://")
+    assert app_client.get("/api/search").json() == {"notes": [], "knowledge": []}

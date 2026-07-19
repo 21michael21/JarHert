@@ -2,7 +2,7 @@ const $ = (id) => document.getElementById(id);
 const telegram = window.Telegram?.WebApp;
 const state = {
   activeView: "today", snapshot: null, tasks: {items: [], lists: [], priorities: []}, calendar: {items: []},
-  coding: {items: []}, notes: {items: []}, knowledge: {items: []}, subscriptions: {items: []}, digest: {items: []}, expenses: {items: []}, expensesMonthly: {items: []}, noteQuery: "", taskQuery: "", taskFilter: "Все", taskMenu: null, quickType: "task", edit: null, plan: null, codingDraft: null, clip: null, architectureScenario: "plan", lastUpdatedAt: null,
+  coding: {items: []}, notes: {items: []}, knowledge: {items: []}, subscriptions: {items: []}, digest: {items: []}, expenses: {items: []}, expensesMonthly: {items: []}, commitments: {items: []}, trips: {items: []}, projects: {items: []}, projectStatus: null, searchQuery: "", searchResults: null, noteQuery: "", taskQuery: "", taskFilter: "Все", taskMenu: null, quickType: "task", edit: null, plan: null, codingDraft: null, clip: null, architectureScenario: "plan", lastUpdatedAt: null,
 };
 const VIEWS = new Set(["today", "tasks", "calendar", "money", "code", "memory"]);
 const ARCHITECTURE_SCENARIOS = {
@@ -85,8 +85,8 @@ async function refresh() {
   showNotice("Обновляю…");
   const snapshot = await request("/api/snapshot");
   const noteUrl = state.noteQuery ? `/api/notes?query=${encodeURIComponent(state.noteQuery)}` : "/api/notes";
-  const [taskResult, calendarResult, codingResult, noteResult, knowledgeResult, subscriptionResult, digestResult, expenseResult, monthlyResult] = await Promise.allSettled([
-    request("/api/tasks"), request("/api/calendar"), request("/api/coding/jobs"), request(noteUrl), request("/api/knowledge/sources"), request("/api/subscriptions"), request("/api/monitors/digest"), request("/api/expenses"), request("/api/expenses/monthly"),
+  const [taskResult, calendarResult, codingResult, noteResult, knowledgeResult, subscriptionResult, digestResult, expenseResult, monthlyResult, commitmentResult, tripResult, projectResult] = await Promise.allSettled([
+    request("/api/tasks"), request("/api/calendar"), request("/api/coding/jobs"), request(noteUrl), request("/api/knowledge/sources"), request("/api/subscriptions"), request("/api/monitors/digest"), request("/api/expenses"), request("/api/expenses/monthly"), request("/api/commitments"), request("/api/trips"), request("/api/projects"),
   ]);
   state.snapshot = snapshot;
   state.tasks = taskResult.status === "fulfilled" ? taskResult.value : {items: [], lists: [], priorities: []};
@@ -98,6 +98,9 @@ async function refresh() {
   state.digest = digestResult.status === "fulfilled" ? digestResult.value : {items: []};
   state.expenses = expenseResult.status === "fulfilled" ? expenseResult.value : {items: []};
   state.expensesMonthly = monthlyResult.status === "fulfilled" ? monthlyResult.value : {items: []};
+  state.commitments = commitmentResult.status === "fulfilled" ? commitmentResult.value : {items: []};
+  state.trips = tripResult.status === "fulfilled" ? tripResult.value : {items: []};
+  state.projects = projectResult.status === "fulfilled" ? projectResult.value : {items: []};
   state.lastUpdatedAt = new Date();
   render(); showNotice("");
 }
@@ -488,7 +491,122 @@ function openArchitecture() {
   showArchitectureScenario("plan");
 }
 
-function renderMemory(snapshot) {
+function commitmentRow(item) {
+  const row = node("article", "work-row");
+  const copy = node("div", "row-copy");
+  copy.append(node("strong", "row-title", field(item, "subject")));
+  copy.append(node("span", "row-meta", `${field(item, "content")}${item.due_at ? ` · срок ${formatDate(item.due_at)}` : ""}`));
+  const actions = node("div", "row-actions");
+  actions.append(button("Выполнено", "row-button", () => completeCommitment(item)));
+  row.append(copy, actions);
+  return row;
+}
+
+async function completeCommitment(item) {
+  await request(`/api/commitments/${item.id}/complete`, {method: "POST"});
+  haptic("notificationOccurred", "success");
+  showNotice("Обещание закрыто");
+  await refresh();
+}
+
+function tripRow(item) {
+  const row = node("article", "work-row");
+  const copy = node("div", "row-copy");
+  copy.append(node("strong", "row-title", field(item, "name")));
+  const progress = item.total_items ? ` · чеклист ${item.total_items - (item.open_items || 0)}/${item.total_items}` : "";
+  copy.append(node("span", "row-meta", `${field(item, "destination")}${item.starts_at ? ` · ${formatDate(item.starts_at)}` : ""}${progress}`));
+  row.append(copy);
+  return row;
+}
+
+function renderProjectStatus() {
+  const select = $("project-select");
+  const projects = state.projects.items || [];
+  if (select.options.length !== projects.length + 1) {
+    select.replaceChildren(node("option", "", "Выбери проект", {value: ""}));
+    for (const project of projects) select.append(node("option", "", field(project, "name"), {value: field(project, "name")}));
+  }
+  const report = state.projectStatus;
+  const box = $("project-status");
+  box.replaceChildren();
+  if (!report) {
+    box.append(node("p", "empty", "Выбери проект — соберу карточку для пересылки."));
+    $("project-copy").disabled = true;
+    return;
+  }
+  $("project-copy").disabled = false;
+  const lines = [];
+  lines.push(node("strong", "row-title", `Статус: ${report.project}`));
+  for (const item of (report.open_commitments || []).slice(0, 3)) lines.push(node("span", "row-meta", `Обещание: ${field(item, "subject")} — ${field(item, "content")}`));
+  for (const item of (report.notes || []).slice(0, 3)) lines.push(node("span", "row-meta", `Заметка: ${field(item, "subject")}`));
+  const tasksText = String(report.open_tasks_text || "").trim();
+  if (tasksText) lines.push(node("span", "row-meta", `Задачи: ${shorten(tasksText.split("\n")[0], 80)}`));
+  box.append(node("article", "work-row", node("div", "row-copy", ...lines)));
+}
+
+function projectStatusText() {
+  const report = state.projectStatus;
+  if (!report) return "";
+  const parts = [`Статус: ${report.project}`];
+  for (const item of (report.open_commitments || []).slice(0, 5)) parts.push(`• ${field(item, "subject")}: ${field(item, "content")}`);
+  for (const item of (report.notes || []).slice(0, 5)) parts.push(`• ${field(item, "subject")}`);
+  const tasksText = String(report.open_tasks_text || "").trim();
+  if (tasksText) parts.push("", "Задачи:", tasksText);
+  return parts.join("\n");
+}
+
+async function loadProjectStatus(name) {
+  state.projectStatus = name ? await request(`/api/projects/status?project=${encodeURIComponent(name)}`) : null;
+  renderProjectStatus();
+}
+
+function renderSearch() {
+  const box = $("search-results");
+  box.replaceChildren();
+  const results = state.searchResults;
+  if (!state.searchQuery) {
+    box.append(node("p", "empty", "Начни печатать — ищу по заметкам, знаниям и задачам."));
+    return;
+  }
+  if (!results) {
+    box.append(node("p", "empty", "Ищу…"));
+    return;
+  }
+  const rows = [];
+  for (const item of results.notes || []) rows.push(node("div", "preview-row", `Заметка · ${field(item, "subject")} — ${shorten(field(item, "content"), 80)}`));
+  for (const item of results.knowledge || []) rows.push(node("div", "preview-row", `Знания · ${field(item, "title", "url")}`));
+  for (const task of searchTasks(state.searchQuery).slice(0, 3)) rows.push(node("div", "preview-row", `Задача · ${task.title}`));
+  if (!rows.length) rows.push(node("p", "empty", "Ничего не нашлось."));
+  box.append(...rows);
+}
+
+function searchTasks(query) {
+  const clean = query.toLowerCase();
+  return (state.tasks.items || []).filter((task) => String(task.title || "").toLowerCase().includes(clean));
+}
+
+let searchTimer = 0;
+function scheduleGlobalSearch(query) {
+  state.searchQuery = query.trim();
+  state.searchResults = null;
+  renderSearch();
+  window.clearTimeout(searchTimer);
+  if (!state.searchQuery) return;
+  searchTimer = window.setTimeout(async () => {
+    try {
+      state.searchResults = await request(`/api/search?query=${encodeURIComponent(state.searchQuery)}`);
+    } catch {
+      state.searchResults = {notes: [], knowledge: []};
+    }
+    renderSearch();
+  }, 350);
+}
+  renderSearch();
+  const commitments = state.commitments.items || [];
+  $("commitment-count").textContent = String(commitments.length);
+  list("commitments", commitments, commitmentRow, "Открытых обещаний нет.");
+  list("trips", state.trips.items || [], tripRow, "Активных поездок нет.");
+  renderProjectStatus();
   const reminders = snapshot.today?.reminders || [];
   $("reminder-count").textContent = reminders.length;
   list("reminders", reminders, reminderRow, "Активных напоминаний нет.");
@@ -813,6 +931,13 @@ function init() {
   $("expense-add").addEventListener("click", openExpenseDialog); $("expense-cancel").addEventListener("click", () => $("expense-dialog").close()); $("expense-form").addEventListener("submit", (event) => submitExpense(event).catch((error) => showNotice(friendlyError(error))));
   $("note-add").addEventListener("click", () => { $("note-form").reset(); $("note-dialog").showModal(); }); $("note-cancel").addEventListener("click", () => $("note-dialog").close()); $("note-form").addEventListener("submit", (event) => submitNote(event).catch((error) => showNotice(friendlyError(error))));
   $("reminder-add").addEventListener("click", () => { $("reminder-form").reset(); $("reminder-dialog").showModal(); }); $("reminder-cancel").addEventListener("click", () => $("reminder-dialog").close()); $("reminder-form").addEventListener("submit", (event) => submitReminder(event).catch((error) => showNotice(friendlyError(error))));
+  $("project-select").addEventListener("change", (event) => loadProjectStatus(event.target.value).catch((error) => showNotice(friendlyError(error))));
+  $("project-copy").addEventListener("click", async () => {
+    await navigator.clipboard.writeText(projectStatusText());
+    haptic("notificationOccurred", "success");
+    showNotice("Статус скопирован");
+  });
+  $("global-search").addEventListener("input", (event) => scheduleGlobalSearch(event.target.value));
   $("edit-form").addEventListener("submit", saveEdit); $("dialog-cancel").addEventListener("click", () => $("edit-dialog").close());
   $("plan-form").addEventListener("submit", executePlan); $("plan-cancel").addEventListener("click", cancelPlan);
   $("task-search").addEventListener("input", (event) => { state.taskQuery = event.target.value; renderTasks(); });

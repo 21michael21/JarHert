@@ -311,6 +311,56 @@ def create_app(
             raise HTTPException(status_code=422, detail="month must be YYYY-MM")
         return JSONResponse(_call_read(lambda: dashboard_api.expense_monthly(month=clean_month)))
 
+    @app.get("/api/commitments")
+    async def commitments(request: Request) -> JSONResponse:
+        require_user(request)
+        return JSONResponse(_call_read(lambda: dashboard_api.commitment_list(status="open", limit=50)))
+
+    @app.post("/api/commitments/{commitment_id}/complete")
+    async def complete_commitment(commitment_id: int, request: Request) -> JSONResponse:
+        user_id = require_user(request)
+        invalidate_snapshot(user_id)
+        return JSONResponse(_call_write(lambda: dashboard_api.commitment_complete(commitment_id=_positive_id(commitment_id))))
+
+    @app.get("/api/trips")
+    async def trips(request: Request) -> JSONResponse:
+        require_user(request)
+        def collect() -> dict[str, Any]:
+            result = dashboard_api.trip_list(status="active", limit=10)
+            for trip in result.get("items", []):
+                details = dashboard_api.trip_details(trip_id=int(trip["id"]))
+                items = details.get("items", [])
+                open_items = [entry for entry in items if entry.get("status") == "open"]
+                trip["open_items"] = len(open_items)
+                trip["total_items"] = len(items)
+            return result
+        return JSONResponse(_call_read(collect))
+
+    @app.get("/api/projects/status")
+    async def project_status(request: Request, project: str = "") -> JSONResponse:
+        require_user(request)
+        clean_project = " ".join(str(project or "").split())
+        if not clean_project:
+            raise HTTPException(status_code=422, detail="project is required")
+        return JSONResponse(_call_read(lambda: dashboard_api.project_status_report(project=clean_project)))
+
+    @app.get("/api/projects")
+    async def projects(request: Request) -> JSONResponse:
+        require_user(request)
+        return JSONResponse(_call_read(dashboard_api.project_context_list))
+
+    @app.get("/api/search")
+    async def global_search(request: Request, query: str = "") -> JSONResponse:
+        require_user(request)
+        clean_query = " ".join(str(query or "").split())
+        if not clean_query:
+            return JSONResponse({"notes": [], "knowledge": []})
+        def collect() -> dict[str, Any]:
+            notes = dashboard_api.note_search(query=clean_query, limit=8).get("items", [])
+            knowledge = dashboard_api.knowledge_search(query=clean_query, limit=8).get("items", [])
+            return {"notes": notes, "knowledge": knowledge}
+        return JSONResponse(_call_read(collect))
+
     @app.post("/api/expenses")
     async def add_expense(request: Request) -> JSONResponse:
         user_id = require_user(request)
@@ -859,6 +909,10 @@ def _dashboard_page() -> str:
       <section class="section"><div class="section-head"><div><p class="eyebrow">ТРАТЫ</p><h2>Последние записи</h2></div><span id="expense-count" class="count-pill">0</span></div><div id="expenses" class="work-list"></div></section>
     </section>
     <section id="view-memory" class="view" hidden>
+      <section class="section"><div class="section-head"><div><p class="eyebrow">ПОИСК</p><h2>Найти всё</h2></div></div><label class="search-field" for="global-search"><span>Заметки, знания, задачи</span><input id="global-search" type="search" placeholder="Одна строка — вся память" autocomplete="off"></label><div id="search-results" class="work-list"></div></section>
+      <section class="section"><div class="section-head"><div><p class="eyebrow">ОБЕЩАНИЯ</p><h2>Держу слово</h2></div><span id="commitment-count" class="count-pill">0</span></div><div id="commitments" class="work-list"></div></section>
+      <section class="section"><div class="section-head"><div><p class="eyebrow">ПОЕЗДКИ</p><h2>Собранность</h2></div></div><div id="trips" class="work-list"></div></section>
+      <section class="section"><div class="section-head"><div><p class="eyebrow">ПРОЕКТ</p><h2>Статус для команды</h2></div><button id="project-copy" class="text-button" type="button" disabled>Копировать</button></div><label class="search-field" for="project-select"><span>Проект</span><select id="project-select"></select></label><div id="project-status" class="work-list"></div></section>
       <section class="section"><div class="section-head"><div><p class="eyebrow">НАПОМИНАНИЯ</p><h2>Ближайшее</h2></div><div class="section-actions"><span id="reminder-count" class="count-pill">0</span><button id="reminder-add" class="text-button" type="button">Новое</button></div></div><div id="reminders" class="work-list"></div></section>
       <section class="section"><div class="section-head"><div><p class="eyebrow">ЗАМЕТКИ</p><h2>Живая память</h2></div><button id="note-add" class="text-button" type="button">Новая</button></div><label class="search-field" for="note-search"><span>Поиск по заметкам</span><input id="note-search" type="search" placeholder="OAuth, Hub_ML, идея..." autocomplete="off"></label><div id="notes" class="work-list"></div></section>
       <section class="section"><div class="section-head"><div><p class="eyebrow">ИСТОЧНИКИ</p><h2>База знаний</h2></div><button id="knowledge-add" class="text-button" type="button">Добавить ссылку</button></div><p class="muted section-copy">Только явно добавленная публичная страница. Сначала preview, потом сохранение.</p><div id="knowledge-sources" class="work-list"></div></section>
