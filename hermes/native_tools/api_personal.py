@@ -23,6 +23,8 @@ class PersonalMixin:
         _rhythms: "NativeToolsAPI._rhythms"
         _memory_consolidator: "NativeToolsAPI._memory_consolidator"
         _task_calendar: "NativeToolsAPI._task_calendar"
+        _subscriptions: "NativeToolsAPI._subscriptions"
+        _trips: "NativeToolsAPI._trips"
 
     def memory_block_upsert(self, **payload: Any) -> dict[str, Any]:
         self._capabilities().require("memory.write")
@@ -223,6 +225,7 @@ class PersonalMixin:
             "commitments": [value_payload(item) for item in commitments],
             "followups": [value_payload(item) for item in followups],
             "top_three": priorities[:3],
+            "insights": _proactive_insights(self, start=start, end=end),
             "integration_errors": errors,
         }
 
@@ -253,3 +256,38 @@ def _memory_is_stale(value: str, *, now: datetime) -> bool:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed < now - timedelta(days=90)
+
+
+def _proactive_insights(api: Any, *, start: str, end: str) -> list[str]:
+    """Deterministic nudges: overdue promises, charges and trips ahead.
+
+    Every line states one fact the owner can act on; no LLM guessing.
+    """
+    insights: list[str] = []
+    soon_commitments = _iso_shift(end, days=3)
+    for item in api._personal_os().list_commitments(status="open"):
+        due = str(item.due_at or "")
+        if not due:
+            continue
+        if due < start:
+            insights.append(f"Просрочено обещание: {item.subject} (срок был {due[:10]})")
+        elif end <= due < soon_commitments:
+            insights.append(f"Срок обещания {item.subject} — {due[:10]}")
+    soon_charges = _iso_shift(end, days=3)
+    for item in api._subscriptions().list(status="active"):
+        charge_at = str(item.next_charge_at or "")
+        if end <= charge_at < soon_charges:
+            insights.append(f"Списание {item.name}: {item.amount} {item.currency} — {charge_at[:10]}")
+    soon_trips = _iso_shift(end, days=7)
+    for trip in api._trips().list(status="active"):
+        starts_at = str(trip.starts_at or "")
+        if not starts_at or starts_at >= soon_trips:
+            continue
+        open_items = [entry for entry in api._trips().list_items(trip.id) if entry.status == "open"]
+        if open_items:
+            insights.append(f"Поездка {trip.name} ({starts_at[:10]}): открытых пунктов {len(open_items)}")
+    return insights[:6]
+
+
+def _iso_shift(value: str, *, days: int) -> str:
+    return (datetime.fromisoformat(value) + timedelta(days=days)).isoformat()

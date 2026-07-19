@@ -194,6 +194,10 @@ def format_daily_brief(data: dict[str, Any]) -> str:
     reminders = data.get("reminders") or []
     if reminders:
         lines.append("Напоминания: " + "; ".join(str(item["text"]) for item in reminders[:3]))
+    insights = [str(item) for item in (data.get("insights") or []) if str(item).strip()]
+    if insights:
+        lines.append("Не забудь:")
+        lines.extend(f"• {item}" for item in insights[:4])
     priorities = data.get("top_three") or []
     if priorities:
         lines.append("Главное: " + "; ".join(str(item["title"]) for item in priorities[:3]))
