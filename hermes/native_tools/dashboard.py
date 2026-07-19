@@ -9,12 +9,13 @@ import os
 import re
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qsl, urlparse
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from .knowledge_archive import validate_archive_url
 from .mcp_api import NativeToolsAPI
@@ -360,6 +361,22 @@ def create_app(
             knowledge = dashboard_api.knowledge_search(query=clean_query, limit=8).get("items", [])
             return {"notes": notes, "knowledge": knowledge}
         return JSONResponse(_call_read(collect))
+
+    @app.get("/api/export")
+    async def export_data(request: Request) -> Response:
+        require_user(request)
+        def collect() -> dict[str, Any]:
+            notes = dashboard_api.memory_block_list(block_type="note", limit=500).get("items", [])
+            expenses = dashboard_api.expense_list(limit=500).get("items", [])
+            return {
+                "exported_at": datetime.now(timezone.utc).isoformat(),
+                "notes": notes,
+                "expenses": expenses,
+            }
+        return JSONResponse(
+            _call_read(collect),
+            headers={"Content-Disposition": 'attachment; filename="jarhert-export.json"'},
+        )
 
     @app.post("/api/expenses")
     async def add_expense(request: Request) -> JSONResponse:
@@ -905,6 +922,7 @@ def _dashboard_page() -> str:
     <section id="view-money" class="view" hidden>
       <div class="section-head"><div><p class="eyebrow">ДЕНЬГИ</p><h2>Финансы месяца</h2><p id="money-summary" class="section-copy muted"></p></div><button id="expense-add" class="primary compact-primary" type="button">Добавить трату</button></div>
       <section class="section"><div class="section-head"><div><p class="eyebrow">ИТОГИ МЕСЯЦА</p><h2>По категориям</h2></div></div><div id="money-bars" class="money-bars"></div></section>
+      <section class="section"><div class="section-head"><div><p class="eyebrow">НЕДЕЛЯ</p><h2>Траты по дням</h2></div><span id="week-total" class="count-pill"></span></div><div id="money-week" class="money-week"></div></section>
       <section class="section"><div class="section-head"><div><p class="eyebrow">ПОДПИСКИ</p><h2>Регулярные списания</h2></div><span id="subscriptions-total" class="count-pill"></span></div><div id="subscriptions" class="work-list"></div></section>
       <section class="section"><div class="section-head"><div><p class="eyebrow">ТРАТЫ</p><h2>Последние записи</h2></div><span id="expense-count" class="count-pill">0</span></div><div id="expenses" class="work-list"></div></section>
     </section>
@@ -916,7 +934,7 @@ def _dashboard_page() -> str:
       <section class="section"><div class="section-head"><div><p class="eyebrow">НАПОМИНАНИЯ</p><h2>Ближайшее</h2></div><div class="section-actions"><span id="reminder-count" class="count-pill">0</span><button id="reminder-add" class="text-button" type="button">Новое</button></div></div><div id="reminders" class="work-list"></div></section>
       <section class="section"><div class="section-head"><div><p class="eyebrow">ЗАМЕТКИ</p><h2>Живая память</h2></div><button id="note-add" class="text-button" type="button">Новая</button></div><label class="search-field" for="note-search"><span>Поиск по заметкам</span><input id="note-search" type="search" placeholder="OAuth, Hub_ML, идея..." autocomplete="off"></label><div id="notes" class="work-list"></div></section>
       <section class="section"><div class="section-head"><div><p class="eyebrow">ИСТОЧНИКИ</p><h2>База знаний</h2></div><button id="knowledge-add" class="text-button" type="button">Добавить ссылку</button></div><p class="muted section-copy">Только явно добавленная публичная страница. Сначала preview, потом сохранение.</p><div id="knowledge-sources" class="work-list"></div></section>
-      <section class="section status-section"><div class="section-head"><div><p class="eyebrow">СИСТЕМА</p><h2>Статус</h2></div><button id="architecture-open" class="text-button" type="button">Как работает</button></div><div id="system" class="status-list"></div></section>
+      <section class="section status-section"><div class="section-head"><div><p class="eyebrow">СИСТЕМА</p><h2>Статус</h2></div><div class="section-actions"><a id="data-export" class="text-button" href="/api/export" download>Экспорт</a><button id="architecture-open" class="text-button" type="button">Как работает</button></div></div><div id="system" class="status-list"></div></section>
     </section>
   </section>
 </main>

@@ -175,6 +175,23 @@ h2 { font-size: 21px; line-height: 1.18; }
   transition: width .5s cubic-bezier(.22, 1, .36, 1);
 }
 .money-bar-value { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.money-week {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+  align-items: end;
+  min-height: 88px;
+}
+.money-week-day { display: grid; gap: 6px; justify-items: center; align-items: end; height: 100%; }
+.money-week-bar {
+  display: block;
+  width: 100%;
+  max-width: 26px;
+  border-radius: 6px;
+  background: linear-gradient(180deg, #7be495, var(--good));
+  transition: height .5s cubic-bezier(.22, 1, .36, 1);
+}
+.money-week-label { color: var(--muted); font-size: 11px; text-transform: lowercase; }
 .row-actions { flex: 0 0 auto; justify-content: flex-end; flex-wrap: nowrap; }
 .task-title { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .task-complete { min-width: 76px; }

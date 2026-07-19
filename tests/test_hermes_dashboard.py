@@ -890,3 +890,22 @@ def test_dashboard_context_endpoints() -> None:
     assert search.json()["notes"][0]["subject"] == "OAuth"
     assert search.json()["knowledge"][0]["url"].startswith("https://")
     assert app_client.get("/api/search").json() == {"notes": [], "knowledge": []}
+
+    exported = app_client.get("/api/export")
+    assert exported.status_code == 200
+    assert "attachment" in exported.headers["content-disposition"]
+    assert exported.json()["notes"]
+    assert exported.json()["expenses"][0]["text"] == "AWS"
+    assert "exported_at" in exported.json()
+
+
+def test_dashboard_money_week_and_export_are_wired() -> None:
+    app_client, _ = client()
+    page = app_client.get("/").text
+    script = (Path(__file__).parents[1] / "hermes" / "native_tools" / "dashboard_assets" / "dashboard.js").read_text()
+    stylesheet = (Path(__file__).parents[1] / "hermes" / "native_tools" / "dashboard_assets" / "dashboard.css").read_text()
+
+    assert 'id="money-week"' in page
+    assert 'id="data-export"' in page
+    assert "function renderMoneyWeek" in script
+    assert ".money-week-bar" in stylesheet

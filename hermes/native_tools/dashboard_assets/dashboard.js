@@ -253,6 +253,7 @@ function renderMoney() {
   if (!monthlyItems.length) {
     bars.append(node("p", "empty", "Записей пока нет — добавь первую трату кнопкой выше."));
   }
+  renderMoneyWeek();
   for (const item of monthlyItems) {
     const row = node("div", "money-bar-row");
     const width = Math.max(6, Math.round((item.total / maxTotal) * 100));
@@ -601,6 +602,40 @@ function scheduleGlobalSearch(query) {
     renderSearch();
   }, 350);
 }
+
+function renderMoneyWeek() {
+  const box = $("money-week");
+  box.replaceChildren();
+  const days = [];
+  const today = new Date();
+  for (let index = 6; index >= 0; index--) {
+    const day = new Date(today);
+    day.setDate(today.getDate() - index);
+    days.push(day);
+  }
+  const expenses = state.expenses.items || [];
+  const mainCurrency = (state.expensesMonthly.items || [])[0]?.currency || "RUB";
+  const totals = days.map((day) => {
+    const key = day.toISOString().slice(0, 10);
+    return expenses
+      .filter((item) => String(item.spent_at || "").slice(0, 10) === key && item.currency === mainCurrency)
+      .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  });
+  const weekTotal = totals.reduce((sum, value) => sum + value, 0);
+  $("week-total").textContent = weekTotal ? `${formatAmount(weekTotal)} ${mainCurrency}` : "";
+  const maxTotal = Math.max(1, ...totals);
+  days.forEach((day, index) => {
+    const column = node("div", "money-week-day");
+    const height = totals[index] ? Math.max(8, Math.round((totals[index] / maxTotal) * 100)) : 2;
+    column.append(
+      Object.assign(node("span", "money-week-bar"), {style: `height:${height}%`, title: `${formatAmount(totals[index])} ${mainCurrency}`}),
+      node("span", "money-week-label", day.toLocaleDateString("ru-RU", {weekday: "short"})),
+    );
+    box.append(column);
+  });
+}
+
+function renderMemory(snapshot) {
   renderSearch();
   const commitments = state.commitments.items || [];
   $("commitment-count").textContent = String(commitments.length);
