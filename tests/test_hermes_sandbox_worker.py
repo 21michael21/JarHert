@@ -117,6 +117,8 @@ def test_codex_worker_uses_an_ephemeral_workspace_without_dangerous_bypass(tmp_p
     assert "--ephemeral" in argv
     assert "--ignore-user-config" in argv
     assert "--dangerously-bypass-approvals-and-sandbox" not in argv
+    # codex-cli >= 0.145 removed the flag; exec is non-interactive by design.
+    assert "--ask-for-approval" not in argv
     assert not workspace.exists()
 
 

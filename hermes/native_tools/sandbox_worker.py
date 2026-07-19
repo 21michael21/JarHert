@@ -215,8 +215,6 @@ class CodexWorkspaceWorker:
                 "exec",
                 "--sandbox",
                 "workspace-write",
-                "--ask-for-approval",
-                "never",
                 "--ephemeral",
                 "--ignore-user-config",
                 "--skip-git-repo-check",
