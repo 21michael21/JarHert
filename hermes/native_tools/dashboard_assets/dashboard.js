@@ -57,9 +57,22 @@ function node(tag, className, value) {
   return element;
 }
 
-function button(label, className, click, accessibleName = "") {
-  const element = node("button", className, label);
+function icon(name, className = "") {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("aria-hidden", "true");
+  svg.classList.add("icon");
+  if (className) svg.classList.add(...className.split(" "));
+  const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  use.setAttribute("href", `#icon-${name}`);
+  svg.append(use);
+  return svg;
+}
+
+function button(label, className, click, accessibleName = "", iconName = "") {
+  const element = node("button", className);
   element.type = "button";
+  if (iconName) element.append(icon(iconName, "icon-sm"));
+  if (label) element.append(document.createTextNode(label));
   if (accessibleName) element.setAttribute("aria-label", accessibleName);
   element.addEventListener("click", click);
   return element;
@@ -72,7 +85,10 @@ function list(target, values, render, empty = "Пока пусто") {
 }
 
 function showNotice(message) { const item = $("notice"); item.textContent = message; item.hidden = !message; }
-function haptic(kind, value) { if (telegram?.HapticFeedback?.[kind]) telegram.HapticFeedback[kind](value); }
+function haptic(kind, value) {
+  const method = {impact: "impactOccurred", notification: "notificationOccurred", selection: "selectionChanged"}[kind] || kind;
+  if (telegram?.HapticFeedback?.[method]) telegram.HapticFeedback[method](value);
+}
 
 async function request(url, options = {}) {
   const response = await fetch(url, options);
@@ -82,27 +98,40 @@ async function request(url, options = {}) {
 }
 
 async function refresh({silent = false} = {}) {
-  if (!silent) showNotice("Обновляю…");
-  const snapshot = await request("/api/snapshot");
-  const noteUrl = state.noteQuery ? `/api/notes?query=${encodeURIComponent(state.noteQuery)}` : "/api/notes";
-  const [taskResult, calendarResult, codingResult, noteResult, knowledgeResult, subscriptionResult, digestResult, expenseResult, monthlyResult, commitmentResult, tripResult, projectResult] = await Promise.allSettled([
-    request("/api/tasks"), request("/api/calendar"), request("/api/coding/jobs"), request(noteUrl), request("/api/knowledge/sources"), request("/api/subscriptions"), request("/api/monitors/digest"), request("/api/expenses"), request("/api/expenses/monthly"), request("/api/commitments"), request("/api/trips"), request("/api/projects"),
-  ]);
-  state.snapshot = snapshot;
-  state.tasks = taskResult.status === "fulfilled" ? taskResult.value : {items: [], lists: [], priorities: []};
-  state.calendar = calendarResult.status === "fulfilled" ? calendarResult.value : {items: []};
-  state.coding = codingResult.status === "fulfilled" ? codingResult.value : {items: []};
-  state.notes = noteResult.status === "fulfilled" ? noteResult.value : {items: []};
-  state.knowledge = knowledgeResult.status === "fulfilled" ? knowledgeResult.value : {items: []};
-  state.subscriptions = subscriptionResult.status === "fulfilled" ? subscriptionResult.value : {items: []};
-  state.digest = digestResult.status === "fulfilled" ? digestResult.value : {items: []};
-  state.expenses = expenseResult.status === "fulfilled" ? expenseResult.value : {items: []};
-  state.expensesMonthly = monthlyResult.status === "fulfilled" ? monthlyResult.value : {items: []};
-  state.commitments = commitmentResult.status === "fulfilled" ? commitmentResult.value : {items: []};
-  state.trips = tripResult.status === "fulfilled" ? tripResult.value : {items: []};
-  state.projects = projectResult.status === "fulfilled" ? projectResult.value : {items: []};
-  state.lastUpdatedAt = new Date();
-  render(); if (!silent) showNotice("");
+  const refreshButton = $("refresh");
+  if (!silent) {
+    showNotice("Обновляю…");
+    refreshButton.disabled = true;
+    refreshButton.classList.add("is-loading");
+  }
+  try {
+    const snapshot = await request("/api/snapshot");
+    const noteUrl = state.noteQuery ? `/api/notes?query=${encodeURIComponent(state.noteQuery)}` : "/api/notes";
+    const [taskResult, calendarResult, codingResult, noteResult, knowledgeResult, subscriptionResult, digestResult, expenseResult, monthlyResult, commitmentResult, tripResult, projectResult] = await Promise.allSettled([
+      request("/api/tasks"), request("/api/calendar"), request("/api/coding/jobs"), request(noteUrl), request("/api/knowledge/sources"), request("/api/subscriptions"), request("/api/monitors/digest"), request("/api/expenses"), request("/api/expenses/monthly"), request("/api/commitments"), request("/api/trips"), request("/api/projects"),
+    ]);
+    state.snapshot = snapshot;
+    state.tasks = taskResult.status === "fulfilled" ? taskResult.value : {items: [], lists: [], priorities: []};
+    state.calendar = calendarResult.status === "fulfilled" ? calendarResult.value : {items: []};
+    state.coding = codingResult.status === "fulfilled" ? codingResult.value : {items: []};
+    state.notes = noteResult.status === "fulfilled" ? noteResult.value : {items: []};
+    state.knowledge = knowledgeResult.status === "fulfilled" ? knowledgeResult.value : {items: []};
+    state.subscriptions = subscriptionResult.status === "fulfilled" ? subscriptionResult.value : {items: []};
+    state.digest = digestResult.status === "fulfilled" ? digestResult.value : {items: []};
+    state.expenses = expenseResult.status === "fulfilled" ? expenseResult.value : {items: []};
+    state.expensesMonthly = monthlyResult.status === "fulfilled" ? monthlyResult.value : {items: []};
+    state.commitments = commitmentResult.status === "fulfilled" ? commitmentResult.value : {items: []};
+    state.trips = tripResult.status === "fulfilled" ? tripResult.value : {items: []};
+    state.projects = projectResult.status === "fulfilled" ? projectResult.value : {items: []};
+    state.lastUpdatedAt = new Date();
+    render();
+    if (!silent) showNotice("");
+  } finally {
+    if (!silent) {
+      refreshButton.disabled = false;
+      refreshButton.classList.remove("is-loading");
+    }
+  }
 }
 
 async function refreshTasks() {
@@ -142,7 +171,7 @@ function render() {
   const snapshot = state.snapshot || {};
   const modeLabel = workModeLabel(snapshot.work_mode);
   const chip = $("mode-chip");
-  chip.textContent = modeLabel;
+  $("mode-chip-label").textContent = modeLabel;
   chip.hidden = modeLabel === "Быстро";
   $("last-sync").textContent = state.lastUpdatedAt ? `Обновлено ${formatTime(state.lastUpdatedAt)}` : "Собираю твой контур";
   $("refresh").title = state.lastUpdatedAt ? `Обновлено ${formatTime(state.lastUpdatedAt)}` : "Обновить данные";
@@ -202,7 +231,7 @@ function renderRadar(snapshot) {
   list("radar", [...subscriptions, ...monitors, ...deferred], (item) => {
     const row = node("article", "work-row"); const copy = node("div", "row-copy");
     copy.append(node("strong", "row-title", item.title), node("span", "row-meta", item.meta));
-    if (item.monitor?.id) { const actions = node("div", "row-actions"); actions.append(button("Тише", "row-button", () => openRadarSchedule(item.monitor))); row.append(copy, actions); }
+    if (item.monitor?.id) { const actions = node("div", "row-actions"); actions.append(button("Тише", "row-button", () => openRadarSchedule(item.monitor), "", "moon")); row.append(copy, actions); }
     else row.append(copy);
     return row;
   }, "На ближайшее ничего не требует внимания.");
@@ -218,7 +247,7 @@ function focusRow(task) {
   const copy = node("div", "row-copy");
   copy.append(node("strong", "row-title", task.title), node("span", "row-meta", taskMeta(task)));
   const actions = node("div", "row-actions");
-  actions.append(button("Готово", "row-button", () => completeTask(task)));
+  actions.append(button("Готово", "row-button", () => completeTask(task), "", "check"));
   row.append(copy, actions); return row;
 }
 
@@ -245,8 +274,8 @@ function taskRow(task) {
   const meta = node("span", "row-meta", taskMeta(task));
   copy.append(title, meta);
   const actions = node("div", "row-actions");
-  actions.append(button("Готово", "row-button task-complete", () => completeTask(task)));
-  actions.append(button("...", "task-menu-button", () => openTaskMenu(task), `Другие действия с задачей: ${task.title}`));
+  actions.append(button("Готово", "row-button task-complete", () => completeTask(task), "", "check"));
+  actions.append(button("", "task-menu-button", () => openTaskMenu(task), `Другие действия с задачей: ${task.title}`, "more-horizontal"));
   row.append(copy, actions);
   return swipeableTaskRow(row, task);
 }
@@ -295,8 +324,8 @@ function eventRow(event) {
   const copy = node("div", "row-copy");
   copy.append(node("strong", "row-title", event.title), node("span", "row-meta", event.end ? `до ${formatTime(event.end)}` : "Весь день"));
   const actions = node("div", "row-actions");
-  actions.append(button("Перенести", "row-button", () => openCalendarMove(event)));
-  if (event.url) actions.append(button("Открыть", "row-button", () => openExternal(event.url)));
+  actions.append(button("Перенести", "row-button", () => openCalendarMove(event), "", "clock"));
+  if (event.url) actions.append(button("Открыть", "row-button", () => openExternal(event.url), "", "external-link"));
   row.append(when, copy, actions); return row;
 }
 
@@ -631,8 +660,8 @@ function codingJobRow(job) {
   const when = job.created_at ? ` · ${formatDate(job.created_at)}` : "";
   copy.append(node("span", `row-meta ${status.tone}`, `${status.label} · ${job.mode === "research" ? "исследование" : "sandbox-код"}${when}`));
   const actions = node("div", "row-actions");
-  if (job.repository_url) actions.append(button("Проект", "row-button", () => openExternal(job.repository_url)));
-  if (job.result_text || job.last_error) actions.append(button("Отчёт", "row-button", () => openReport(job)));
+  if (job.repository_url) actions.append(button("Проект", "row-button", () => openExternal(job.repository_url), "", "github"));
+  if (job.result_text || job.last_error) actions.append(button("Отчёт", "row-button", () => openReport(job), "", "file-text"));
   row.append(copy, actions); return row;
 }
 
@@ -734,12 +763,14 @@ function showArchitectureScenario(key) {
     item.setAttribute("aria-pressed", String(selected));
   });
   renderArchitectureNodes(scenario);
+  haptic("selection");
   playArchitectureFlow();
 }
 
 function openArchitecture() {
   const dialog = $("architecture-dialog");
   if (!dialog.open) dialog.showModal();
+  haptic("impact", "light");
   showArchitectureScenario("plan");
 }
 
@@ -916,8 +947,8 @@ function reminderRow(item) {
   const row = node("article", "work-row"); const copy = node("div", "row-copy");
   copy.append(node("strong", "row-title", field(item, "text", "title")), node("span", "row-meta", formatDayTime(item.remind_at)));
   const actions = node("div", "row-actions");
-  actions.append(button("Править", "row-button", () => openReminderEditor(item)));
-  actions.append(button("×", "icon-action danger", () => cancelReminder(item)));
+  actions.append(button("Править", "row-button", () => openReminderEditor(item), "", "pencil"));
+  actions.append(button("", "icon-action danger", () => cancelReminder(item), `Удалить напоминание: ${field(item, "text", "title")}`, "trash-2"));
   row.append(copy, actions); return row;
 }
 
@@ -925,9 +956,9 @@ function noteRow(item) {
   const row = node("article", "work-row"); const copy = node("div", "row-copy");
   copy.append(node("strong", "row-title", field(item, "subject")), node("span", "row-meta", field(item, "content")));
   const actions = node("div", "row-actions");
-  actions.append(button("История", "row-button", () => openNoteHistory(item)));
-  actions.append(button("Править", "row-button", () => openNoteEditor(item)));
-  actions.append(button("×", "icon-action danger", () => deleteNote(item), `Удалить заметку: ${field(item, "subject")}`));
+  actions.append(button("История", "row-button", () => openNoteHistory(item), "", "history"));
+  actions.append(button("Править", "row-button", () => openNoteEditor(item), "", "pencil"));
+  actions.append(button("", "icon-action danger", () => deleteNote(item), `Удалить заметку: ${field(item, "subject")}`, "trash-2"));
   row.append(copy, actions); return row;
 }
 
@@ -935,7 +966,7 @@ function knowledgeRow(item) {
   const row = node("article", "work-row"); const copy = node("div", "row-copy");
   copy.append(node("strong", "row-title", field(item, "title", "url")), node("span", "row-meta", [item.project, `${item.snapshot_count || 0} верс.`].filter(Boolean).join(" · ")));
   const actions = node("div", "row-actions");
-  actions.append(button("Открыть", "row-button", () => openExternal(item.url)));
+  actions.append(button("Открыть", "row-button", () => openExternal(item.url), "", "external-link"));
   row.append(copy, actions); return row;
 }
 
@@ -1028,7 +1059,7 @@ function toIso(value) { const date = new Date(value); return Number.isNaN(date.g
 function workModeLabel(mode) { const value = field(mode, "name", "mode").toLowerCase(); return {fast: "Быстро", think: "Думаю", code: "Код"}[value] || "Быстро"; }
 function plural(value, one, few, many) { const mod10 = value % 10; const mod100 = value % 100; return mod10 === 1 && mod100 !== 11 ? one : mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20) ? few : many; }
 
-function setView(view, {syncHistory = true} = {}) {
+function setView(view, {syncHistory = true, hapticFeedback = false} = {}) {
   const nextView = VIEWS.has(view) ? view : "today";
   const switched = state.activeView !== nextView;
   state.activeView = nextView;
@@ -1039,7 +1070,11 @@ function setView(view, {syncHistory = true} = {}) {
     item.classList.toggle("is-active", isActive);
     item.setAttribute("aria-current", isActive ? "page" : "false");
   });
+  const moreActive = ["code", "memory", "limits"].includes(nextView);
+  $("more-nav").classList.toggle("is-active", moreActive);
+  $("more-nav").setAttribute("aria-current", moreActive ? "page" : "false");
   if (syncHistory && window.location.hash !== `#${nextView}`) history.replaceState(null, "", `#${nextView}`);
+  if (switched && hapticFeedback) haptic("selection");
   telegram?.BackButton?.hide();
 }
 
@@ -1055,10 +1090,14 @@ function scheduleNoteSearch(value) {
   }, 180);
 }
 
-function openQuick(type = "task") { state.quickType = type; updateQuickForm(); $("quick-dialog").showModal(); window.setTimeout(() => $("quick-text").focus(), 0); }
+function openQuick(type = "task") { state.quickType = type; updateQuickForm(); haptic("impact", "light"); $("quick-dialog").showModal(); window.setTimeout(() => $("quick-text").focus(), 0); }
 function updateQuickForm() {
   const type = state.quickType;
-  document.querySelectorAll("[data-quick-type]").forEach((item) => item.classList.toggle("is-active", item.dataset.quickType === type));
+  document.querySelectorAll("[data-quick-type]").forEach((item) => {
+    const selected = item.dataset.quickType === type;
+    item.classList.toggle("is-active", selected);
+    item.setAttribute("aria-pressed", String(selected));
+  });
   const labels = {
     task: ["Новая задача", "Что сделать", "Задача попадёт в Inbox без приоритета. Это можно изменить позже."],
     event: ["Новая встреча", "Название", "Выбери время ниже — всё остальное можно поправить потом."],
@@ -1266,11 +1305,14 @@ async function startTelegramSession() {
 }
 
 function init() {
-  $("refresh").addEventListener("click", () => refresh().catch((error) => showNotice(friendlyError(error))));
-  document.querySelectorAll("[data-view]").forEach((item) => item.addEventListener("click", () => setView(item.dataset.view)));
-  document.querySelectorAll("[data-open-view]").forEach((item) => item.addEventListener("click", () => setView(item.dataset.openView)));
+  $("refresh").addEventListener("click", () => { haptic("impact", "light"); refresh().catch((error) => showNotice(friendlyError(error))); });
+  document.querySelectorAll("[data-view]").forEach((item) => item.addEventListener("click", () => setView(item.dataset.view, {hapticFeedback: true})));
+  document.querySelectorAll("[data-open-view]").forEach((item) => item.addEventListener("click", () => setView(item.dataset.openView, {hapticFeedback: true})));
+  $("more-nav").addEventListener("click", () => { haptic("impact", "light"); $("more-nav").setAttribute("aria-expanded", "true"); $("more-dialog").showModal(); });
+  $("more-dialog").addEventListener("close", () => $("more-nav").setAttribute("aria-expanded", "false"));
+  document.querySelectorAll("[data-more-view]").forEach((item) => item.addEventListener("click", () => { $("more-dialog").close(); setView(item.dataset.moreView, {hapticFeedback: true}); }));
   $("quick-add").addEventListener("click", () => openQuick()); $("quick-cancel").addEventListener("click", () => $("quick-dialog").close());
-  document.querySelectorAll("[data-quick-type]").forEach((item) => item.addEventListener("click", () => { state.quickType = item.dataset.quickType; updateQuickForm(); }));
+  document.querySelectorAll("[data-quick-type]").forEach((item) => item.addEventListener("click", () => { state.quickType = item.dataset.quickType; haptic("selection"); updateQuickForm(); }));
   $("quick-form").addEventListener("submit", (event) => { event.preventDefault(); try { const action = quickAction(); $("quick-dialog").close(); $("quick-text").value = ""; queueAction(action); } catch (error) { showNotice(friendlyError(error)); } });
   $("pending-apply").addEventListener("click", () => { if (state.pendingActions.length && !$("plan-dialog").open) preparePlan(state.pendingActions); });
   $("pending-clear").addEventListener("click", () => clearPendingPlan());
