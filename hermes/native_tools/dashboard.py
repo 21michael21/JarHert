@@ -7,6 +7,9 @@ import hmac
 import json
 import os
 import re
+import select
+import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -31,6 +34,12 @@ CLIP_TOKEN_SECONDS = 15 * 60
 PLAN_TOKEN_SECONDS = 15 * 60
 SNAPSHOT_CACHE_SECONDS = 60
 CODING_TOKEN_SECONDS = 15 * 60
+CAUT_CACHE_SECONDS = 5 * 60
+CAUT_TIMEOUT_SECONDS = 120  # caut с --provider all гоняет до 16 провайдеров с их собственными таймаутами
+CODEX_TIMEOUT_SECONDS = 15
+LIMITS_SNAPSHOT_STALE_SECONDS = 15 * 60
+LIMITS_INGEST_MAX_BODY = 64 * 1024
+LIMITS_INGEST_MAX_ITEMS = 50
 
 
 def _asset_version() -> str:
@@ -162,6 +171,59 @@ def create_app(
     async def coding_jobs(request: Request) -> JSONResponse:
         require_user(request)
         return JSONResponse(_call_read(lambda: dashboard_api.coding_job_list(limit=20, include_result=True)))
+
+    limits_cache: dict[str, Any] = {"at": 0.0, "payload": None}
+
+    @app.get("/api/limits")
+    async def limits(request: Request, refresh: str = "") -> JSONResponse:
+        require_user(request)
+        now = clock()
+        cached = limits_cache["payload"]
+        if refresh != "1" and cached is not None and now - limits_cache["at"] < CAUT_CACHE_SECONDS:
+            return JSONResponse(cached)
+        payload = _collect_limits()
+        if payload.get("available"):
+            payload["source"] = "live"
+        else:
+            snapshot = _read_limits_snapshot()
+            if snapshot is not None:
+                received_at = str(snapshot.get("receivedAt") or "")
+                payload = {
+                    "available": True,
+                    "providers": snapshot.get("providers") or [],
+                    "errors": snapshot.get("errors") or [],
+                    "generatedAt": snapshot.get("generatedAt"),
+                    "receivedAt": received_at,
+                    "source": "snapshot",
+                    "stale": _limits_snapshot_stale(received_at, now=now),
+                }
+        limits_cache["at"] = now
+        limits_cache["payload"] = payload
+        return JSONResponse(payload)
+
+    @app.post("/api/limits/ingest")
+    async def limits_ingest(request: Request) -> JSONResponse:
+        token = os.getenv("JARHERT_LIMITS_INGEST_TOKEN", "").strip()
+        if not token:
+            raise HTTPException(status_code=404, detail="limits ingest is disabled")
+        scheme, _, presented = request.headers.get("authorization", "").partition(" ")
+        if scheme.lower() != "bearer" or not presented or not hmac.compare_digest(presented, token):
+            raise HTTPException(status_code=401, detail="invalid ingest token")
+        body = await request.body()
+        if len(body) > LIMITS_INGEST_MAX_BODY:
+            raise HTTPException(status_code=422, detail="payload too large")
+        try:
+            raw = json.loads(body)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="invalid JSON") from None
+        snapshot = _validate_limits_snapshot(raw)
+        received_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        snapshot["receivedAt"] = received_at
+        try:
+            _write_limits_snapshot(snapshot)
+        except OSError as error:
+            raise HTTPException(status_code=503, detail="snapshot write failed") from error
+        return JSONResponse({"ok": True, "receivedAt": received_at})
 
     @app.post("/api/coding/jobs/preview")
     async def preview_coding_job(request: Request) -> JSONResponse:
@@ -555,7 +617,7 @@ def create_app(
         allowed = {"dashboard.css", "dashboard.js"}
         if asset_name not in allowed:
             raise HTTPException(status_code=404, detail="asset not found")
-        return FileResponse(ASSET_DIR / asset_name)
+        return FileResponse(ASSET_DIR / asset_name, headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
     return app
 
@@ -864,6 +926,307 @@ def _call_read(operation: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail=str(error)[:240]) from error
 
 
+def _limits_snapshot_path() -> Path:
+    home = os.getenv("HERMES_HOME", "").strip()
+    base = Path(home) if home else Path(tempfile.gettempdir())
+    return base / "limits_snapshot.json"
+
+
+def _validate_limits_snapshot(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="payload must be a JSON object")
+    providers = payload.get("providers")
+    if (
+        not isinstance(providers, list)
+        or len(providers) > LIMITS_INGEST_MAX_ITEMS
+        or not all(isinstance(item, dict) for item in providers)
+    ):
+        raise HTTPException(status_code=422, detail="providers must be a list of up to 50 objects")
+    errors = payload.get("errors", [])
+    if (
+        not isinstance(errors, list)
+        or len(errors) > LIMITS_INGEST_MAX_ITEMS
+        or not all(isinstance(item, (str, dict)) for item in errors)
+    ):
+        raise HTTPException(status_code=422, detail="errors must be a list of up to 50 strings or objects")
+    generated_at = payload.get("generatedAt")
+    if generated_at is not None and (not isinstance(generated_at, str) or len(generated_at) > 64):
+        raise HTTPException(status_code=422, detail="generatedAt must be a string up to 64 chars")
+    return {"providers": providers, "errors": errors, "generatedAt": generated_at}
+
+
+def _write_limits_snapshot(snapshot: dict[str, Any]) -> None:
+    path = _limits_snapshot_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=".limits_snapshot.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(snapshot, handle, ensure_ascii=False)
+        os.chmod(tmp_name, 0o600)
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+def _read_limits_snapshot() -> dict[str, Any] | None:
+    try:
+        payload = json.loads(_limits_snapshot_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get("providers"), list):
+        return None
+    return payload
+
+
+def _limits_snapshot_stale(received_at: str, *, now: float) -> bool:
+    if not received_at:
+        return True
+    try:
+        parsed = datetime.fromisoformat(received_at.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    return now - parsed.timestamp() > LIMITS_SNAPSHOT_STALE_SECONDS
+
+
+def _collect_limits() -> dict[str, Any]:
+    """Merge Codex app-server rate limits with caut output. Never raises."""
+    failures: list[str] = []
+    codex_cards: list[dict[str, Any]] = []
+    codex = _collect_codex_rate_limits()
+    if codex["available"]:
+        codex_cards = codex["providers"]
+    else:
+        failures.append(_source_failure("codex app-server", codex))
+    caut = _collect_caut_usage()
+    caut_providers: list[dict[str, Any]] = []
+    caut_errors: list[dict[str, Any]] = []
+    generated_at: str | None = None
+    if caut["available"]:
+        generated_at = caut.get("generatedAt")
+        for entry in caut.get("errors") or []:
+            if codex_cards and str(entry.get("provider") or "").lower() == "codex":
+                continue  # ошибка caut по codex неактуальна — данные уже дал app-server
+            caut_errors.append(entry)
+        for provider in caut.get("providers") or []:
+            name = str(provider.get("provider") or "").lower()
+            if name == "codex":
+                if codex_cards:
+                    continue  # замещено живыми данными app-server
+            elif not _caut_provider_has_data(provider):
+                continue
+            caut_providers.append(provider)
+    else:
+        failures.append(_source_failure("caut", caut))
+    if not codex["available"] and not caut["available"]:
+        return {"available": False, "reason": "no_sources", "detail": "; ".join(failures)[:500]}
+    return {
+        "available": True,
+        "providers": codex_cards + caut_providers,
+        "errors": caut_errors,
+        "generatedAt": generated_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+
+
+def _source_failure(name: str, result: dict[str, Any]) -> str:
+    reason = str(result.get("reason") or "error")
+    detail = str(result.get("detail") or "").strip()
+    return f"{name}: {reason} ({detail[:200]})" if detail else f"{name}: {reason}"
+
+
+def _caut_provider_has_data(provider: dict[str, Any]) -> bool:
+    usage = provider.get("usage")
+    if isinstance(usage, dict):
+        for key in ("primary", "secondary", "tertiary"):
+            if isinstance(usage.get(key), dict) and usage[key]:
+                return True
+        if usage.get("identity"):
+            return True
+    return bool(provider.get("credits") or provider.get("account"))
+
+
+def _collect_codex_rate_limits() -> dict[str, Any]:
+    """Query the Codex app-server over stdio JSON-RPC. Never raises."""
+    binary = os.getenv("JARHERT_CODEX_BIN", "").strip() or "codex"
+    try:
+        process = subprocess.Popen(
+            [binary, "app-server"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except FileNotFoundError:
+        return {"available": False, "reason": "codex_not_installed"}
+    except OSError as error:
+        return {"available": False, "reason": "error", "detail": str(error)[:500]}
+    try:
+        result = _codex_rate_limits_rpc(process)
+    except TimeoutError:
+        return {"available": False, "reason": "timeout"}
+    except (OSError, ValueError) as error:
+        return {"available": False, "reason": "error", "detail": str(error)[:500]}
+    finally:
+        _stop_process(process)
+    cards = _codex_provider_cards(result)
+    if not cards:
+        return {"available": False, "reason": "error", "detail": "codex app-server вернул пустые rate limits"}
+    return {"available": True, "providers": cards}
+
+
+def _codex_rate_limits_rpc(process: subprocess.Popen[Any]) -> dict[str, Any]:
+    if process.stdin is None or process.stdout is None:
+        raise ValueError("codex app-server stdio недоступен")
+    messages = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "jarhert-cabinet", "version": "1.0"}}},
+        {"jsonrpc": "2.0", "method": "initialized", "params": {}},
+        {"jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read", "params": {}},
+    ]
+    for message in messages:
+        process.stdin.write(json.dumps(message) + "\n")
+    process.stdin.flush()
+    # stdin НЕ закрываем: app-server завершается по EOF и не успеет ответить.
+    # Процесс гасится через _stop_process в finally после получения ответа.
+    deadline = time.monotonic() + CODEX_TIMEOUT_SECONDS
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(f"codex app-server не ответил за {CODEX_TIMEOUT_SECONDS} секунд")
+        ready, _, _ = select.select([process.stdout], [], [], remaining)
+        if not ready:
+            raise TimeoutError(f"codex app-server не ответил за {CODEX_TIMEOUT_SECONDS} секунд")
+        line = process.stdout.readline()
+        if not line:
+            raise ValueError("codex app-server закрыл соединение без ответа")
+        try:
+            message = json.loads(line)
+        except ValueError:
+            continue  # пропускаем мусорные строки в stdout
+        if not isinstance(message, dict) or message.get("id") != 2:
+            continue  # notifications и ответ на initialize
+        if message.get("error"):
+            raise ValueError(str(message["error"])[:500])
+        result = message.get("result")
+        if not isinstance(result, dict):
+            raise ValueError("codex app-server вернул пустой result")
+        return result
+
+
+def _stop_process(process: subprocess.Popen[Any]) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        process.kill()
+
+
+def _codex_provider_cards(result: dict[str, Any]) -> list[dict[str, Any]]:
+    entries: list[Any] = []
+    by_limit = result.get("rateLimitsByLimitId")
+    if isinstance(by_limit, dict) and by_limit:
+        entries = list(by_limit.values())
+    elif isinstance(result.get("rateLimits"), dict):
+        entries = [result["rateLimits"]]
+    cards = [card for card in (_codex_provider_card(entry) for entry in entries) if card is not None]
+    reset_credits = result.get("rateLimitResetCredits")
+    if isinstance(reset_credits, dict):
+        count = reset_credits.get("availableCount")
+        if isinstance(count, (int, float)) and not isinstance(count, bool) and count > 0:
+            for card in cards:
+                if card["provider"] == "codex":
+                    card["resetCredits"] = int(count)
+                    break
+    return cards
+
+
+def _codex_provider_card(entry: Any) -> dict[str, Any] | None:
+    if not isinstance(entry, dict):
+        return None
+    limit_id = str(entry.get("limitId") or "codex")
+    limit_name = str(entry.get("limitName") or "").strip()
+    card: dict[str, Any] = {
+        "provider": "codex" if limit_id == "codex" else f"codex · {limit_name or limit_id}",
+        "source": "app-server",
+    }
+    plan = str(entry.get("planType") or "").strip()
+    if plan:
+        card["plan"] = plan
+    usage: dict[str, Any] = {}
+    for key in ("primary", "secondary"):
+        window = entry.get(key)
+        if not isinstance(window, dict):
+            continue
+        mapped: dict[str, Any] = {}
+        used = window.get("usedPercent")
+        if isinstance(used, (int, float)) and not isinstance(used, bool):
+            mapped["usedPercent"] = used
+            mapped["remainingPercent"] = max(0, 100 - used)
+        duration = window.get("windowDurationMins")
+        if isinstance(duration, (int, float)) and not isinstance(duration, bool):
+            mapped["windowMinutes"] = int(duration)
+        resets_at = window.get("resetsAt")
+        if isinstance(resets_at, (int, float)) and not isinstance(resets_at, bool):
+            mapped["resetsAt"] = datetime.fromtimestamp(resets_at, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        if mapped:
+            usage[key] = mapped
+    if usage:
+        card["usage"] = usage
+    credits = entry.get("credits")
+    if isinstance(credits, dict) and credits.get("hasCredits"):
+        try:
+            card["credits"] = {"remaining": float(credits.get("balance") or 0)}
+        except (TypeError, ValueError):
+            pass
+    return card
+
+
+def _collect_caut_usage() -> dict[str, Any]:
+    """Run `caut usage --provider all --json` and shape the result for the cabinet.
+
+    Never raises: every failure mode degrades to {"available": False, ...}.
+    """
+    binary = os.getenv("JARHERT_CAUT_BIN", "").strip() or "caut"
+    try:
+        result = subprocess.run(
+            [binary, "usage", "--provider", "all", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=CAUT_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except FileNotFoundError:
+        return {"available": False, "reason": "caut_not_installed"}
+    except subprocess.TimeoutExpired:
+        return {"available": False, "reason": "timeout"}
+    except OSError as error:
+        return {"available": False, "reason": "error", "detail": str(error)[:500]}
+    if result.returncode != 0:
+        detail = (result.stderr or "").strip()[:500] or f"caut завершился с кодом {result.returncode}"
+        return {"available": False, "reason": "error", "detail": detail}
+    try:
+        report = json.loads(result.stdout)
+    except ValueError:
+        return {"available": False, "reason": "error", "detail": "caut вернул невалидный JSON"}
+    if not isinstance(report, dict):
+        return {"available": False, "reason": "error", "detail": "caut вернул невалидный JSON"}
+    schema = report.get("schemaVersion")
+    if schema is not None and schema != "caut.v1":
+        return {"available": False, "reason": "error", "detail": f"неподдерживаемая версия схемы caut: {schema}"}
+    providers = [item for item in (report.get("data") or []) if isinstance(item, dict)]
+    errors = [item for item in (report.get("errors") or []) if isinstance(item, dict)]
+    return {
+        "available": True,
+        "providers": providers,
+        "errors": errors,
+        "generatedAt": report.get("generatedAt"),
+    }
+
+
 def _plan_preview(plan: dict[str, Any]) -> list[str]:
     labels = {
         "task.create": "Создать задачу",
@@ -896,13 +1259,13 @@ def _dashboard_page() -> str:
 <main class="shell">
   <header class="topbar">
     <div class="brand-lockup"><p class="eyebrow">PERSONAL OS</p><h1>JarHert</h1><p id="last-sync" class="header-status">Соединяюсь с твоим контуром</p></div>
-    <div class="top-actions"><span id="mode-chip" class="chip">Быстро</span><button id="refresh" class="icon-button" type="button" aria-label="Обновить данные">Обновить</button></div>
+    <div class="top-actions"><span id="mode-chip" class="chip" hidden>Быстро</span><button id="refresh" class="icon-button" type="button" aria-label="Обновить данные">Обновить</button></div>
   </header>
   <section id="loading-panel" class="loading-panel" aria-live="polite"><span class="loading-mark" aria-hidden="true"></span><p id="loading-text">Открываю кабинет</p><div class="loading-skeletons" aria-hidden="true"><span></span><span></span><span></span></div></section>
   <section id="cabinet" hidden>
     <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
     <nav class="view-tabs" aria-label="Разделы">
-      <button class="view-tab is-active" data-view="today" type="button" aria-current="page">Сегодня</button><button class="view-tab" data-view="tasks" type="button">Задачи</button><button class="view-tab" data-view="calendar" type="button">Календарь</button><button class="view-tab" data-view="money" type="button">Деньги</button><button class="view-tab" data-view="code" type="button">Код</button><button class="view-tab" data-view="memory" type="button">Память</button>
+      <button class="view-tab is-active" data-view="today" type="button" aria-current="page">Сегодня</button><button class="view-tab" data-view="tasks" type="button">Задачи</button><button class="view-tab" data-view="calendar" type="button">Календарь</button><button class="view-tab" data-view="money" type="button">Деньги</button><button class="view-tab" data-view="code" type="button">Код</button><button class="view-tab" data-view="memory" type="button">Память</button><button class="view-tab" data-view="limits" type="button">Лимиты</button>
     </nav>
     <section id="view-today" class="view">
       <section class="overview-grid" aria-label="Сводка">
@@ -910,36 +1273,43 @@ def _dashboard_page() -> str:
         <button id="overview-calendar" class="overview-tile" data-open-view="calendar" type="button"><span class="overview-label">Календарь</span><strong id="overview-calendar-value">0</strong><span id="overview-calendar-meta" class="overview-meta">ближайшие 7 дней</span></button>
         <button id="overview-radar" class="overview-tile" data-open-view="memory" type="button"><span class="overview-label">Радар</span><strong id="overview-radar-value">0</strong><span id="overview-radar-meta" class="overview-meta">без новых сигналов</span></button>
       </section>
-      <button id="architecture-open-home" class="architecture-teaser" type="button" aria-haspopup="dialog"><span><span class="eyebrow">КАК ЭТО РАБОТАЕТ</span><strong>Проследи путь запроса</strong><small>Выбери сценарий и посмотри живой маршрут до результата.</small></span><span class="architecture-teaser-action">Карта</span></button>
+      <button id="architecture-open-home" class="architecture-teaser" type="button" aria-haspopup="dialog"><span><strong>Проследи путь запроса</strong><small>Выбери сценарий и посмотри живой маршрут до результата.</small></span><span class="architecture-teaser-action">Карта</span></button>
       <article class="focus-card"><div class="focus-topline"><p class="eyebrow">ГЛАВНОЕ СЕЙЧАС</p><span id="focus-state" class="state-dot">Фокус</span></div><h2 id="focus-title">Собираю твой день</h2><p id="focus-meta" class="muted">Задача появится здесь.</p><div class="focus-actions"><button id="focus-done" class="primary" type="button">Отметить готовой</button><button id="focus-move" class="secondary" type="button">Перенести</button></div></article>
-      <section class="section"><div class="section-head"><div><p class="eyebrow">ПО РАСПИСАНИЮ</p><h2>Следом</h2></div><button class="text-button" data-open-view="calendar" type="button">Все встречи</button></div><div id="today-calendar" class="timeline"></div></section>
-      <section class="section"><div class="section-head"><div><p class="eyebrow">ОЧЕРЕДЬ</p><h2>Три главных</h2></div><button class="text-button" data-open-view="tasks" type="button">Все задачи</button></div><div id="priorities" class="work-list"></div></section>
-      <section class="section"><div class="section-head"><div><p class="eyebrow">РАДАР</p><h2>Скоро важно</h2></div><span id="radar-state" class="count-pill">0</span></div><div id="radar" class="work-list"></div></section>
+      <section class="section"><div class="section-head"><div><h2>Следом</h2></div><button class="text-button" data-open-view="calendar" type="button">Все встречи</button></div><div id="today-calendar" class="timeline"></div></section>
+      <section class="section"><div class="section-head"><div><h2>Три главных</h2></div><button class="text-button" data-open-view="tasks" type="button">Все задачи</button></div><div id="priorities" class="work-list"></div></section>
+      <section class="section"><div class="section-head"><div><h2>Скоро важно</h2></div><span id="radar-state" class="count-pill">0</span></div><div id="radar" class="work-list"></div></section>
     </section>
     <section id="view-tasks" class="view" hidden><div class="section-head"><div><p class="eyebrow">TRELLO</p><h2>Задачи</h2><p id="tasks-summary" class="section-copy muted"></p></div><button id="open-trello" class="text-button" type="button">Открыть Trello</button></div><div class="task-tools"><label class="task-search-field" for="task-search"><span>Найти задачу</span><input id="task-search" type="search" placeholder="Название, P1, Today" autocomplete="off"></label><label class="task-list-field" for="task-list-filter"><span>Список</span><select id="task-list-filter" aria-label="Список задач"></select></label></div><div id="task-list" class="work-list"></div></section>
     <section id="view-calendar" class="view" hidden><div class="section-head"><div><p class="eyebrow">7 ДНЕЙ</p><h2>Календарь</h2><p id="calendar-summary" class="section-copy muted"></p></div><button id="open-calendar" class="text-button" type="button">Открыть Calendar</button></div><div id="calendar-list" class="timeline"></div></section>
     <section id="view-code" class="view" hidden><div class="section-head"><div><p class="eyebrow">CODE DESK</p><h2>Работа с кодом</h2><p class="muted section-copy">Дай GitHub-репозиторий для разбора кода или ссылки для проверки гипотезы. Runner вернёт причину, diff и тесты.</p><p class="muted code-guard">Работает в отдельной песочнице: может сделать ветку и commit; push/deploy только после твоего явного подтверждения.</p></div><button id="coding-add" class="primary compact-primary" type="button">Новая задача</button></div><p id="runner-status" class="runner-status" data-tone="muted">Проверяю раннер…</p><div id="coding-jobs" class="work-list"></div></section>
     <section id="view-money" class="view" hidden>
-      <div class="section-head"><div><p class="eyebrow">ДЕНЬГИ</p><h2>Финансы месяца</h2><p id="money-summary" class="section-copy muted"></p></div><button id="expense-add" class="primary compact-primary" type="button">Добавить трату</button></div>
-      <section class="section"><div class="section-head"><div><p class="eyebrow">ИТОГИ МЕСЯЦА</p><h2>По категориям</h2></div></div><div id="money-bars" class="money-bars"></div></section>
-      <section class="section"><div class="section-head"><div><p class="eyebrow">НЕДЕЛЯ</p><h2>Траты по дням</h2></div><span id="week-total" class="count-pill"></span></div><div id="money-week" class="money-week"></div></section>
-      <section class="section"><div class="section-head"><div><p class="eyebrow">ПОДПИСКИ</p><h2>Регулярные списания</h2></div><span id="subscriptions-total" class="count-pill"></span></div><div id="subscriptions" class="work-list"></div></section>
-      <section class="section"><div class="section-head"><div><p class="eyebrow">ТРАТЫ</p><h2>Последние записи</h2></div><span id="expense-count" class="count-pill">0</span></div><div id="expenses" class="work-list"></div></section>
+      <div class="section-head"><div><p class="eyebrow">ДЕНЬГИ</p><h2>Финансы месяца</h2><p id="money-summary" class="section-copy muted"></p></div><button id="expense-add" class="text-button" type="button">Добавить трату</button></div>
+      <section id="money-bars-section" class="section"><div class="section-head"><div><h2>По категориям</h2></div></div><div id="money-bars" class="money-bars"></div></section>
+      <section id="money-week-section" class="section"><div class="section-head"><div><h2>Траты по дням</h2></div><span id="week-total" class="count-pill"></span></div><div id="money-week" class="money-week"></div></section>
+      <section id="subscriptions-section" class="section"><div class="section-head"><div><h2>Регулярные списания</h2></div><span id="subscriptions-total" class="count-pill"></span></div><div id="subscriptions" class="work-list"></div></section>
+      <section id="expenses-section" class="section"><div class="section-head"><div><h2>Последние записи</h2></div><span id="expense-count" class="count-pill">0</span></div><div id="expenses" class="work-list"></div></section>
     </section>
     <section id="view-memory" class="view" hidden>
       <section class="section"><div class="section-head"><div><p class="eyebrow">ПОИСК</p><h2>Найти всё</h2></div></div><label class="search-field" for="global-search"><span>Заметки, знания, задачи</span><input id="global-search" type="search" placeholder="Одна строка — вся память" autocomplete="off"></label><div id="search-results" class="work-list"></div></section>
-      <section class="section"><div class="section-head"><div><p class="eyebrow">ОБЕЩАНИЯ</p><h2>Держу слово</h2></div><span id="commitment-count" class="count-pill">0</span></div><div id="commitments" class="work-list"></div></section>
-      <section class="section"><div class="section-head"><div><p class="eyebrow">ПОЕЗДКИ</p><h2>Собранность</h2></div></div><div id="trips" class="work-list"></div></section>
-      <section class="section"><div class="section-head"><div><p class="eyebrow">ПРОЕКТ</p><h2>Статус для команды</h2></div><button id="project-copy" class="text-button" type="button" disabled>Копировать</button></div><label class="search-field" for="project-select"><span>Проект</span><select id="project-select"></select></label><div id="project-status" class="work-list"></div></section>
-      <section class="section"><div class="section-head"><div><p class="eyebrow">НАПОМИНАНИЯ</p><h2>Ближайшее</h2></div><div class="section-actions"><span id="reminder-count" class="count-pill">0</span><button id="reminder-add" class="text-button" type="button">Новое</button></div></div><div id="reminders" class="work-list"></div></section>
-      <section class="section"><div class="section-head"><div><p class="eyebrow">ЗАМЕТКИ</p><h2>Живая память</h2></div><button id="note-add" class="text-button" type="button">Новая</button></div><label class="search-field" for="note-search"><span>Поиск по заметкам</span><input id="note-search" type="search" placeholder="OAuth, Hub_ML, идея..." autocomplete="off"></label><div id="notes" class="work-list"></div></section>
-      <section class="section"><div class="section-head"><div><p class="eyebrow">ИСТОЧНИКИ</p><h2>База знаний</h2></div><button id="knowledge-add" class="text-button" type="button">Добавить ссылку</button></div><p class="muted section-copy">Только явно добавленная публичная страница. Сначала preview, потом сохранение.</p><div id="knowledge-sources" class="work-list"></div></section>
-      <section class="section status-section"><div class="section-head"><div><p class="eyebrow">СИСТЕМА</p><h2>Статус</h2></div><div class="section-actions"><a id="data-export" class="text-button" href="/api/export" download>Экспорт</a><button id="architecture-open" class="text-button" type="button">Как работает</button></div></div><div id="system" class="status-list"></div></section>
+      <details class="section" open><summary class="section-head"><div><h2>Живая память</h2></div><span class="summary-side"></span></summary><div class="section-actions"><button id="note-add" class="text-button" type="button">Новая заметка</button></div><label class="search-field" for="note-search"><span>Поиск по заметкам</span><input id="note-search" type="search" placeholder="OAuth, Hub_ML, идея..." autocomplete="off"></label><div id="notes" class="work-list"></div></details>
+      <details class="section" open><summary class="section-head"><div><h2>Напоминания</h2></div><span class="summary-side"><span id="reminder-count" class="count-pill">0</span></span></summary><div class="section-actions"><button id="reminder-add" class="text-button" type="button">Новое напоминание</button></div><div id="reminders" class="work-list"></div></details>
+      <details class="section"><summary class="section-head"><div><h2>Держу слово</h2></div><span class="summary-side"><span id="commitment-count" class="count-pill">0</span></span></summary><div id="commitments" class="work-list"></div></details>
+      <details class="section"><summary class="section-head"><div><h2>База знаний</h2></div><span class="summary-side"></span></summary><div class="section-actions"><button id="knowledge-add" class="text-button" type="button">Добавить ссылку</button></div><p class="muted section-copy">Только явно добавленная публичная страница. Сначала preview, потом сохранение.</p><div id="knowledge-sources" class="work-list"></div></details>
+      <details class="section"><summary class="section-head"><div><h2>Собранность</h2></div><span class="summary-side"></span></summary><div id="trips" class="work-list"></div></details>
+      <details class="section"><summary class="section-head"><div><h2>Статус для команды</h2></div><span class="summary-side"></span></summary><div class="section-actions"><button id="project-copy" class="text-button" type="button" disabled>Копировать</button></div><label class="search-field" for="project-select"><span>Проект</span><select id="project-select"></select></label><div id="project-status" class="work-list"></div></details>
+      <details class="section status-section"><summary class="section-head"><div><h2>Система</h2></div><span class="summary-side"></span></summary><div class="section-actions"><a id="data-export" class="text-button" href="/api/export" download>Экспорт</a><button id="architecture-open" class="text-button" type="button">Как работает</button></div><div id="system" class="status-list"></div></details>
+    </section>
+    <section id="view-limits" class="view" hidden>
+      <div class="section-head"><div><p class="eyebrow">ПРОВАЙДЕРЫ</p><h2>Лимиты</h2><p id="limits-summary" class="section-copy muted"></p></div><button id="limits-refresh" class="text-button" type="button">Обновить</button></div>
+      <p id="limits-status" class="runner-status" data-tone="muted" hidden></p>
+      <div id="limits-list" class="work-list"></div>
+      <section id="limits-errors-section" class="section" hidden><div class="section-head"><div><h2>Ошибки провайдеров</h2></div><span id="limits-errors-count" class="count-pill">0</span></div><div id="limits-errors" class="work-list"></div></section>
     </section>
   </section>
 </main>
 <button id="quick-add" class="quick-add" type="button" aria-label="Быстро добавить задачу, встречу, напоминание или заметку"><span aria-hidden="true">+</span><span>Добавить</span></button>
-<nav id="bottom-nav" class="bottom-nav" aria-label="Навигация"><button class="nav-button is-active" data-view="today" type="button" aria-current="page">Сегодня</button><button class="nav-button" data-view="tasks" type="button">Задачи</button><button class="nav-button" data-view="calendar" type="button">План</button><button class="nav-button" data-view="money" type="button">Деньги</button><button class="nav-button" data-view="code" type="button">Код</button><button class="nav-button" data-view="memory" type="button">Память</button></nav>
+<div id="pending-plan" class="pending-plan" hidden><span id="pending-count">0 действий</span><button id="pending-apply" class="primary" type="button">Применить</button><button id="pending-clear" class="text-button" type="button">Сброс</button></div>
+<nav id="bottom-nav" class="bottom-nav" aria-label="Навигация"><button class="nav-button is-active" data-view="today" type="button" aria-current="page">Сегодня</button><button class="nav-button" data-view="tasks" type="button">Задачи</button><button class="nav-button" data-view="calendar" type="button">План</button><button class="nav-button" data-view="money" type="button">Деньги</button><button class="nav-button" data-view="code" type="button">Код</button><button class="nav-button" data-view="memory" type="button">Память</button><button class="nav-button" data-view="limits" type="button">Лимиты</button></nav>
 <dialog id="quick-dialog"><form id="quick-form"><p class="eyebrow">ДОБАВИТЬ</p><h2 id="quick-title">Новая задача</h2><div class="quick-types" aria-label="Тип записи"><button class="type-button is-active" data-quick-type="task" type="button">Задача</button><button class="type-button" data-quick-type="event" type="button">Встреча</button><button class="type-button" data-quick-type="reminder" type="button">Напомнить</button><button class="type-button" data-quick-type="note" type="button">Заметка</button></div><label><span id="quick-label">Что сделать</span><textarea id="quick-text" rows="3" maxlength="1000" placeholder="Напиши как есть" required></textarea></label><p id="quick-help" class="muted form-help">Задача попадёт в Inbox без приоритета. Это можно изменить позже.</p><label id="quick-project-field" hidden><span>Проект, если нужен</span><input id="quick-project" type="text" placeholder="Hub_ML" maxlength="120"></label><label id="quick-start-field" hidden><span id="quick-start-label">Когда</span><input id="quick-start" type="datetime-local"></label><label id="quick-end-field" hidden><span>До</span><input id="quick-end" type="datetime-local"></label><div class="dialog-actions"><button id="quick-cancel" class="secondary" type="button">Отмена</button><button class="primary" type="submit">Продолжить</button></div></form></dialog>
 <dialog id="coding-dialog"><form id="coding-form"><p class="eyebrow">CODE DESK</p><h2>Поставить кодовую задачу</h2><p class="muted form-help">Один preview перед очередью. Runner не получает секреты и не меняет сервер.</p><label><span>Режим</span><select id="coding-mode"><option value="coding">Разобрать GitHub-репозиторий</option><option value="research">Проверить гипотезу</option></select></label><label><span>Что проверить</span><textarea id="coding-prompt" rows="4" maxlength="3000" placeholder="PDF тупит при перелистывании: найди причину и подготовь фикс с тестами" required></textarea></label><label id="coding-repository-field"><span>GitHub-репозиторий</span><input id="coding-repository" type="url" inputmode="url" placeholder="https://github.com/owner/repo" maxlength="500"></label><label id="coding-sources-field" hidden><span>Ссылки для проверки</span><textarea id="coding-sources" rows="3" maxlength="5000" placeholder="По одной HTTPS ссылке в строке"></textarea></label><div class="dialog-actions"><button id="coding-cancel" class="secondary" type="button">Отмена</button><button class="primary" type="submit">К preview</button></div></form></dialog>
 <dialog id="task-menu-dialog"><form method="dialog"><p class="eyebrow">ЗАДАЧА</p><h2 id="task-menu-title">Задача</h2><div class="task-menu-actions"><button id="task-menu-move" class="secondary" type="button">Перенести</button><button id="task-menu-priority" class="secondary" type="button">Изменить приоритет</button><button id="task-menu-open" class="secondary" type="button">Открыть в Trello</button></div><div class="dialog-actions"><button id="task-menu-close" class="primary" type="submit">Готово</button></div></form></dialog>

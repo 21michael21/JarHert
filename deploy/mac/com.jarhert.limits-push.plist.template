@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jarhert.limits-push</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>@REPO_ROOT@/.venv/bin/python</string>
+        <string>@REPO_ROOT@/scripts/push_limits_snapshot.py</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>@REPO_ROOT@</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>@HOME_DIR@/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>JARHERT_CODEX_BIN</key>
+        <string>@HOME_DIR@/.local/bin/codex</string>
+        <key>JARHERT_CAUT_BIN</key>
+        <string>@HOME_DIR@/.cargo/bin/caut</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>300</integer>
+    <key>StandardOutPath</key>
+    <string>@HOME_DIR@/.cache/jarhert/limits-push.log</string>
+    <key>StandardErrorPath</key>
+    <string>@HOME_DIR@/.cache/jarhert/limits-push.log</string>
+</dict>
+</plist>

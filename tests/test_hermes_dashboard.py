@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -909,3 +910,501 @@ def test_dashboard_money_week_and_export_are_wired() -> None:
     assert 'id="data-export"' in page
     assert "function renderMoneyWeek" in script
     assert ".money-week-bar" in stylesheet
+
+
+CAUT_REPORT = {
+    "schemaVersion": "caut.v1",
+    "generatedAt": "2026-07-20T12:00:00Z",
+    "data": [
+        {
+            "provider": "claude",
+            "account": "mike@example.com",
+            "source": "oauth",
+            "status": "ok",
+            "usage": {
+                "primary": {"usedPercent": 42, "resetsAt": "2026-07-20T15:00:00Z"},
+                "secondary": {"usedPercent": 71, "resetsAt": "2026-07-27T00:00:00Z"},
+            },
+            "credits": None,
+        }
+    ],
+    "errors": [{"provider": "codex", "message": "token expired"}],
+}
+
+
+def _caut_completed(payload: dict, *, returncode: int = 0, stderr: str = "") -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(
+        args=["caut", "usage", "--provider", "all", "--json"],
+        returncode=returncode,
+        stdout=json.dumps(payload),
+        stderr=stderr,
+    )
+
+
+CAUT_REPORT_WITH_CODEX = {
+    "schemaVersion": "caut.v1",
+    "generatedAt": "2026-07-20T12:00:00Z",
+    "data": [
+        {
+            "provider": "codex",
+            "account": "mike@example.com",
+            "source": "cli",
+            "status": "ok",
+            "usage": {"identity": {"plan": "prolite"}},
+            "credits": None,
+        },
+        {
+            "provider": "claude",
+            "account": "mike@example.com",
+            "source": "oauth",
+            "status": "ok",
+            "usage": {"primary": {"usedPercent": 42, "resetsAt": "2026-07-20T15:00:00Z"}},
+            "credits": None,
+        },
+        {"provider": "ghost", "status": "ok", "usage": {}, "credits": None},
+    ],
+    "errors": [{"provider": "codex", "message": "rate limits unsupported"}],
+}
+
+CODEX_RATE_LIMITS_RESULT = {
+    "rateLimits": {
+        "limitId": "codex",
+        "primary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785009251},
+        "secondary": None,
+        "credits": {"hasCredits": False, "unlimited": False, "balance": "0"},
+        "planType": "prolite",
+    },
+    "rateLimitsByLimitId": {
+        "codex": {
+            "limitId": "codex",
+            "primary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785009251},
+            "secondary": None,
+            "credits": {"hasCredits": False, "unlimited": False, "balance": "0"},
+            "planType": "prolite",
+        },
+        "codex_bengalfox": {
+            "limitId": "codex_bengalfox",
+            "limitName": "GPT-5.3-Codex-Spark",
+            "primary": {"usedPercent": 0, "windowDurationMins": 10080, "resetsAt": 1785165899},
+            "secondary": None,
+            "credits": None,
+            "planType": "prolite",
+        },
+    },
+    "rateLimitResetCredits": {"availableCount": 3},
+}
+
+
+def _codex_lines(result: dict | None = None) -> list[str]:
+    return [
+        json.dumps({"jsonrpc": "2.0", "method": "remoteControl/status/changed", "params": {"status": "ready"}}),
+        json.dumps({"id": 1, "result": {"serverInfo": {"name": "codex"}}}),
+        json.dumps({"id": 2, "result": result if result is not None else CODEX_RATE_LIMITS_RESULT}),
+    ]
+
+
+def _block_codex_app_server(monkeypatch) -> None:
+    def fake_popen(cmd, **_kwargs):
+        raise FileNotFoundError(2, "No such file or directory", cmd[0])
+
+    monkeypatch.setattr("hermes.native_tools.dashboard.subprocess.Popen", fake_popen)
+
+
+def _fake_codex_app_server(monkeypatch, lines: list[str] | None = None, *, sleep_seconds: int | None = None) -> list:
+    """Spawn a real python child that speaks the recorded app-server transcript."""
+    real_popen = subprocess.Popen
+    created: list = []
+    if sleep_seconds is not None:
+        script = f"import time; time.sleep({sleep_seconds})"
+    else:
+        transcript = "".join(f"{line}\n" for line in lines or [])
+        # Реальный app-server отвечает, не дожидаясь EOF в stdin (его там и не будет —
+        # продакшн-код специально не закрывает stdin, чтобы сервер не завершился).
+        script = f"import sys; sys.stdout.write({transcript!r}); sys.stdout.flush()"
+
+    def fake_popen(cmd, **kwargs):
+        process = real_popen([sys.executable, "-c", script], **kwargs)
+        created.append(process)
+        return process
+
+    monkeypatch.setattr("hermes.native_tools.dashboard.subprocess.Popen", fake_popen)
+    return created
+
+
+def test_limits_requires_telegram_session() -> None:
+    app_client, _ = client()
+
+    assert app_client.get("/api/limits").status_code == 401
+
+
+def test_limits_returns_provider_usage_from_caut(monkeypatch) -> None:
+    monkeypatch.delenv("JARHERT_CAUT_BIN", raising=False)
+    _block_codex_app_server(monkeypatch)
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return _caut_completed(CAUT_REPORT)
+
+    monkeypatch.setattr("hermes.native_tools.dashboard.subprocess.run", fake_run)
+    app_client, _ = client()
+    sign_in(app_client)
+
+    response = app_client.get("/api/limits")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is True
+    assert body["providers"][0]["provider"] == "claude"
+    assert body["providers"][0]["usage"]["primary"]["usedPercent"] == 42
+    assert body["errors"] == [{"provider": "codex", "message": "token expired"}]
+    assert body["generatedAt"] == "2026-07-20T12:00:00Z"
+    assert calls == [["caut", "usage", "--provider", "all", "--json"]]
+
+
+def test_limits_merges_codex_app_server_with_caut(monkeypatch) -> None:
+    _fake_codex_app_server(monkeypatch, _codex_lines())
+
+    def fake_run(cmd, **_kwargs):
+        return _caut_completed(CAUT_REPORT_WITH_CODEX)
+
+    monkeypatch.setattr("hermes.native_tools.dashboard.subprocess.run", fake_run)
+    app_client, _ = client()
+    sign_in(app_client)
+
+    response = app_client.get("/api/limits")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is True
+    providers = body["providers"]
+    assert [item["provider"] for item in providers] == ["codex", "codex · GPT-5.3-Codex-Spark", "claude"]
+
+    codex = providers[0]
+    assert codex["plan"] == "prolite"
+    assert codex["source"] == "app-server"
+    assert codex["resetCredits"] == 3
+    assert "credits" not in codex
+    primary = codex["usage"]["primary"]
+    assert primary["usedPercent"] == 61
+    assert primary["remainingPercent"] == 39
+    assert primary["windowMinutes"] == 10080
+    assert primary["resetsAt"] == datetime.fromtimestamp(1785009251, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    assert "secondary" not in codex["usage"]
+
+    spark = providers[1]
+    assert spark["usage"]["primary"]["usedPercent"] == 0
+
+    claude = providers[2]
+    assert claude["source"] == "oauth"
+    assert all(item.get("source") != "cli" for item in providers)  # codex-запись caut замещена
+    assert all(item["provider"] != "ghost" for item in providers)  # пустые провайдеры caut отфильтрованы
+    assert body["errors"] == []  # codex-ошибка caut снята вместе с замещением
+    assert body["generatedAt"] == "2026-07-20T12:00:00Z"
+
+
+def test_limits_uses_caut_when_codex_app_server_missing(monkeypatch) -> None:
+    _block_codex_app_server(monkeypatch)
+
+    def fake_run(cmd, **_kwargs):
+        return _caut_completed(CAUT_REPORT_WITH_CODEX)
+
+    monkeypatch.setattr("hermes.native_tools.dashboard.subprocess.run", fake_run)
+    app_client, _ = client()
+    sign_in(app_client)
+
+    response = app_client.get("/api/limits")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is True
+    names = [item["provider"] for item in body["providers"]]
+    assert names == ["codex", "claude"]  # codex-запись caut сохраняется, раз app-server недоступен
+    assert body["errors"] == [{"provider": "codex", "message": "rate limits unsupported"}]
+
+
+def test_limits_uses_codex_when_caut_is_not_installed(monkeypatch) -> None:
+    _fake_codex_app_server(monkeypatch, _codex_lines())
+
+    def fake_run(cmd, **_kwargs):
+        raise FileNotFoundError(2, "No such file or directory", cmd[0])
+
+    monkeypatch.setattr("hermes.native_tools.dashboard.subprocess.run", fake_run)
+    app_client, _ = client()
+    sign_in(app_client)
+
+    response = app_client.get("/api/limits")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is True
+    assert [item["provider"] for item in body["providers"]] == ["codex", "codex · GPT-5.3-Codex-Spark"]
+    assert body["errors"] == []
+    assert body["generatedAt"]
+
+
+def test_limits_unavailable_when_no_sources(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _block_codex_app_server(monkeypatch)
+
+    def fake_run(cmd, **_kwargs):
+        raise FileNotFoundError(2, "No such file or directory", cmd[0])
+
+    monkeypatch.setattr("hermes.native_tools.dashboard.subprocess.run", fake_run)
+    app_client, _ = client()
+    sign_in(app_client)
+
+    response = app_client.get("/api/limits")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is False
+    assert body["reason"] == "no_sources"
+    assert "codex_not_installed" in body["detail"]
+    assert "caut_not_installed" in body["detail"]
+
+
+def test_limits_codex_app_server_timeout_kills_process(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    created = _fake_codex_app_server(monkeypatch, sleep_seconds=30)
+    monkeypatch.setattr("hermes.native_tools.dashboard.CODEX_TIMEOUT_SECONDS", 0.5)
+
+    def fake_run(cmd, **_kwargs):
+        raise FileNotFoundError(2, "No such file or directory", cmd[0])
+
+    monkeypatch.setattr("hermes.native_tools.dashboard.subprocess.run", fake_run)
+    app_client, _ = client()
+    sign_in(app_client)
+
+    response = app_client.get("/api/limits")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is False
+    assert body["reason"] == "no_sources"
+    assert "timeout" in body["detail"]
+    assert created and created[0].poll() is not None
+
+
+def test_limits_degrades_on_nonzero_exit_and_invalid_json(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _block_codex_app_server(monkeypatch)
+
+    def failing_run(cmd, **_kwargs):
+        return _caut_completed({}, returncode=2, stderr="boom: auth failed")
+
+    monkeypatch.setattr("hermes.native_tools.dashboard.subprocess.run", failing_run)
+    app_client, _ = client()
+    sign_in(app_client)
+
+    failed = app_client.get("/api/limits?refresh=1")
+
+    assert failed.status_code == 200
+    body = failed.json()
+    assert body["available"] is False
+    assert body["reason"] == "no_sources"
+    assert "boom: auth failed" in body["detail"]
+
+    def garbage_run(cmd, **_kwargs):
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="not json at all", stderr="")
+
+    monkeypatch.setattr("hermes.native_tools.dashboard.subprocess.run", garbage_run)
+
+    garbage = app_client.get("/api/limits?refresh=1")
+
+    assert garbage.status_code == 200
+    body = garbage.json()
+    assert body["available"] is False
+    assert body["reason"] == "no_sources"
+    assert "невалидный JSON" in body["detail"]
+
+
+def test_limits_caches_caut_output_until_forced_refresh(monkeypatch) -> None:
+    _block_codex_app_server(monkeypatch)
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return _caut_completed(CAUT_REPORT)
+
+    monkeypatch.setattr("hermes.native_tools.dashboard.subprocess.run", fake_run)
+    app_client, _ = client()
+    sign_in(app_client)
+
+    first = app_client.get("/api/limits")
+    second = app_client.get("/api/limits")
+
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json()
+    assert len(calls) == 1
+
+    refreshed = app_client.get("/api/limits?refresh=1")
+
+    assert refreshed.status_code == 200
+    assert len(calls) == 2
+
+
+def test_dashboard_limits_view_is_wired() -> None:
+    app_client, _ = client()
+    page = app_client.get("/").text
+    script = (Path(__file__).parents[1] / "hermes" / "native_tools" / "dashboard_assets" / "dashboard.js").read_text()
+    stylesheet = (Path(__file__).parents[1] / "hermes" / "native_tools" / "dashboard_assets" / "dashboard.css").read_text()
+
+    assert 'data-view="limits"' in page
+    assert 'id="view-limits"' in page
+    assert 'id="limits-refresh"' in page
+    assert "function renderLimits" in script
+    assert '"/api/limits?refresh=1"' in script
+    assert ".limit-card" in stylesheet
+
+
+INGEST_TOKEN = "test-ingest-token"
+SNAPSHOT_PROVIDERS = [
+    {
+        "provider": "codex",
+        "source": "app-server",
+        "plan": "prolite",
+        "usage": {
+            "primary": {
+                "usedPercent": 61,
+                "remainingPercent": 39,
+                "windowMinutes": 10080,
+                "resetsAt": "2026-07-25T12:00:00Z",
+            }
+        },
+    }
+]
+
+
+def _limits_ingest_env(monkeypatch, tmp_path, *, token: str | None = INGEST_TOKEN) -> None:
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    if token is None:
+        monkeypatch.delenv("JARHERT_LIMITS_INGEST_TOKEN", raising=False)
+    else:
+        monkeypatch.setenv("JARHERT_LIMITS_INGEST_TOKEN", token)
+
+
+def _no_live_limits(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "hermes.native_tools.dashboard._collect_limits",
+        lambda: {"available": False, "reason": "no_sources", "detail": "test"},
+    )
+
+
+def test_limits_ingest_is_disabled_without_token(monkeypatch, tmp_path) -> None:
+    _limits_ingest_env(monkeypatch, tmp_path, token=None)
+    app_client, _ = client()
+
+    response = app_client.post("/api/limits/ingest", json={"providers": [], "errors": [], "generatedAt": "x"})
+
+    assert response.status_code == 404
+
+
+def test_limits_ingest_requires_bearer_token(monkeypatch, tmp_path) -> None:
+    _limits_ingest_env(monkeypatch, tmp_path)
+    app_client, _ = client()
+    payload = {"providers": [], "errors": [], "generatedAt": "x"}
+
+    missing = app_client.post("/api/limits/ingest", json=payload)
+    wrong = app_client.post("/api/limits/ingest", json=payload, headers={"Authorization": "Bearer wrong"})
+
+    assert missing.status_code == 401
+    assert wrong.status_code == 401
+    assert not (tmp_path / "limits_snapshot.json").exists()
+
+
+def test_limits_ingest_validates_payload(monkeypatch, tmp_path) -> None:
+    _limits_ingest_env(monkeypatch, tmp_path)
+    app_client, _ = client()
+    headers = {"Authorization": f"Bearer {INGEST_TOKEN}"}
+
+    garbage = app_client.post("/api/limits/ingest", content=b"not json", headers=headers)
+    not_object = app_client.post("/api/limits/ingest", json=["not", "object"], headers=headers)
+    bad_providers = app_client.post("/api/limits/ingest", json={"providers": "nope"}, headers=headers)
+    bad_errors = app_client.post("/api/limits/ingest", json={"providers": [], "errors": [123]}, headers=headers)
+    bad_stamp = app_client.post("/api/limits/ingest", json={"providers": [], "generatedAt": "x" * 65}, headers=headers)
+
+    assert garbage.status_code == 422
+    assert not_object.status_code == 422
+    assert bad_providers.status_code == 422
+    assert bad_errors.status_code == 422
+    assert bad_stamp.status_code == 422
+    assert not (tmp_path / "limits_snapshot.json").exists()
+
+
+def test_limits_ingest_stores_snapshot_and_get_serves_it(monkeypatch, tmp_path) -> None:
+    _limits_ingest_env(monkeypatch, tmp_path)
+    _no_live_limits(monkeypatch)
+    app_client, _ = client()
+
+    ingested = app_client.post(
+        "/api/limits/ingest",
+        json={"providers": SNAPSHOT_PROVIDERS, "errors": ["codex: transient"], "generatedAt": "2026-07-20T12:00:00Z"},
+        headers={"Authorization": f"Bearer {INGEST_TOKEN}"},
+    )
+
+    assert ingested.status_code == 200
+    received_at = ingested.json()["receivedAt"]
+    assert received_at
+
+    snapshot_file = tmp_path / "limits_snapshot.json"
+    assert snapshot_file.exists()
+    assert (snapshot_file.stat().st_mode & 0o777) == 0o600
+    stored = json.loads(snapshot_file.read_text(encoding="utf-8"))
+    assert stored["receivedAt"] == received_at
+    assert stored["providers"] == SNAPSHOT_PROVIDERS
+
+    sign_in(app_client)
+    served = app_client.get("/api/limits")
+
+    assert served.status_code == 200
+    body = served.json()
+    assert body["available"] is True
+    assert body["source"] == "snapshot"
+    assert body["receivedAt"] == received_at
+    assert body["stale"] is False
+    assert body["providers"] == SNAPSHOT_PROVIDERS
+    assert body["errors"] == ["codex: transient"]
+
+
+def test_limits_snapshot_is_marked_stale_after_fifteen_minutes(monkeypatch, tmp_path) -> None:
+    _limits_ingest_env(monkeypatch, tmp_path)
+    _no_live_limits(monkeypatch)
+    old_received = datetime.fromtimestamp(time.time() - 3600, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    (tmp_path / "limits_snapshot.json").write_text(
+        json.dumps({"providers": SNAPSHOT_PROVIDERS, "errors": [], "generatedAt": None, "receivedAt": old_received}),
+        encoding="utf-8",
+    )
+    app_client, _ = client()
+    sign_in(app_client)
+
+    body = app_client.get("/api/limits").json()
+
+    assert body["available"] is True
+    assert body["source"] == "snapshot"
+    assert body["stale"] is True
+
+
+def test_limits_live_collector_wins_over_snapshot(monkeypatch, tmp_path) -> None:
+    _limits_ingest_env(monkeypatch, tmp_path)
+    (tmp_path / "limits_snapshot.json").write_text(
+        json.dumps({"providers": [{"provider": "from-snapshot"}], "errors": [], "receivedAt": "2026-07-20T12:00:00Z"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "hermes.native_tools.dashboard._collect_limits",
+        lambda: {
+            "available": True,
+            "providers": [{"provider": "live-one"}],
+            "errors": [],
+            "generatedAt": "2026-07-20T13:00:00Z",
+        },
+    )
+    app_client, _ = client()
+    sign_in(app_client)
+
+    body = app_client.get("/api/limits").json()
+
+    assert body["available"] is True
+    assert body["source"] == "live"
+    assert body["providers"] == [{"provider": "live-one"}]

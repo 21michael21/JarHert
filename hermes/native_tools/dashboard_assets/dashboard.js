@@ -2,9 +2,9 @@ const $ = (id) => document.getElementById(id);
 const telegram = window.Telegram?.WebApp;
 const state = {
   activeView: "today", snapshot: null, tasks: {items: [], lists: [], priorities: []}, calendar: {items: []},
-  coding: {items: []}, notes: {items: []}, knowledge: {items: []}, subscriptions: {items: []}, digest: {items: []}, expenses: {items: []}, expensesMonthly: {items: []}, commitments: {items: []}, trips: {items: []}, projects: {items: []}, projectStatus: null, searchQuery: "", searchResults: null, noteQuery: "", taskQuery: "", taskFilter: "Все", taskMenu: null, quickType: "task", edit: null, plan: null, codingDraft: null, clip: null, architectureScenario: "plan", lastUpdatedAt: null,
+  coding: {items: []}, notes: {items: []}, knowledge: {items: []}, subscriptions: {items: []}, digest: {items: []}, expenses: {items: []}, expensesMonthly: {items: []}, commitments: {items: []}, trips: {items: []}, projects: {items: []}, projectStatus: null, searchQuery: "", searchResults: null, noteQuery: "", taskQuery: "", taskFilter: "Все", taskMenu: null, quickType: "task", edit: null, plan: null, codingDraft: null, clip: null, architectureScenario: "plan", lastUpdatedAt: null, pendingActions: [], limits: null, limitsLoading: false,
 };
-const VIEWS = new Set(["today", "tasks", "calendar", "money", "code", "memory"]);
+const VIEWS = new Set(["today", "tasks", "calendar", "money", "code", "memory", "limits"]);
 const ARCHITECTURE_SCENARIOS = {
   question: {
     eyebrow: "СЦЕНАРИЙ · ВОПРОС", title: "Короткий ответ без лишнего круга", summary: "Обычный вопрос не трогает внешние сервисы: JarHert понимает контекст и отвечает в чате.",
@@ -81,8 +81,8 @@ async function request(url, options = {}) {
   return response.json();
 }
 
-async function refresh() {
-  showNotice("Обновляю…");
+async function refresh({silent = false} = {}) {
+  if (!silent) showNotice("Обновляю…");
   const snapshot = await request("/api/snapshot");
   const noteUrl = state.noteQuery ? `/api/notes?query=${encodeURIComponent(state.noteQuery)}` : "/api/notes";
   const [taskResult, calendarResult, codingResult, noteResult, knowledgeResult, subscriptionResult, digestResult, expenseResult, monthlyResult, commitmentResult, tripResult, projectResult] = await Promise.allSettled([
@@ -102,20 +102,63 @@ async function refresh() {
   state.trips = tripResult.status === "fulfilled" ? tripResult.value : {items: []};
   state.projects = projectResult.status === "fulfilled" ? projectResult.value : {items: []};
   state.lastUpdatedAt = new Date();
-  render(); showNotice("");
+  render(); if (!silent) showNotice("");
+}
+
+async function refreshTasks() {
+  const [snapshotResult, taskResult] = await Promise.allSettled([request("/api/snapshot"), request("/api/tasks")]);
+  if (snapshotResult.status === "fulfilled") state.snapshot = snapshotResult.value;
+  if (taskResult.status === "fulfilled") state.tasks = taskResult.value;
+  state.lastUpdatedAt = new Date();
+  render();
+}
+
+async function completeTask(task) {
+  const title = task?.title;
+  if (!title) return;
+  const items = state.tasks.items || [];
+  const index = items.findIndex((item) => item.title === title);
+  const removed = index >= 0 ? items.splice(index, 1)[0] : null;
+  const priorities = state.snapshot?.today?.priorities || [];
+  const priorityIndex = priorities.findIndex((item) => field(item, "title", "text", "subject") === title);
+  const removedPriority = priorityIndex >= 0 ? priorities.splice(priorityIndex, 1)[0] : null;
+  haptic("notification", "success");
+  render();
+  try {
+    const plan = await request("/api/plans", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({request_id: requestId(), actions: [{type: "task.done", payload: {title}}]})});
+    await request(`/api/plans/${plan.id}/execute`, {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({plan_token: plan.plan_token})});
+    showNotice("Задача закрыта");
+    await refreshTasks();
+  } catch (error) {
+    if (removed) items.splice(index, 0, removed);
+    if (removedPriority) priorities.splice(priorityIndex, 0, removedPriority);
+    haptic("notification", "error");
+    showNotice(friendlyError(error));
+    render();
+  }
 }
 
 function render() {
   const snapshot = state.snapshot || {};
-  $("mode-chip").textContent = workModeLabel(snapshot.work_mode);
+  const modeLabel = workModeLabel(snapshot.work_mode);
+  const chip = $("mode-chip");
+  chip.textContent = modeLabel;
+  chip.hidden = modeLabel === "Быстро";
   $("last-sync").textContent = state.lastUpdatedAt ? `Обновлено ${formatTime(state.lastUpdatedAt)}` : "Собираю твой контур";
-  renderToday(snapshot);
-  renderTasks();
-  renderCalendar();
-  renderMoney();
-  renderCode();
-  renderMemory(snapshot);
+  $("refresh").title = state.lastUpdatedAt ? `Обновлено ${formatTime(state.lastUpdatedAt)}` : "Обновить данные";
+  renderView(state.activeView);
   setView(state.activeView);
+}
+
+function renderView(view) {
+  const snapshot = state.snapshot || {};
+  if (view === "today") renderToday(snapshot);
+  else if (view === "tasks") renderTasks();
+  else if (view === "calendar") renderCalendar();
+  else if (view === "money") renderMoney();
+  else if (view === "code") renderCode();
+  else if (view === "memory") renderMemory(snapshot);
+  else if (view === "limits") renderLimits();
 }
 
 function renderToday(snapshot) {
@@ -126,7 +169,7 @@ function renderToday(snapshot) {
   $("focus-state").textContent = focus ? "Фокус" : "Свободно";
   $("focus-done").disabled = !focus;
   $("focus-move").disabled = !focus;
-  $("focus-done").onclick = () => focus && preparePlan([{type: "task.done", payload: {title: focus.title}}]);
+  $("focus-done").onclick = () => focus && completeTask(focus);
   $("focus-move").onclick = () => focus && openTaskMove(focus);
   list("priorities", priorities, (item) => focusRow(findTask(field(item, "title", "text", "subject")) || {title: field(item, "title", "text", "subject")}), "На сегодня пока нет явных задач.");
   list("today-calendar", state.calendar.items.slice(0, 3), compactEventRow, "На ближайшие дни встреч нет.");
@@ -175,7 +218,7 @@ function focusRow(task) {
   const copy = node("div", "row-copy");
   copy.append(node("strong", "row-title", task.title), node("span", "row-meta", taskMeta(task)));
   const actions = node("div", "row-actions");
-  actions.append(button("Готово", "row-button", () => preparePlan([{type: "task.done", payload: {title: task.title}}])));
+  actions.append(button("Готово", "row-button", () => completeTask(task)));
   row.append(copy, actions); return row;
 }
 
@@ -202,9 +245,42 @@ function taskRow(task) {
   const meta = node("span", "row-meta", taskMeta(task));
   copy.append(title, meta);
   const actions = node("div", "row-actions");
-  actions.append(button("Готово", "row-button task-complete", () => preparePlan([{type: "task.done", payload: {title: task.title}}])));
+  actions.append(button("Готово", "row-button task-complete", () => completeTask(task)));
   actions.append(button("...", "task-menu-button", () => openTaskMenu(task), `Другие действия с задачей: ${task.title}`));
-  row.append(copy, actions); return row;
+  row.append(copy, actions);
+  return swipeableTaskRow(row, task);
+}
+
+function swipeableTaskRow(row, task) {
+  const wrap = node("div", "swipe-wrap");
+  const under = node("div", "swipe-under");
+  under.append(node("span", "swipe-label done", "Готово"), node("span", "swipe-label move", "Перенести"));
+  wrap.append(under, row);
+  let startX = 0; let startY = 0; let deltaX = 0; let tracking = false;
+  row.addEventListener("touchstart", (event) => {
+    const touch = event.touches[0];
+    startX = touch.clientX; startY = touch.clientY; deltaX = 0; tracking = true;
+    row.style.transition = "none";
+  }, {passive: true});
+  row.addEventListener("touchmove", (event) => {
+    if (!tracking) return;
+    const touch = event.touches[0];
+    const dx = touch.clientX - startX; const dy = touch.clientY - startY;
+    if (!deltaX && Math.abs(dy) > Math.abs(dx)) { tracking = false; return; }
+    deltaX = dx;
+    row.style.transform = `translateX(${deltaX}px)`;
+    wrap.dataset.swipe = deltaX > 72 ? "done" : deltaX < -72 ? "move" : "";
+  }, {passive: true});
+  row.addEventListener("touchend", () => {
+    if (!tracking && !deltaX) return;
+    tracking = false;
+    row.style.transition = ""; row.style.transform = "";
+    const action = wrap.dataset.swipe || "";
+    wrap.dataset.swipe = ""; deltaX = 0;
+    if (action === "done") completeTask(task);
+    else if (action === "move") openTaskMove(task);
+  });
+  return wrap;
 }
 
 function renderCalendar() {
@@ -239,6 +315,178 @@ function renderCode() {
   list("coding-jobs", state.coding.items || [], codingJobRow, "Кодовых задач пока нет. Добавь первую одной фразой.");
 }
 
+function renderLimits() {
+  if (!state.limits && !state.limitsLoading) loadLimits().catch((error) => showNotice(friendlyError(error)));
+  paintLimits();
+}
+
+async function loadLimits(force = false) {
+  state.limitsLoading = true;
+  paintLimits();
+  try {
+    state.limits = await request(force ? "/api/limits?refresh=1" : "/api/limits");
+  } catch (error) {
+    state.limits = {available: false, reason: "error", detail: friendlyError(error)};
+    showNotice(friendlyError(error));
+  } finally {
+    state.limitsLoading = false;
+    paintLimits();
+  }
+}
+
+function paintLimits() {
+  const box = $("limits-list");
+  const status = $("limits-status");
+  const errorsSection = $("limits-errors-section");
+  box.replaceChildren();
+  errorsSection.hidden = true;
+  if (state.limitsLoading && !state.limits) {
+    status.hidden = false;
+    status.dataset.tone = "muted";
+    status.textContent = "Спрашиваю caut о лимитах…";
+    const skeleton = node("div", "loading-skeletons");
+    skeleton.append(node("span"), node("span"), node("span"));
+    box.append(skeleton);
+    return;
+  }
+  const data = state.limits;
+  if (!data) return;
+  if (!data.available) {
+    status.hidden = false;
+    if (data.reason === "caut_not_installed") {
+      status.dataset.tone = "warn";
+      status.textContent = "caut не найден на сервере. Установи caut, чтобы видеть лимиты провайдеров.";
+    } else if (data.reason === "timeout") {
+      status.dataset.tone = "warn";
+      status.textContent = "caut не ответил вовремя. Попробуй обновить.";
+    } else if (data.reason === "no_sources") {
+      status.dataset.tone = "warn";
+      const detail = String(data.detail || "");
+      status.textContent = detail.includes("not_installed")
+        ? "caut и codex не найдены на сервере. Установи хотя бы один, чтобы видеть лимиты."
+        : `Нет данных о лимитах: ${shorten(detail, 180) || "оба источника недоступны"}`;
+    } else {
+      status.dataset.tone = "danger";
+      status.textContent = `Не удалось получить лимиты${data.detail ? `: ${shorten(data.detail, 160)}` : "."}`;
+    }
+    $("limits-summary").textContent = "";
+    return;
+  }
+  status.hidden = !(state.limitsLoading || data.stale);
+  if (state.limitsLoading) {
+    status.dataset.tone = "muted";
+    status.textContent = "Обновляю лимиты…";
+  } else if (data.stale) {
+    status.dataset.tone = "warn";
+    status.textContent = "Данные присланы с другого устройства и могли устареть.";
+  }
+  const stamp = data.source === "snapshot" ? data.receivedAt || data.generatedAt : data.generatedAt;
+  const ago = formatUpdatedAgo(stamp);
+  $("limits-summary").textContent = ago ? `Обновлено: ${ago}` : "";
+  const providers = data.providers || [];
+  if (!providers.length) box.append(node("p", "empty", "caut не вернул ни одного провайдера."));
+  providers.forEach((provider) => box.append(limitCard(provider)));
+  const errors = data.errors || [];
+  errorsSection.hidden = !errors.length;
+  $("limits-errors-count").textContent = String(errors.length);
+  list("limits-errors", errors, (item) => {
+    const row = node("article", "work-row");
+    const copy = node("div", "row-copy");
+    copy.append(node("strong", "row-title", field(item, "provider", "source")), node("span", "row-meta danger", field(item, "message", "error", "detail")));
+    row.append(copy);
+    return row;
+  }, "Ошибок нет.");
+}
+
+function limitCard(provider) {
+  const card = node("article", "limit-card");
+  const head = node("div", "limit-card-head");
+  head.append(node("strong", "row-title", field(provider, "provider", "name")));
+  if (provider.status && provider.status !== "ok") head.append(node("span", "count-pill", text(provider.status)));
+  card.append(head);
+  const meta = [provider.account, provider.plan, provider.source].map(text).filter(Boolean).join(" · ");
+  if (meta) card.append(node("p", "row-meta", meta));
+  const usage = provider.usage || {};
+  ["primary", "secondary", "tertiary"].forEach((key) => {
+    const window_ = usage[key];
+    if (!window_ || typeof window_ !== "object") return;
+    card.append(limitWindow(limitWindowLabel(key, window_), window_));
+  });
+  if (provider.resetCredits) card.append(node("p", "row-meta", `Сбросов кредитов доступно: ${provider.resetCredits}`));
+  if (provider.credits !== null && provider.credits !== undefined) {
+    const raw = typeof provider.credits === "object"
+      ? provider.credits.remaining ?? provider.credits.balance ?? provider.credits.total
+      : provider.credits;
+    if (raw !== null && raw !== undefined) card.append(node("p", "row-meta", `Кредиты: ${raw}`));
+  }
+  return card;
+}
+
+function limitWindowLabel(key, window_) {
+  const minutes = Number(window_?.windowMinutes);
+  if (Number.isFinite(minutes) && minutes > 0) {
+    if (minutes <= 360) return minutes >= 270 && minutes <= 330 ? "5 часов" : "Сессия";
+    if (minutes >= 10080) return minutes > 10080 ? `${Math.round(minutes / 10080)} нед.` : "Неделя";
+    if (minutes % 1440 === 0) return `${minutes / 1440}д`;
+    return `${Math.round(minutes / 60)}ч`;
+  }
+  return {primary: "Сессия", secondary: "Неделя", tertiary: "Дополнительно"}[key] || "Окно";
+}
+
+function limitWindow(label, window_) {
+  const wrap = node("div", "limit-window");
+  const top = node("div", "limit-window-top");
+  const percent = limitRemainingPercent(window_);
+  top.append(
+    node("span", "", label),
+    node("span", "", percent === null ? "нет данных" : `осталось ${Math.round(percent)}%`),
+  );
+  wrap.append(top);
+  if (percent !== null) {
+    const track = node("span", "limit-track");
+    const tone = percent <= 10 ? "danger" : percent <= 30 ? "warn" : "";
+    track.append(Object.assign(node("span", `limit-fill ${tone}`.trim()), {style: `width:${Math.max(0, Math.min(100, percent))}%`}));
+    wrap.append(track);
+  }
+  const reset = formatReset(window_.resetsAt);
+  if (reset) wrap.append(node("span", "row-meta", reset));
+  return wrap;
+}
+
+function limitRemainingPercent(window_) {
+  if (typeof window_.remainingPercent === "number") return window_.remainingPercent;
+  if (typeof window_.usedPercent === "number") return 100 - window_.usedPercent;
+  const used = Number(window_.used);
+  const limit = Number(window_.limit);
+  if (Number.isFinite(used) && Number.isFinite(limit) && limit > 0) return Math.max(0, 100 - (used / limit) * 100);
+  return null;
+}
+
+function formatUpdatedAgo(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const diffMs = Date.now() - date.getTime();
+  if (diffMs < 60 * 1000) return diffMs < 0 ? `сегодня ${formatTime(date)}` : "только что";
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 60) return `${minutes} ${plural(minutes, "минуту", "минуты", "минут")} назад`;
+  if (date.toDateString() === new Date().toDateString()) return `сегодня ${formatTime(date)}`;
+  return `${date.toLocaleDateString("ru-RU", {day: "numeric", month: "short"})} ${formatTime(date)}`;
+}
+
+function formatReset(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const diffMs = date.getTime() - Date.now();
+  if (diffMs <= 0) return "сброс уже должен был пройти";
+  const minutes = Math.round(diffMs / 60000);
+  if (minutes < 60) return `сброс через ${minutes}м`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `сброс через ${hours}ч${minutes % 60 ? ` ${minutes % 60}м` : ""}`;
+  return `сброс ${date.toLocaleDateString("ru-RU", {day: "numeric", month: "short"})} в ${formatTime(date)}`;
+}
+
 function renderMoney() {
   const monthlyItems = state.expensesMonthly.items || [];
   const currencies = [...new Set(monthlyItems.map((item) => item.currency))];
@@ -246,14 +494,19 @@ function renderMoney() {
     const total = monthlyItems.filter((item) => item.currency === currency).reduce((sum, item) => sum + item.total, 0);
     return `${formatAmount(total)} ${currency}`;
   });
-  $("money-summary").textContent = monthlyItems.length ? `В этом месяце: ${totalsByCurrency.join(" · ")}` : "В этом месяце трат пока нет.";
+  const subscriptions = state.subscriptions.items || [];
+  const expenses = state.expenses.items || [];
+  const weekTotal = renderMoneyWeek();
+  $("money-summary").textContent = monthlyItems.length
+    ? `В этом месяце: ${totalsByCurrency.join(" · ")}`
+    : "Трат пока нет — добавь первую кнопкой «Добавить трату».";
+  $("money-bars-section").hidden = !monthlyItems.length;
+  $("money-week-section").hidden = !weekTotal;
+  $("subscriptions-section").hidden = !subscriptions.length;
+  $("expenses-section").hidden = !expenses.length;
   const maxTotal = Math.max(1, ...monthlyItems.map((item) => item.total));
   const bars = $("money-bars");
   bars.replaceChildren();
-  if (!monthlyItems.length) {
-    bars.append(node("p", "empty", "Записей пока нет — добавь первую трату кнопкой выше."));
-  }
-  renderMoneyWeek();
   for (const item of monthlyItems) {
     const row = node("div", "money-bar-row");
     const width = Math.max(6, Math.round((item.total / maxTotal) * 100));
@@ -264,12 +517,10 @@ function renderMoney() {
     );
     bars.append(row);
   }
-  const subscriptions = state.subscriptions.items || [];
   $("subscriptions-total").textContent = state.subscriptions.monthly_totals
     ? Object.entries(state.subscriptions.monthly_totals).map(([currency, total]) => `${total} ${currency}/мес`).join(" · ")
     : "";
   list("subscriptions", subscriptions, subscriptionRow, "Подписок нет.");
-  const expenses = state.expenses.items || [];
   $("expense-count").textContent = String(expenses.length);
   list("expenses", expenses, expenseRow, "Трат пока нет. Одна запись — два тапа.");
 }
@@ -626,13 +877,14 @@ function renderMoneyWeek() {
   const maxTotal = Math.max(1, ...totals);
   days.forEach((day, index) => {
     const column = node("div", "money-week-day");
-    const height = totals[index] ? Math.max(8, Math.round((totals[index] / maxTotal) * 100)) : 2;
+    const height = totals[index] ? Math.max(8, Math.round((totals[index] / maxTotal) * 100)) : 0;
     column.append(
       Object.assign(node("span", "money-week-bar"), {style: `height:${height}%`, title: `${formatAmount(totals[index])} ${mainCurrency}`}),
       node("span", "money-week-label", day.toLocaleDateString("ru-RU", {weekday: "short"})),
     );
     box.append(column);
   });
+  return weekTotal;
 }
 
 function renderMemory(snapshot) {
@@ -778,7 +1030,9 @@ function plural(value, one, few, many) { const mod10 = value % 10; const mod100 
 
 function setView(view, {syncHistory = true} = {}) {
   const nextView = VIEWS.has(view) ? view : "today";
+  const switched = state.activeView !== nextView;
   state.activeView = nextView;
+  if (switched) renderView(nextView);
   document.querySelectorAll(".view").forEach((item) => { item.hidden = item.id !== `view-${nextView}`; });
   document.querySelectorAll("[data-view]").forEach((item) => {
     const isActive = item.dataset.view === nextView;
@@ -839,6 +1093,28 @@ async function preparePlan(actions) {
   } catch (error) { showNotice(friendlyError(error)); haptic("notification", "error"); }
 }
 
+function queueAction(action) {
+  state.pendingActions.push(action);
+  renderPendingPlan();
+  haptic("impactOccurred", "light");
+  showNotice(`В плане ${state.pendingActions.length} ${plural(state.pendingActions.length, "действие", "действия", "действий")} — жми «Применить», когда будешь готов`);
+}
+
+function renderPendingPlan() {
+  const count = state.pendingActions.length;
+  $("pending-plan").hidden = !count;
+  $("pending-count").textContent = `${count} ${plural(count, "действие", "действия", "действий")}`;
+}
+
+async function clearPendingPlan() {
+  const count = state.pendingActions.length;
+  if (!count) return;
+  if (count > 1 && !await confirmAction(`Сбросить ${count} ${plural(count, "действие", "действия", "действий")} из плана?`)) return;
+  state.pendingActions = [];
+  renderPendingPlan();
+  showNotice("");
+}
+
 function renderPlan(plan) { list("plan-preview", plan.preview || [], (line) => node("div", "preview-row", line), "В плане нет действий."); }
 async function executePlan(event) {
   event.preventDefault(); if (!state.plan && !state.codingDraft) return; const control = $("plan-execute"); control.disabled = true;
@@ -854,7 +1130,7 @@ async function executePlan(event) {
       $("quick-text").value = "";
       showNotice("Готово");
     }
-    $("plan-dialog").close(); state.plan = null; state.codingDraft = null; haptic("notification", "success"); await refresh();
+    $("plan-dialog").close(); state.plan = null; state.codingDraft = null; state.pendingActions = []; renderPendingPlan(); haptic("notification", "success"); await refresh();
   }
   catch (error) { haptic("notification", "error"); showNotice(friendlyError(error)); }
   finally { control.disabled = false; }
@@ -936,13 +1212,47 @@ async function saveEdit(event) {
     if (kind === "reminder") { const remindAt = toIso($("edit-date").value); if (!remindAt) throw new Error("Укажи время"); await request(`/api/reminders/${item.id}/reschedule`, {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({remind_at: remindAt, recurrence: $("edit-recurrence").value})}); $("edit-dialog").close(); showNotice("Напоминание обновлено"); await refresh(); }
     else if (kind === "note") { const content = $("edit-value").value.trim(); if (!content) throw new Error("Текст заметки пустой"); await request(`/api/notes/${item.id}`, {method: "PUT", headers: {"content-type": "application/json"}, body: JSON.stringify({content})}); $("edit-dialog").close(); showNotice("Заметка обновлена"); await refresh(); }
     else if (kind === "monitor") { const quietHours = $("edit-value").value.trim(); if (quietHours && !/^\d{2}:\d{2}-\d{2}:\d{2}$/.test(quietHours)) throw new Error("Формат: 23:00-08:00"); await request(`/api/monitors/${item.id}/schedule`, {method: "PUT", headers: {"content-type": "application/json"}, body: JSON.stringify({quiet_hours: quietHours, timezone: item.source_config?.timezone || "Europe/Moscow"})}); $("edit-dialog").close(); showNotice(quietHours ? "Радар перейдёт в digest в тихие часы" : "Тихие часы отключены"); await refresh(); }
-    else { let action; if (kind === "task.move") action = {type: kind, payload: {title: item.title, target_list: $("edit-choice").value}}; if (kind === "task.priority") action = {type: kind, payload: {title: item.title, priority: $("edit-choice").value}}; if (kind === "calendar.move") { const start = toIso($("edit-date").value); const end = toIso($("edit-end").value); if (!start || !end || end <= start) throw new Error("Укажи корректное время"); action = {type: kind, payload: {title: item.title, start, end}}; } $("edit-dialog").close(); await preparePlan([action]); }
+    else { let action; if (kind === "task.move") action = {type: kind, payload: {title: item.title, target_list: $("edit-choice").value}}; if (kind === "task.priority") action = {type: kind, payload: {title: item.title, priority: $("edit-choice").value}}; if (kind === "calendar.move") { const start = toIso($("edit-date").value); const end = toIso($("edit-end").value); if (!start || !end || end <= start) throw new Error("Укажи корректное время"); action = {type: kind, payload: {title: item.title, start, end}}; } $("edit-dialog").close(); queueAction(action); }
   } catch (error) { haptic("notification", "error"); showNotice(friendlyError(error)); }
   finally { control.disabled = false; }
 }
 
-async function cancelReminder(item) { if (!await confirmAction(`Отменить напоминание «${field(item, "text", "title")}»?`)) return; try { await request(`/api/reminders/${item.id}/cancel`, {method: "POST"}); haptic("notification", "success"); showNotice("Напоминание отменено"); await refresh(); } catch (error) { showNotice(friendlyError(error)); } }
-async function deleteNote(item) { if (!await confirmAction(`Удалить заметку «${field(item, "subject")}»?`)) return; try { await request(`/api/notes/${item.id}`, {method: "DELETE"}); haptic("notification", "success"); showNotice("Заметка удалена"); await refresh(); } catch (error) { haptic("notification", "error"); showNotice(friendlyError(error)); } }
+function cancelReminder(item) {
+  const reminders = state.snapshot?.today?.reminders || [];
+  const index = reminders.findIndex((entry) => entry.id === item.id);
+  const removed = index >= 0 ? reminders.splice(index, 1)[0] : null;
+  renderView("memory");
+  showUndoToast(`Напоминание «${field(item, "text", "title")}» отменено`, {
+    onUndo: () => { if (removed) reminders.splice(index, 0, removed); renderView("memory"); },
+    onCommit: () => request(`/api/reminders/${item.id}/cancel`, {method: "POST"}),
+  });
+}
+function deleteNote(item) {
+  const items = state.notes.items || [];
+  const index = items.findIndex((entry) => entry.id === item.id);
+  const removed = index >= 0 ? items.splice(index, 1)[0] : null;
+  renderView("memory");
+  showUndoToast(`Заметка «${field(item, "subject")}» удалена`, {
+    onUndo: () => { if (removed) items.splice(index, 0, removed); renderView("memory"); },
+    onCommit: () => request(`/api/notes/${item.id}`, {method: "DELETE"}),
+  });
+}
+function showUndoToast(message, {onUndo, onCommit}) {
+  const offset = document.querySelectorAll(".undo-toast").length;
+  const toast = node("div", "undo-toast");
+  toast.setAttribute("role", "status");
+  toast.style.bottom = `calc(${150 + offset * 56}px + env(safe-area-inset-bottom))`;
+  let settled = false;
+  toast.append(node("span", "undo-toast-text", message), button("Отменить", "text-button", () => { settled = true; toast.remove(); onUndo(); }));
+  document.body.append(toast);
+  window.setTimeout(async () => {
+    if (settled) return;
+    settled = true;
+    toast.remove();
+    try { await onCommit(); haptic("notification", "success"); await refresh({silent: true}); }
+    catch (error) { haptic("notification", "error"); onUndo(); showNotice(friendlyError(error)); }
+  }, 5000);
+}
 function confirmAction(message) { if (telegram?.showConfirm) return new Promise((resolve) => telegram.showConfirm(message, resolve)); return Promise.resolve(window.confirm(message)); }
 function openExternal(url) { if (telegram?.openLink) telegram.openLink(url); else window.open(url, "_blank", "noopener"); }
 function requestId() { return window.crypto?.randomUUID?.().replaceAll("-", "") || `quick${Date.now()}${Math.random().toString(36).slice(2)}`; }
@@ -961,7 +1271,9 @@ function init() {
   document.querySelectorAll("[data-open-view]").forEach((item) => item.addEventListener("click", () => setView(item.dataset.openView)));
   $("quick-add").addEventListener("click", () => openQuick()); $("quick-cancel").addEventListener("click", () => $("quick-dialog").close());
   document.querySelectorAll("[data-quick-type]").forEach((item) => item.addEventListener("click", () => { state.quickType = item.dataset.quickType; updateQuickForm(); }));
-  $("quick-form").addEventListener("submit", (event) => { event.preventDefault(); try { const action = quickAction(); $("quick-dialog").close(); preparePlan([action]); } catch (error) { showNotice(friendlyError(error)); } });
+  $("quick-form").addEventListener("submit", (event) => { event.preventDefault(); try { const action = quickAction(); $("quick-dialog").close(); $("quick-text").value = ""; queueAction(action); } catch (error) { showNotice(friendlyError(error)); } });
+  $("pending-apply").addEventListener("click", () => { if (state.pendingActions.length && !$("plan-dialog").open) preparePlan(state.pendingActions); });
+  $("pending-clear").addEventListener("click", () => clearPendingPlan());
   $("coding-add").addEventListener("click", openCoding); $("coding-cancel").addEventListener("click", () => $("coding-dialog").close()); $("coding-mode").addEventListener("change", updateCodingForm); $("coding-form").addEventListener("submit", previewCoding);
   $("expense-add").addEventListener("click", openExpenseDialog); $("expense-cancel").addEventListener("click", () => $("expense-dialog").close()); $("expense-form").addEventListener("submit", (event) => submitExpense(event).catch((error) => showNotice(friendlyError(error))));
   $("note-add").addEventListener("click", () => { $("note-form").reset(); $("note-dialog").showModal(); }); $("note-cancel").addEventListener("click", () => $("note-dialog").close()); $("note-form").addEventListener("submit", (event) => submitNote(event).catch((error) => showNotice(friendlyError(error))));
@@ -986,8 +1298,11 @@ function init() {
   document.querySelectorAll("[data-architecture-scenario]").forEach((item) => item.addEventListener("click", () => showArchitectureScenario(item.dataset.architectureScenario)));
   $("architecture-dialog").addEventListener("close", () => window.clearTimeout(architecturePlaybackTimer));
   $("open-trello").addEventListener("click", () => openExternal(state.tasks.board_url || "https://trello.com/")); $("open-calendar").addEventListener("click", () => openExternal("https://calendar.google.com/"));
+  $("limits-refresh").addEventListener("click", () => loadLimits(true).catch((error) => showNotice(friendlyError(error))));
   window.addEventListener("hashchange", () => setView(window.location.hash.slice(1), {syncHistory: false}));
   if (VIEWS.has(window.location.hash.slice(1))) state.activeView = window.location.hash.slice(1);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && state.snapshot) refresh({silent: true}).catch((error) => showNotice(friendlyError(error))); });
+  window.setInterval(() => { if (!document.hidden && state.snapshot) refresh({silent: true}).catch((error) => showNotice(friendlyError(error))); }, 60000);
   startTelegramSession();
 }
 init();
