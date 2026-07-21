@@ -2,7 +2,8 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-REMOTE="${JARHERT_VPS:?set JARHERT_VPS=deploy@your-vps-host}"
+source "$ROOT/deploy/vps/require_personal_vps.sh"
+REMOTE="${JARHERT_VPS:-$JARHERT_PERSONAL_VPS_TARGET}"
 REMOTE_UNITS_DIR="${JARHERT_SYSTEMD_USER_DIR:-/home/deploy/.config/systemd/user}"
 
 units=(
@@ -14,6 +15,7 @@ units=(
   hermes-memory-consolidation.timer
 )
 
+require_personal_vps_remote "$REMOTE"
 ssh "$REMOTE" "mkdir -p '$REMOTE_UNITS_DIR'"
 for unit in "${units[@]}"; do
   scp "$ROOT/deploy/vps/systemd/$unit" "$REMOTE:$REMOTE_UNITS_DIR/"

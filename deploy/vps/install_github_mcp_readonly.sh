@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-set -Eeo pipefail
+set -Eeuo pipefail
 
-REMOTE=$JARHERT_VPS
-if [[ -z "$REMOTE" ]]; then
-  echo "Set JARHERT_VPS=deploy@your-vps-host." >&2
-  exit 2
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/require_personal_vps.sh"
+REMOTE="${JARHERT_VPS:-$JARHERT_PERSONAL_VPS_TARGET}"
 PROFILE_DIR=/home/deploy/.hermes/profiles/jarhert
-if [[ -n "$HERMES_PROFILE_DIR" ]]; then
+if [[ -n "${HERMES_PROFILE_DIR:-}" ]]; then
   PROFILE_DIR=$HERMES_PROFILE_DIR
 fi
 
+require_personal_vps_remote "$REMOTE"
 ssh "$REMOTE" "PROFILE_DIR='$PROFILE_DIR' bash -s" <<'REMOTE_SCRIPT'
 set -Eeuo pipefail
 

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/require_personal_vps.sh"
+require_personal_vps_local
+
 DOMAIN="${JARHERT_DASHBOARD_DOMAIN:?set JARHERT_DASHBOARD_DOMAIN=your-public-domain}"
 if [[ ! "$DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]]; then
   echo "Dashboard domain contains unsupported characters." >&2

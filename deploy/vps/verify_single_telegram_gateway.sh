@@ -1,23 +1,22 @@
 #!/usr/bin/env bash
-set -Eeo pipefail
+set -Eeuo pipefail
 
-REMOTE=$JARHERT_VPS
-if [[ -z "$REMOTE" ]]; then
-  echo "Set JARHERT_VPS=deploy@your-vps-host." >&2
-  exit 2
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/require_personal_vps.sh"
+REMOTE="${JARHERT_VPS:-$JARHERT_PERSONAL_VPS_TARGET}"
 PROFILE_DIR=/home/deploy/.hermes/profiles/jarhert
-if [[ -n "$HERMES_PROFILE_DIR" ]]; then
+if [[ -n "${HERMES_PROFILE_DIR:-}" ]]; then
   PROFILE_DIR=$HERMES_PROFILE_DIR
 fi
-RETIRE=$RETIRE_LEGACY_GATEWAY
-LEGACY_UNIT=$LEGACY_GATEWAY_UNIT
+RETIRE="${RETIRE_LEGACY_GATEWAY:-0}"
+LEGACY_UNIT="${LEGACY_GATEWAY_UNIT:-}"
 
 if [[ "$RETIRE" == "1" && ! "$LEGACY_UNIT" =~ ^[A-Za-z0-9@._-]+\.service$ ]]; then
   echo "Set LEGACY_GATEWAY_UNIT=<exact-user-systemd-unit.service> with RETIRE_LEGACY_GATEWAY=1." >&2
   exit 2
 fi
 
+require_personal_vps_remote "$REMOTE"
 ssh "$REMOTE" "PROFILE_DIR='$PROFILE_DIR' RETIRE='$RETIRE' LEGACY_UNIT='$LEGACY_UNIT' bash -s" <<'REMOTE_SCRIPT'
 set -Eeuo pipefail
 

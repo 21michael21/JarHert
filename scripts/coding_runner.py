@@ -23,6 +23,16 @@ if load_dotenv is not None:
 from hermes.native_tools.sandbox_worker import SandboxTask, coding_worker_from_environment
 from hermes.native_tools.ssh_coding_queue import SshNativeCodingQueueClient
 
+PERSONAL_QUEUE_SSH = "deploy@89.124.124.212"
+
+
+def require_personal_queue(queue_ssh: str) -> str:
+    if queue_ssh != PERSONAL_QUEUE_SSH:
+        raise SystemExit(
+            f"Refusing coding queue outside the pinned personal VPS: {queue_ssh or 'missing'}"
+        )
+    return queue_ssh
+
 
 def run_once(*, client, worker, worker_id: str) -> bool:
     payload = client.claim(worker_id)
@@ -97,8 +107,8 @@ def main() -> int:
     parser.add_argument("--worker-id", default=f"mac-{socket.gethostname()}")
     parser.add_argument(
         "--queue-ssh",
-        default=os.getenv("HERMES_CODING_QUEUE_SSH", ""),
-        help="SSH destination for the private Hermes profile queue, for example deploy@vps.",
+        default=os.getenv("HERMES_CODING_QUEUE_SSH", PERSONAL_QUEUE_SSH),
+        help=f"Pinned private Hermes queue ({PERSONAL_QUEUE_SSH}).",
     )
     parser.add_argument("--remote-profile", default="/home/deploy/.hermes/profiles/jarhert")
     parser.add_argument("--remote-python", default="/home/deploy/.hermes/hermes-agent/venv/bin/python")
@@ -109,8 +119,7 @@ def main() -> int:
         help="Local executor: Codex workspace sandbox by default, or the legacy Hermes Docker profile.",
     )
     args = parser.parse_args()
-    if not args.queue_ssh:
-        raise SystemExit("Set --queue-ssh or HERMES_CODING_QUEUE_SSH for the native Hermes queue.")
+    args.queue_ssh = require_personal_queue(args.queue_ssh)
     client = SshNativeCodingQueueClient(
         args.queue_ssh,
         remote_profile=args.remote_profile,

@@ -2,9 +2,11 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-REMOTE="${JARHERT_VPS:?set JARHERT_VPS=deploy@your-vps-host}"
+source "$ROOT/deploy/vps/require_personal_vps.sh"
+REMOTE="${JARHERT_VPS:-$JARHERT_PERSONAL_VPS_TARGET}"
 REMOTE_UNITS_DIR="${JARHERT_SYSTEMD_USER_DIR:-/home/deploy/.config/systemd/user}"
 
+require_personal_vps_remote "$REMOTE"
 ssh "$REMOTE" "mkdir -p '$REMOTE_UNITS_DIR'"
 scp "$ROOT/deploy/vps/systemd/hermes-channel-digest.service" "$ROOT/deploy/vps/systemd/hermes-channel-digest.timer" "$REMOTE:$REMOTE_UNITS_DIR/"
 ssh "$REMOTE" 'systemctl --user daemon-reload; systemctl --user enable --now hermes-channel-digest.timer; systemctl --user is-active hermes-channel-digest.timer'

@@ -2,6 +2,9 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$ROOT/deploy/vps/require_personal_vps.sh"
+require_personal_vps_local
+
 PROFILE_DIR="${HERMES_PROFILE_DIR:-$HOME/.hermes/profiles/jarhert}"
 ENV_FILE="$PROFILE_DIR/.env"
 UNIT_DIR="$HOME/.config/systemd/user"

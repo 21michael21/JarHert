@@ -5,12 +5,15 @@ set -Eeuo pipefail
 # copies its runtime code and credentials directly to the VPS; no secret enters
 # the JarHert repository or Hermes profile distribution.
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/require_personal_vps.sh"
 SOURCE_DIR="${TASK_COMMAND_CENTER_SOURCE:?set TASK_COMMAND_CENTER_SOURCE=/absolute/path/to/task-command-center}"
-REMOTE="${JARHERT_VPS:?set JARHERT_VPS=deploy@your-vps-host}"
+REMOTE="${JARHERT_VPS:-$JARHERT_PERSONAL_VPS_TARGET}"
 REMOTE_DIR="${TASK_COMMAND_CENTER_REMOTE_DIR:-/home/deploy/task-command-center}"
 PROFILE_ENV="${HERMES_PROFILE_ENV:-/home/deploy/.hermes/profiles/jarhert/.env}"
 COPY_SECRETS="${TASK_COMMAND_CENTER_COPY_SECRETS:-0}"
 
+require_personal_vps_remote "$REMOTE"
 if [[ "$COPY_SECRETS" != "1" ]]; then
   echo "Refusing to copy Task Command Center credentials. Set TASK_COMMAND_CENTER_COPY_SECRETS=1 explicitly." >&2
   exit 2

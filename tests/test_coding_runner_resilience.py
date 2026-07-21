@@ -37,7 +37,14 @@ def _patch_runtime(monkeypatch: pytest.MonkeyPatch, queue: _FlakyQueue) -> None:
     monkeypatch.setattr(
         sys,
         "argv",
-        ["coding_runner.py", "--queue-ssh", "deploy@example.test", "--worker-id", "mac-main", "--once"],
+        [
+            "coding_runner.py",
+            "--queue-ssh",
+            coding_runner.PERSONAL_QUEUE_SSH,
+            "--worker-id",
+            "mac-main",
+            "--once",
+        ],
     )
 
 

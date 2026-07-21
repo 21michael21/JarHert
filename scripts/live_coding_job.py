@@ -25,6 +25,16 @@ from scripts.live_hermes_e2e import (
     wait_message,
 )
 
+PERSONAL_QUEUE_SSH = "deploy@89.124.124.212"
+
+
+def require_personal_queue(queue_ssh: str) -> str:
+    if queue_ssh != PERSONAL_QUEUE_SSH:
+        raise SystemExit(
+            f"Refusing coding queue outside the pinned personal VPS: {queue_ssh or 'missing'}"
+        )
+    return queue_ssh
+
 
 @dataclass
 class LiveCodingReport:
@@ -93,6 +103,7 @@ async def enqueue_job(*, session: str, timeout: int, marker: str) -> tuple[int, 
 
 
 def run_local_runner(*, queue_ssh: str, timeout: int) -> int:
+    queue_ssh = require_personal_queue(queue_ssh)
     started = time.perf_counter()
     result = subprocess.run(
         [
@@ -115,6 +126,7 @@ def run_local_runner(*, queue_ssh: str, timeout: int) -> int:
 
 
 def dispatch_result(*, queue_ssh: str, timeout: int) -> None:
+    queue_ssh = require_personal_queue(queue_ssh)
     remote_command = (
         "HERMES_HOME=/home/deploy/.hermes/profiles/jarhert "
         "/home/deploy/.hermes/profiles/jarhert/.venv/bin/python "
@@ -163,11 +175,12 @@ def main() -> int:
     parser.add_argument("--profile-home", type=Path, default=Path.home() / ".hermes" / "profiles" / "jarhert")
     parser.add_argument("--telethon-env", type=Path, required=True)
     parser.add_argument("--telethon-session", required=True)
-    parser.add_argument("--queue-ssh", required=True)
+    parser.add_argument("--queue-ssh", default=PERSONAL_QUEUE_SSH)
     parser.add_argument("--timeout", type=int, default=240)
     parser.add_argument("--runner-timeout", type=int, default=960)
     parser.add_argument("--report", type=Path, default=Path("reports/live_coding_job.json"))
     args = parser.parse_args()
+    args.queue_ssh = require_personal_queue(args.queue_ssh)
 
     report = LiveCodingReport(False, "", None, None, 0, 0, 0, None)
     try:

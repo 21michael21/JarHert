@@ -87,8 +87,22 @@ Install Hermes separately, then copy the profile through the guarded sync
 script. It requires local `HEAD` to match `origin/main` and makes a profile
 rollback copy before changing any owned files.
 
+JarHert is pinned to the personal VPS `deploy@89.124.124.212` (2 CPU, 4 GB
+RAM, 80 GB storage). Every remote mutation checks all of the following before
+it can run: the exact SSH destination, the ED25519 host-key fingerprint, the
+hostname `jarhert`, the public IP and a private server-role marker. An override
+pointing at another host fails before the first write. This intentionally keeps
+JarHert off work servers.
+
+Run the one-time marker bootstrap only after provisioning or deliberately
+rebuilding that personal VPS:
+
 ```bash
-export JARHERT_VPS=deploy@your-vps-host
+deploy/vps/bootstrap_personal_vps_guard.sh
+```
+
+```bash
+export JARHERT_VPS=deploy@89.124.124.212
 deploy/vps/sync_hermes_profile.sh
 ```
 
@@ -189,7 +203,7 @@ ChatGPT login already present on the Mac; its normal API key is not required.
 ```bash
 .venv/bin/python scripts/setup_coding_profile.py
 .venv/bin/python scripts/coding_runner.py \
-  --queue-ssh deploy@your-vps-host \
+  --queue-ssh deploy@89.124.124.212 \
   --worker-id mac-main --check
 ```
 
@@ -238,7 +252,7 @@ must be installed and healthy before it can execute queued work.
 Install the cleanup timer on the VPS:
 
 ```bash
-export JARHERT_VPS=deploy@your-vps-host
+export JARHERT_VPS=deploy@89.124.124.212
 deploy/vps/install_telegram_export_cleanup_timer.sh
 ```
 

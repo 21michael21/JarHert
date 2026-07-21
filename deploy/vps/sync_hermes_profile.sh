@@ -5,13 +5,15 @@ set -Eeuo pipefail
 # credentials, databases, sessions, logs, and the live provider config stay on the server.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-REMOTE="${JARHERT_VPS:?set JARHERT_VPS=deploy@your-vps-host}"
+source "$ROOT/deploy/vps/require_personal_vps.sh"
+REMOTE="${JARHERT_VPS:-$JARHERT_PERSONAL_VPS_TARGET}"
 REMOTE_SOURCE_DIR="${JARHERT_REMOTE_SOURCE_DIR:-/home/deploy/jarhert-profile}"
 PROFILE_DIR="${HERMES_PROFILE_DIR:-/home/deploy/.hermes/profiles/jarhert}"
 HERMES_PYTHON="${HERMES_PYTHON:-/home/deploy/.hermes/hermes-agent/venv/bin/python}"
 GIT_URL="${JARHERT_GIT_URL:-https://github.com/21michael21/JarHert.git}"
 SYNC_CONFIG="${SYNC_PROFILE_CONFIG:-merge}"
 
+require_personal_vps_remote "$REMOTE"
 cd "$ROOT"
 if [[ -n "$(git status --porcelain)" ]]; then
   echo "Refusing to deploy from a dirty Git worktree." >&2

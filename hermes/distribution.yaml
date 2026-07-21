@@ -106,9 +106,9 @@ env_requires:
     required: false
     default: "10"
   - name: HERMES_CODING_QUEUE_SSH
-    description: "SSH target the Mac runner uses to claim coding jobs"
+    description: "Pinned personal VPS target used by the Mac coding runner"
     required: false
-    default: ""
+    default: "deploy@89.124.124.212"
   - name: HERMES_CODING_EXECUTOR
     description: "Coding runner executor: codex (default) or legacy hermes Docker"
     required: false
