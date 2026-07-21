@@ -3,8 +3,11 @@ const telegram = window.Telegram?.WebApp;
 const state = {
   activeView: "today", snapshot: null, tasks: {items: [], lists: [], priorities: []}, calendar: {items: []},
   coding: {items: []}, notes: {items: []}, knowledge: {items: []}, subscriptions: {items: []}, digest: {items: []}, expenses: {items: []}, expensesMonthly: {items: []}, commitments: {items: []}, trips: {items: []}, projects: {items: []}, projectStatus: null, searchQuery: "", searchResults: null, noteQuery: "", taskQuery: "", taskFilter: "Все", taskMenu: null, quickType: "task", edit: null, plan: null, codingDraft: null, clip: null, architectureScenario: "plan", lastUpdatedAt: null, pendingActions: [], limits: null, limitsLoading: false,
+  calendarDay: null, toastTimer: null, toastUndo: null, voiceRecognition: null, nowTimer: null,
 };
 const VIEWS = new Set(["today", "tasks", "calendar", "money", "code", "memory", "limits"]);
+const RING_RADIUS = 31;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 const ARCHITECTURE_SCENARIOS = {
   question: {
     eyebrow: "СЦЕНАРИЙ · ВОПРОС", title: "Короткий ответ без лишнего круга", summary: "Обычный вопрос не трогает внешние сервисы: JarHert понимает контекст и отвечает в чате.",
@@ -200,8 +203,10 @@ function renderToday(snapshot) {
   $("focus-move").disabled = !focus;
   $("focus-done").onclick = () => focus && completeTask(focus);
   $("focus-move").onclick = () => focus && openTaskMove(focus);
-  list("priorities", priorities, (item) => focusRow(findTask(field(item, "title", "text", "subject")) || {title: field(item, "title", "text", "subject")}), "На сегодня пока нет явных задач.");
-  list("today-calendar", state.calendar.items.slice(0, 3), compactEventRow, "На ближайшие дни встреч нет.");
+  renderFocusRing(snapshot);
+  renderMomentum(snapshot);
+  list("priorities", priorities, (item) => focusRow(findTask(field(item, "title", "text", "subject")) || {title: field(item, "title", "text", "subject")}), "На сегодня пока нет явных задач. Кинь первую одной фразой через «Добавить».");
+  list("today-calendar", state.calendar.items.slice(0, 3), compactEventRow, "На ближайшие дни встреч нет. Дыши спокойно.");
   renderOverview(snapshot);
   renderRadar(snapshot);
 }
@@ -216,6 +221,9 @@ function renderOverview(snapshot) {
   $("overview-calendar-meta").textContent = calendar.length ? "ближайшие 7 дней" : "окно свободно";
   $("overview-radar-value").textContent = radarCount;
   $("overview-radar-meta").textContent = state.digest.items?.length ? `${state.digest.items.length} в digest` : radarCount ? "источники включены" : "без сигналов";
+  renderSparkline("spark-tasks", (snapshot.completion?.daily || []).map((item) => item.done), "spark-accent");
+  renderSparkline("spark-calendar", eventsPerDay(calendar, 7), "spark-cyan");
+  renderSparkline("spark-radar", upcomingChargesPerDay(state.subscriptions.items || [], 7), "spark-good");
 }
 
 function renderRadar(snapshot) {
@@ -315,18 +323,139 @@ function swipeableTaskRow(row, task) {
 function renderCalendar() {
   const items = state.calendar.items || [];
   $("calendar-summary").textContent = items.length ? `${items.length} ${plural(items.length, "событие", "события", "событий")} в ближайшие 7 дней` : "Ближайшие 7 дней свободны";
-  list("calendar-list", items, eventRow, "На ближайшие 7 дней событий нет.");
+  renderWeekStrip(items);
+  renderCalendarTimeline(items);
 }
 
-function eventRow(event) {
-  const row = node("article", "timeline-row");
-  const when = node("time", "timeline-time", formatDayTime(event.start));
-  const copy = node("div", "row-copy");
-  copy.append(node("strong", "row-title", event.title), node("span", "row-meta", event.end ? `до ${formatTime(event.end)}` : "Весь день"));
-  const actions = node("div", "row-actions");
-  actions.append(button("Перенести", "row-button", () => openCalendarMove(event), "", "clock"));
-  if (event.url) actions.append(button("Открыть", "row-button", () => openExternal(event.url), "", "external-link"));
-  row.append(when, copy, actions); return row;
+function renderWeekStrip(items) {
+  const strip = $("week-strip");
+  strip.replaceChildren();
+  const today = startOfDay(new Date());
+  const counts = {};
+  items.forEach((event) => {
+    const key = startOfDay(new Date(event.start)).toDateString();
+    counts[key] = (counts[key] || 0) + 1;
+  });
+  const allButton = node("button", "week-day" + (state.calendarDay === null ? " is-active" : ""));
+  allButton.type = "button";
+  allButton.setAttribute("aria-pressed", String(state.calendarDay === null));
+  allButton.append(node("span", "week-day-name", "Все"), node("strong", "week-day-num", String(items.length)));
+  allButton.addEventListener("click", () => { state.calendarDay = null; haptic("selection"); renderCalendar(); });
+  strip.append(allButton);
+  for (let offset = 0; offset < 7; offset++) {
+    const day = new Date(today);
+    day.setDate(day.getDate() + offset);
+    const key = day.toDateString();
+    const count = counts[key] || 0;
+    const isActive = state.calendarDay === key;
+    const dayButton = node("button", "week-day" + (isActive ? " is-active" : "") + (offset === 0 ? " is-today" : ""));
+    dayButton.type = "button";
+    dayButton.setAttribute("aria-pressed", String(isActive));
+    dayButton.append(
+      node("span", "week-day-name", offset === 0 ? "Сег" : day.toLocaleDateString("ru-RU", {weekday: "short"}).replace(".", "")),
+      node("strong", "week-day-num", String(day.getDate())),
+    );
+    if (count) {
+      const dots = node("span", "week-day-dots");
+      for (let dotIndex = 0; dotIndex < Math.min(count, 3); dotIndex++) dots.append(node("i"));
+      dayButton.append(dots);
+    }
+    dayButton.addEventListener("click", () => {
+      state.calendarDay = state.calendarDay === key ? null : key;
+      haptic("selection");
+      renderCalendar();
+    });
+    strip.append(dayButton);
+  }
+}
+
+function renderCalendarTimeline(items) {
+  const container = $("calendar-list");
+  container.replaceChildren();
+  const filtered = state.calendarDay
+    ? items.filter((event) => startOfDay(new Date(event.start)).toDateString() === state.calendarDay)
+    : items;
+  if (!filtered.length) {
+    container.append(node("p", "empty", state.calendarDay ? "В этот день пока пусто. Отличная возможность выдохнуть." : "На ближайшие 7 дней событий нет. Дыши спокойно."));
+    stopNowLine();
+    return;
+  }
+  const groups = {};
+  filtered.forEach((event) => {
+    const key = startOfDay(new Date(event.start)).toDateString();
+    (groups[key] = groups[key] || []).push(event);
+  });
+  const now = new Date();
+  const todayKey = startOfDay(now).toDateString();
+  Object.keys(groups).sort((a, b) => new Date(a) - new Date(b)).forEach((key) => {
+    const dayDate = new Date(key);
+    const isToday = key === todayKey;
+    const group = node("section", "cal-day");
+    const head = node("header", "cal-day-head");
+    head.append(
+      node("span", "cal-day-label", dayLabelFor(dayDate, now)),
+      node("span", "cal-day-date", dayDate.toLocaleDateString("ru-RU", {day: "2-digit", month: "long"})),
+    );
+    group.append(head);
+    const dayEvents = groups[key].slice().sort((a, b) => new Date(a.start) - new Date(b.start));
+    let nowInserted = false;
+    dayEvents.forEach((event) => {
+      if (isToday && !nowInserted && new Date(event.start) > now) {
+        group.append(buildNowLine(now));
+        nowInserted = true;
+      }
+      group.append(calendarBlock(event, isToday, now));
+    });
+    if (isToday && !nowInserted) group.append(buildNowLine(now));
+    container.append(group);
+  });
+  scheduleNowLineTick();
+}
+
+function calendarBlock(event, isToday, now) {
+  const start = new Date(event.start);
+  const end = event.end ? new Date(event.end) : null;
+  const isLive = isToday && end && now >= start && now <= end;
+  const row = node("article", "cal-event" + (isLive ? " is-live" : ""));
+  const gutter = node("div", "cal-gutter");
+  gutter.append(node("time", "cal-time", end ? formatTime(start) : "—"));
+  const rail = node("div", "cal-rail");
+  rail.append(node("span", "cal-dot"));
+  const card = node("div", "cal-card");
+  card.append(node("strong", "cal-title", event.title));
+  const minutes = end ? Math.max(0, Math.round((end - start) / 60000)) : 0;
+  const range = end ? `${formatTime(start)}–${formatTime(end)}` : "Весь день";
+  card.append(node("span", "cal-meta", minutes >= 45 ? `${range} · ${durationLabel(minutes)}` : range));
+  if (isLive) card.append(node("span", "cal-live-badge", "идёт сейчас"));
+  const actions = node("div", "cal-actions");
+  actions.append(button("", "row-button", () => openCalendarMove(event), `Перенести: ${event.title}`, "clock"));
+  if (event.url) actions.append(button("", "row-button", () => openExternal(event.url), `Открыть: ${event.title}`, "external-link"));
+  card.append(actions);
+  row.append(gutter, rail, card);
+  return row;
+}
+
+function buildNowLine(now) {
+  const row = node("div", "cal-now");
+  row.append(node("time", "cal-now-time", formatTime(now)), node("span", "cal-now-line"), node("span", "cal-now-label", "сейчас"));
+  return row;
+}
+
+function scheduleNowLineTick() {
+  window.clearInterval(state.nowTimer);
+  state.nowTimer = window.setInterval(() => {
+    if (state.activeView !== "calendar" && state.activeView !== "today") return;
+    const line = document.querySelector(".cal-now");
+    if (line) {
+      const time = line.querySelector(".cal-now-time");
+      if (time) time.textContent = formatTime(new Date());
+    }
+  }, 30000);
+}
+
+function stopNowLine() {
+  window.clearInterval(state.nowTimer);
+  state.nowTimer = null;
 }
 
 function compactEventRow(event) {
@@ -927,8 +1056,8 @@ function renderMemory(snapshot) {
   renderProjectStatus();
   const reminders = snapshot.today?.reminders || [];
   $("reminder-count").textContent = reminders.length;
-  list("reminders", reminders, reminderRow, "Активных напоминаний нет.");
-  list("notes", state.notes.items || [], noteRow, "Заметок пока нет.");
+  list("reminders", reminders, reminderRow, "Напоминаний нет. И это тоже хорошая новость.");
+  list("notes", state.notes.items || [], noteRow, "В голове пусто? Запиши первую мысль — не потеряем.");
   list("knowledge-sources", state.knowledge.items || [], knowledgeRow, "Добавь первую ссылку: JarHert сохранит только эту страницу.");
   const system = $("system"); system.replaceChildren();
   const status = snapshot.status || {}; const integrations = snapshot.integrations || {};
@@ -945,7 +1074,7 @@ function renderMemory(snapshot) {
 
 function reminderRow(item) {
   const row = node("article", "work-row"); const copy = node("div", "row-copy");
-  copy.append(node("strong", "row-title", field(item, "text", "title")), node("span", "row-meta", formatDayTime(item.remind_at)));
+  copy.append(node("strong", "row-title", field(item, "text", "title")), node("span", "row-meta", `${formatDayTime(item.remind_at)} · ${relativeTime(item.remind_at)}`));
   const actions = node("div", "row-actions");
   actions.append(button("Править", "row-button", () => openReminderEditor(item), "", "pencil"));
   actions.append(button("", "icon-action danger", () => cancelReminder(item), `Удалить напоминание: ${field(item, "text", "title")}`, "trash-2"));
@@ -1064,7 +1193,15 @@ function setView(view, {syncHistory = true, hapticFeedback = false} = {}) {
   const switched = state.activeView !== nextView;
   state.activeView = nextView;
   if (switched) renderView(nextView);
-  document.querySelectorAll(".view").forEach((item) => { item.hidden = item.id !== `view-${nextView}`; });
+  document.querySelectorAll(".view").forEach((item) => {
+    const isVisible = item.id === `view-${nextView}`;
+    item.hidden = !isVisible;
+    if (isVisible && switched) {
+      item.classList.remove("is-entering");
+      void item.offsetWidth;
+      item.classList.add("is-entering");
+    }
+  });
   document.querySelectorAll("[data-view]").forEach((item) => {
     const isActive = item.dataset.view === nextView;
     item.classList.toggle("is-active", isActive);
@@ -1297,6 +1434,206 @@ function openExternal(url) { if (telegram?.openLink) telegram.openLink(url); els
 function requestId() { return window.crypto?.randomUUID?.().replaceAll("-", "") || `quick${Date.now()}${Math.random().toString(36).slice(2)}`; }
 function friendlyError(error) { return error.message === "session" ? "Telegram-сессия истекла. Открой кабинет снова." : error.message || "Не удалось выполнить действие"; }
 
+function startOfDay(date) { const d = new Date(date); d.setHours(0, 0, 0, 0); return d; }
+
+function dayLabelFor(dayDate, now) {
+  const today = startOfDay(now).getTime();
+  const target = startOfDay(dayDate).getTime();
+  const diffDays = Math.round((target - today) / 86400000);
+  if (diffDays === 0) return "Сегодня";
+  if (diffDays === 1) return "Завтра";
+  if (diffDays === -1) return "Вчера";
+  return dayDate.toLocaleDateString("ru-RU", {weekday: "short"}).replace(".", "");
+}
+
+function durationLabel(minutes) {
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (hours && rest) return `${hours} ч ${rest} мин`;
+  if (hours) return `${hours} ч`;
+  return `${rest} мин`;
+}
+
+function relativeTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return text(value);
+  const diffMs = date - new Date();
+  const absMinutes = Math.round(Math.abs(diffMs) / 60000);
+  if (absMinutes < 1) return "сейчас";
+  const label = absMinutes < 60 ? `${absMinutes} мин` : durationLabel(absMinutes);
+  return diffMs >= 0 ? `через ${label}` : `${label} назад`;
+}
+
+function renderFocusRing(snapshot) {
+  const completion = snapshot.completion || {};
+  const done = Number(completion.done_today) || 0;
+  const tasks = state.tasks.items || [];
+  const openToday = tasks.filter((item) => item.list_name === "Today").length || tasks.length;
+  const total = done + openToday;
+  const progress = total > 0 ? Math.min(1, done / total) : 0;
+  const ring = $("ring-progress");
+  ring.style.strokeDasharray = String(RING_CIRCUMFERENCE);
+  ring.style.strokeDashoffset = String(RING_CIRCUMFERENCE * (1 - progress));
+  $("ring-done").textContent = String(done);
+  $("ring-total").textContent = total > 0 ? `из ${total}` : "пока пусто";
+  $("focus-ring").classList.toggle("is-complete", total > 0 && done >= total);
+  $("focus-ring").setAttribute("aria-label", `Закрыто ${done} из ${total} сегодня`);
+}
+
+function renderMomentum(snapshot) {
+  const streak = Number(snapshot.completion?.streak) || 0;
+  const element = $("momentum");
+  if (streak >= 2) {
+    element.hidden = false;
+    element.replaceChildren(
+      icon("flame", "icon-warm"),
+      document.createTextNode(` ${streak} ${plural(streak, "день", "дня", "дней")} подряд закрываешь задачи — так держать`),
+    );
+  } else {
+    element.hidden = true;
+  }
+}
+
+function renderSparkline(id, values, tone) {
+  const svg = $(id);
+  if (!svg) return;
+  svg.replaceChildren();
+  const data = (values || []).map(Number);
+  if (!data.length || data.every((item) => item === 0)) { svg.style.display = "none"; return; }
+  svg.style.display = "";
+  const max = Math.max(...data, 1);
+  const width = 64, height = 20, pad = 2;
+  const step = data.length > 1 ? (width - pad * 2) / (data.length - 1) : 0;
+  const points = data.map((value, index) => [pad + index * step, height - pad - (value / max) * (height - pad * 2)]);
+  const ns = "http://www.w3.org/2000/svg";
+  const area = document.createElementNS(ns, "polygon");
+  area.setAttribute("points", `${pad},${height - pad} ` + points.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ") + ` ${points[points.length - 1][0].toFixed(1)},${height - pad}`);
+  area.setAttribute("class", `spark-area ${tone}`);
+  const line = document.createElementNS(ns, "polyline");
+  line.setAttribute("points", points.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" "));
+  line.setAttribute("class", `spark-line ${tone}`);
+  const dot = document.createElementNS(ns, "circle");
+  dot.setAttribute("cx", points[points.length - 1][0].toFixed(1));
+  dot.setAttribute("cy", points[points.length - 1][1].toFixed(1));
+  dot.setAttribute("r", "2.2");
+  dot.setAttribute("class", `spark-dot ${tone}`);
+  svg.append(area, line, dot);
+}
+
+function eventsPerDay(events, days) {
+  const today = startOfDay(new Date());
+  const buckets = new Array(days).fill(0);
+  (events || []).forEach((event) => {
+    const diff = Math.round((startOfDay(new Date(event.start)).getTime() - today.getTime()) / 86400000);
+    if (diff >= 0 && diff < days) buckets[diff] += 1;
+  });
+  return buckets;
+}
+
+function upcomingChargesPerDay(subscriptions, days) {
+  const today = startOfDay(new Date());
+  const buckets = new Array(days).fill(0);
+  subscriptions.forEach((item) => {
+    if (!item.next_charge_at) return;
+    const diff = Math.round((startOfDay(new Date(item.next_charge_at)).getTime() - today.getTime()) / 86400000);
+    if (diff >= 0 && diff < days) buckets[diff] += 1;
+  });
+  return buckets;
+}
+
+function applyTelegramTheme() {
+  const params = telegram?.themeParams;
+  if (!params) return;
+  const root = document.documentElement.style;
+  if (params.bg_color) root.setProperty("--bg", params.bg_color);
+  if (params.secondary_bg_color) root.setProperty("--surface-soft", params.secondary_bg_color);
+  if (params.text_color) root.setProperty("--text", params.text_color);
+  if (params.hint_color) { root.setProperty("--muted", params.hint_color); root.setProperty("--faint", params.hint_color); }
+  if (params.link_color) root.setProperty("--accent-bright", params.link_color);
+  if (params.button_color) { root.setProperty("--accent", params.button_color); root.setProperty("--accent-strong", params.button_color); }
+  if (params.button_text_color) root.setProperty("--accent-ink", params.button_text_color);
+}
+
+function initVoiceInput() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const toggle = $("voice-toggle");
+  if (!SpeechRecognition || !toggle) return;
+  toggle.hidden = false;
+  const recognition = new SpeechRecognition();
+  recognition.lang = "ru-RU";
+  recognition.continuous = false;
+  recognition.interimResults = true;
+  let baseline = "";
+  recognition.onresult = (event) => {
+    let interim = "";
+    for (let index = event.resultIndex; index < event.results.length; index++) interim += event.results[index][0].transcript;
+    $("quick-text").value = (baseline + " " + interim).trim();
+    if (event.results[event.results.length - 1].isFinal) baseline = $("quick-text").value;
+  };
+  recognition.onend = () => { $("voice-status").hidden = true; toggle.classList.remove("is-listening"); };
+  recognition.onerror = () => { $("voice-status").hidden = true; toggle.classList.remove("is-listening"); showNotice("Не расслышал. Попробуй ещё раз или напиши руками."); };
+  toggle.addEventListener("click", () => {
+    if (toggle.classList.contains("is-listening")) { recognition.stop(); return; }
+    baseline = $("quick-text").value.trim();
+    try { recognition.start(); toggle.classList.add("is-listening"); $("voice-status").hidden = false; haptic("impact", "light"); }
+    catch (error) { showNotice("Голосовой ввод недоступен в этом браузере."); }
+  });
+  state.voiceRecognition = recognition;
+}
+
+function initPullToRefresh() {
+  let startY = null;
+  const indicator = $("pull-indicator");
+  document.addEventListener("touchstart", (event) => {
+    if (window.scrollY <= 0 && event.touches.length === 1) startY = event.touches[0].clientY;
+    else startY = null;
+  }, {passive: true});
+  document.addEventListener("touchmove", (event) => {
+    if (startY === null) return;
+    const delta = event.touches[0].clientY - startY;
+    if (delta > 12 && window.scrollY <= 0) {
+      indicator.style.opacity = String(Math.min(1, delta / 90));
+      indicator.classList.toggle("is-ready", delta > 70);
+    }
+  }, {passive: true});
+  document.addEventListener("touchend", () => {
+    if (startY === null) return;
+    const ready = indicator.classList.contains("is-ready");
+    indicator.style.opacity = "0";
+    indicator.classList.remove("is-ready");
+    startY = null;
+    if (ready) { haptic("impact", "light"); refresh({silent: true}).catch(() => {}); }
+  }, {passive: true});
+}
+
+function initSwipeToComplete() {
+  let activeRow = null, startX = 0, currentX = 0, swiping = false;
+  document.addEventListener("touchstart", (event) => {
+    const row = event.target.closest(".task-row");
+    if (!row || event.touches.length !== 1) return;
+    activeRow = row; startX = event.touches[0].clientX; currentX = startX; swiping = true;
+  }, {passive: true});
+  document.addEventListener("touchmove", (event) => {
+    if (!swiping || !activeRow) return;
+    currentX = event.touches[0].clientX;
+    const delta = Math.max(0, currentX - startX);
+    activeRow.style.transform = delta ? `translateX(${Math.min(delta, 90)}px)` : "";
+    activeRow.classList.toggle("is-swiping", delta > 24);
+  }, {passive: true});
+  document.addEventListener("touchend", () => {
+    if (!swiping || !activeRow) return;
+    const delta = currentX - startX;
+    const row = activeRow;
+    swiping = false; activeRow = null;
+    row.style.transform = "";
+    row.classList.remove("is-swiping");
+    if (delta > 70) {
+      const title = row.querySelector(".task-title")?.title || row.querySelector(".task-title")?.textContent;
+      if (title) completeTask({title});
+    }
+  }, {passive: true});
+}
+
 async function startTelegramSession() {
   if (!telegram?.initData) { $("loading-text").textContent = "Открой кабинет кнопкой в чате с JarHert."; return; }
   telegram.ready(); telegram.expand();
@@ -1305,6 +1642,11 @@ async function startTelegramSession() {
 }
 
 function init() {
+  applyTelegramTheme();
+  telegram?.onEvent?.("themeChanged", applyTelegramTheme);
+  initVoiceInput();
+  initPullToRefresh();
+  initSwipeToComplete();
   $("refresh").addEventListener("click", () => { haptic("impact", "light"); refresh().catch((error) => showNotice(friendlyError(error))); });
   document.querySelectorAll("[data-view]").forEach((item) => item.addEventListener("click", () => setView(item.dataset.view, {hapticFeedback: true})));
   document.querySelectorAll("[data-open-view]").forEach((item) => item.addEventListener("click", () => setView(item.dataset.openView, {hapticFeedback: true})));

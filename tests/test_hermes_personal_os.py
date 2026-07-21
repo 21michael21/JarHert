@@ -5,6 +5,7 @@ import sqlite3
 
 import pytest
 
+from hermes.native_tools.action_plans import ActionPlanStore
 from hermes.native_tools.mcp_api import NativeToolsAPI
 from hermes.native_tools.personal_os import PersonalOSStore
 
@@ -149,3 +150,37 @@ def test_profile_exposes_personal_os_only_through_native_mcp() -> None:
         assert f"- {tool}" in config
     assert "mcp_jarhert_native_memory_block_upsert" in skill
     assert "native_tools/cli.py" not in skill
+
+
+def test_completion_stats_aggregates_done_tasks_into_day_buckets(tmp_path: Path) -> None:
+    database = tmp_path / "personal-os.sqlite3"
+    ActionPlanStore(database)
+    api = NativeToolsAPI(database_path=database)
+    with sqlite3.connect(database) as connection:
+        for key, finished_at in [
+            ("plan-today", "2026-07-17 10:00:00"),
+            ("plan-yesterday", "2026-07-16 09:30:00"),
+        ]:
+            plan_id = int(
+                connection.execute(
+                    "INSERT INTO action_plans(status, idempotency_key, finished_at) VALUES ('succeeded', ?, ?)",
+                    (key, finished_at),
+                ).lastrowid
+            )
+            connection.execute(
+                """
+                INSERT INTO plan_actions(plan_id, position, node_key, action_type, payload_json, status)
+                VALUES (?, 0, 'a1', 'task.done', '{"title": "Задача"}', 'succeeded')
+                """,
+                (plan_id,),
+            )
+
+    stats = api.completion_stats(now="2026-07-17T23:00:00+03:00", timezone_name="Europe/Moscow", days=7)
+
+    assert stats["done_today"] == 1
+    assert stats["streak"] == 2
+    assert len(stats["daily"]) == 7
+    by_day = {entry["date"]: entry["done"] for entry in stats["daily"]}
+    assert by_day["2026-07-17"] == 1
+    assert by_day["2026-07-16"] == 1
+    assert by_day["2026-07-15"] == 0

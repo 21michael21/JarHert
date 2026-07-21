@@ -106,6 +106,18 @@ class FakeDashboardAPI:
     def work_mode_get(self):
         return {"mode": "fast"}
 
+    def completion_stats(self):
+        return {
+            "daily": [
+                {"date": "2026-07-15", "done": 1},
+                {"date": "2026-07-16", "done": 0},
+                {"date": "2026-07-17", "done": 2},
+            ],
+            "done_today": 2,
+            "streak": 1,
+            "timezone": "Europe/Moscow",
+        }
+
     def task_dashboard(self):
         return {
             "items": [{"title": "Проверить OAuth", "list_name": "Today", "priority": "P1", "url": "https://trello.com/c/example"}],

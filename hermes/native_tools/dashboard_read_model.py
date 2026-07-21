@@ -15,6 +15,7 @@ def build_dashboard_snapshot(api: Any) -> dict[str, Any]:
     projects = safe_read(api.project_context_list, fallback={"items": []})
     integrations = safe_read(api.integration_health, fallback={})
     work_mode = safe_read(api.work_mode_get, fallback={"mode": "fast"})
+    completion = safe_read(api.completion_stats, fallback={"daily": [], "done_today": 0, "streak": 0})
     tasks = external_items(today.get("tasks"))
     priorities = list(today.get("top_three") or [])[:3]
     if not priorities:
@@ -32,6 +33,7 @@ def build_dashboard_snapshot(api: Any) -> dict[str, Any]:
         "work_mode": work_mode,
         "monitors": items(monitors),
         "projects": items(projects),
+        "completion": completion,
         "capabilities": dashboard_capabilities(),
     }
 

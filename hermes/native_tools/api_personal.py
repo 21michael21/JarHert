@@ -5,8 +5,10 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .api_payload import value_payload
+from .database import open_personal_os_database
 from .personal_productivity import local_day_bounds
 from .personal_rhythms import format_daily_brief
 
@@ -16,6 +18,7 @@ if TYPE_CHECKING:
 
 class PersonalMixin:
     if TYPE_CHECKING:
+        database_path: "NativeToolsAPI.database_path"
         _capabilities: "NativeToolsAPI._capabilities"
         _personal_os: "NativeToolsAPI._personal_os"
         _productivity: "NativeToolsAPI._productivity"
@@ -247,6 +250,53 @@ class PersonalMixin:
         self._capabilities().require("personal.read")
         return self._rhythms().weekly_review(now=now, timezone_name=timezone_name)
 
+    def completion_stats(
+        self,
+        *,
+        now: str | None = None,
+        timezone_name: str = "Europe/Moscow",
+        days: int = 7,
+    ) -> dict[str, Any]:
+        """Aggregate finished task.done plan actions into day buckets for the cabinet.
+
+        Powers the focus progress ring, the overview sparkline and the momentum streak.
+        """
+        self._capabilities().require("personal.read")
+        window = max(1, min(int(days), 30))
+        try:
+            zone = ZoneInfo(timezone_name)
+        except ZoneInfoNotFoundError as error:
+            raise ValueError("Неизвестный timezone.") from error
+        current = _stats_current_time(now, zone)
+        day_counts: dict[str, int] = {}
+        with open_personal_os_database(self.database_path, timeout_seconds=5, autocommit=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT p.finished_at
+                FROM plan_actions a JOIN action_plans p ON p.id = a.plan_id
+                WHERE a.action_type = 'task.done' AND a.status = 'succeeded'
+                  AND p.finished_at IS NOT NULL
+                """
+            ).fetchall()
+        for row in rows:
+            finished = _stats_parse_time(str(row["finished_at"]))
+            if finished is None:
+                continue
+            day = finished.astimezone(zone).date().isoformat()
+            day_counts[day] = day_counts.get(day, 0) + 1
+        daily: list[dict[str, Any]] = []
+        for offset in range(window - 1, -1, -1):
+            day = (current - timedelta(days=offset)).date().isoformat()
+            daily.append({"date": day, "done": day_counts.get(day, 0)})
+        done_today = daily[-1]["done"] if daily else 0
+        streak = 0
+        for entry in reversed(daily):
+            if entry["done"] > 0:
+                streak += 1
+            else:
+                break
+        return {"daily": daily, "done_today": done_today, "streak": streak, "timezone": timezone_name}
+
     def project_status_report(self, *, project: str) -> dict[str, Any]:
         """One deterministic project snapshot the model turns into a shareable status."""
         self._capabilities().require("project.read")
@@ -289,6 +339,23 @@ def _memory_is_stale(value: str, *, now: datetime) -> bool:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed < now - timedelta(days=90)
+
+
+def _stats_current_time(value: str | None, zone: Any) -> datetime:
+    if value is None:
+        return datetime.now(zone)
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("Current time должен содержать timezone.")
+    return parsed.astimezone(zone)
+
+
+def _stats_parse_time(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
 
 
 def _proactive_insights(api: Any, *, start: str, end: str) -> list[str]:
