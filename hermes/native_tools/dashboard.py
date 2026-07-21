@@ -118,7 +118,10 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     async def page() -> HTMLResponse:
-        return HTMLResponse(_dashboard_page())
+        return HTMLResponse(
+            _dashboard_page(),
+            headers={"Cache-Control": "no-store, max-age=0", "Pragma": "no-cache"},
+        )
 
     @app.post("/api/session/telegram")
     async def telegram_session(request: Request) -> JSONResponse:

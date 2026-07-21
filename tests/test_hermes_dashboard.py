@@ -610,6 +610,8 @@ def test_dashboard_page_uses_telegram_webapp_and_external_assets_only() -> None:
     assert 'href="/assets/dashboard.css"' not in response.text
     assert 'src="/assets/dashboard.js"' not in response.text
     assert "<script>" not in response.text
+    assert response.headers["cache-control"] == "no-store, max-age=0"
+    assert response.headers["pragma"] == "no-cache"
     assert "script-src 'self' https://telegram.org" in response.headers["content-security-policy"]
     assert 'id="quick-add"' in response.text
     assert 'id="plan-dialog"' in response.text
