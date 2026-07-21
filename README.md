@@ -81,6 +81,22 @@ its follow-ups share one durable chain, run in order, and send only the final
 useful report. Replaying the same Telegram update keeps the same jobs and
 cannot create a second chain.
 
+## Owner autonomy
+
+JarHert can run in a personal autonomy profile:
+
+```env
+HERMES_OWNER_AUTONOMY=true
+```
+
+In this mode routine medium-risk actions, such as creating or moving Trello
+tasks and Google Calendar events, do not ask for an extra Telegram confirmation.
+The same native plan executor still handles idempotency and receipts.
+
+This does not make the agent a root shell. Deletes, Telegram text exports,
+messages to other people, coding jobs, push and deploy keep an explicit preview
+or owner signal.
+
 ## Hermes profile on a VPS
 
 Install Hermes separately, then copy the profile through the guarded sync

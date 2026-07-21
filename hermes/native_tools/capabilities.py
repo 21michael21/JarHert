@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,6 +49,20 @@ CAPABILITIES = {
     capability: CapabilityRule(spec.risk, spec.modes)
     for capability, spec in CAPABILITY_SPECS.items()
 }
+_OWNER_AUTONOMY_TRUE = frozenset({"1", "true", "yes", "on"})
+_OWNER_AUTONOMY_CONFIRM_CAPABILITIES = frozenset(
+    {
+        "message.schedule",
+        "message.cancel",
+        "note.delete",
+        "trip.cancel",
+        "telegram.export",
+        "personal.export",
+        "coding.queue",
+        "research.run",
+        "sandbox.run",
+    }
+)
 
 
 class CapabilityPolicyStore:
@@ -81,7 +96,15 @@ class CapabilityPolicyStore:
         if mode.name not in rule.modes:
             return CapabilityDecision(clean, mode.name, rule.risk, "deny", mode.timeout_seconds, "capability_blocked_in_mode")
         decision = {"low": "auto", "medium": "confirm", "high": "preview"}[rule.risk]
-        return CapabilityDecision(clean, mode.name, rule.risk, decision, mode.timeout_seconds, "allowed")
+        reason = "allowed"
+        if (
+            rule.risk == "medium"
+            and _owner_autonomy_enabled()
+            and clean not in _OWNER_AUTONOMY_CONFIRM_CAPABILITIES
+        ):
+            decision = "auto"
+            reason = "owner_autonomy"
+        return CapabilityDecision(clean, mode.name, rule.risk, decision, mode.timeout_seconds, reason)
 
     def require(self, capability: str) -> CapabilityDecision:
         decision = self.decide(capability)
@@ -110,3 +133,7 @@ class CapabilityPolicyStore:
 
     def _connect(self) -> sqlite3.Connection:
         return open_personal_os_database(self.database_path)
+
+
+def _owner_autonomy_enabled() -> bool:
+    return os.getenv("HERMES_OWNER_AUTONOMY", "").strip().casefold() in _OWNER_AUTONOMY_TRUE

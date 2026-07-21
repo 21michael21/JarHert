@@ -67,6 +67,53 @@ def test_native_api_plan_round_trip_and_health_redaction(tmp_path: Path) -> None
     assert previews == ["1. task.create: MCP canary"]
 
 
+def test_owner_autonomy_executes_routine_plan_without_preview(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HERMES_OWNER_AUTONOMY", "true")
+    api = NativeToolsAPI(database_path=tmp_path / "personal.sqlite3", adapter_factory=FakeAdapter)
+    previews: list[str] = []
+
+    async def confirm(preview: str) -> bool:
+        previews.append(preview)
+        return False
+
+    completed = asyncio.run(
+        api.action_plan_confirm_execute(
+            actions=[{"type": "task.create", "payload": {"title": "Owner routine"}}],
+            idempotency_key="telegram-owner-autonomy-1",
+            confirmer=confirm,
+        )
+    )
+
+    assert completed["status"] == "succeeded"
+    assert completed["actions"][0]["status"] == "succeeded"
+    assert previews == []
+
+
+def test_owner_autonomy_keeps_high_risk_plan_preview(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HERMES_OWNER_AUTONOMY", "true")
+    api = NativeToolsAPI(database_path=tmp_path / "personal.sqlite3", adapter_factory=FakeAdapter)
+    previews: list[str] = []
+
+    async def decline(preview: str) -> bool:
+        previews.append(preview)
+        return False
+
+    result = asyncio.run(
+        api.action_plan_confirm_execute(
+            actions=[{"type": "task.delete", "payload": {"title": "Do not delete"}}],
+            idempotency_key="telegram-owner-autonomy-delete",
+            confirmer=decline,
+        )
+    )
+
+    assert result["status"] == "cancelled"
+    assert previews == ["1. task.delete: Do not delete"]
+
+
 def test_confirmed_plan_delivers_one_owner_receipt_without_replaying_side_effects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

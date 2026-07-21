@@ -80,14 +80,18 @@ class ActionPlansMixin:
         idempotency_key: str,
         confirmer: Confirmer,
     ) -> dict[str, Any]:
+        decisions = []
         for action in actions:
-            self._capabilities().require(str(action.get("type") or ""))
+            decisions.append(self._capabilities().require(str(action.get("type") or "")))
         store = self._plans()
         plan = store.create(actions, idempotency_key=idempotency_key)
         if plan.status in {"succeeded", "partial", "failed"}:
             return _plan_payload(plan)
         if plan.status == "draft":
-            if not await confirmer(_plan_preview(plan)):
+            # Owner-autonomy: план из auto-действий идёт без лишнего preview;
+            # confirm/preview-действия всё равно требуют явного согласия.
+            needs_confirmation = any(decision.decision != "auto" for decision in decisions)
+            if needs_confirmation and not await confirmer(_plan_preview(plan)):
                 return _plan_payload(store.cancel(plan.id))
             store.approve(plan.id)
         completed = await asyncio.to_thread(execute_plan, store, plan.id, self._action_adapter())
