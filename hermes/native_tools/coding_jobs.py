@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -8,10 +9,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .database import open_personal_os_database
+from .events import EventStore
 
 
 _MODES = frozenset({"coding", "research"})
 _STATUSES = frozenset({"queued", "running", "succeeded", "failed", "cancelled"})
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -43,9 +46,10 @@ class NativeCodingJob:
 class NativeCodingJobStore:
     """Durable profile-local queue; a Mac runner claims it over SSH."""
 
-    def __init__(self, database_path: str | Path) -> None:
+    def __init__(self, database_path: str | Path, *, event_store: EventStore | None = None) -> None:
         self.database_path = Path(database_path).expanduser()
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self._event_store = event_store
         self._initialize()
 
     def enqueue(
@@ -102,7 +106,13 @@ class NativeCodingJobStore:
                 ).lastrowid
             )
             row = connection.execute("SELECT * FROM native_coding_jobs WHERE id = ?", (job_id,)).fetchone()
-        return _from_row(row)
+        job = _from_row(row)
+        self._record_event(
+            "coding_job.queued",
+            {"job_id": job.id, "mode": job.mode, "status": job.status},
+            fingerprint=f"coding_job:queued:{job.id}",
+        )
+        return job
 
     def enqueue_chain(
         self,
@@ -215,7 +225,13 @@ class NativeCodingJobStore:
                 """,
                 (int(row["id"]),),
             ).fetchone()
-        return _from_row(claimed)
+        job = _from_row(claimed)
+        self._record_event(
+            "coding_job.claimed",
+            {"job_id": job.id, "mode": job.mode, "worker_id": worker, "lease_until": job.lease_until},
+            fingerprint=f"coding_job:claimed:{job.id}:{worker}",
+        )
+        return job
 
     def heartbeat(self, job_id: int, *, worker_id: str, lease_seconds: int = 900) -> bool:
         current = _utc_now(None)
@@ -295,13 +311,31 @@ class NativeCodingJobStore:
                 (worker, lease_until, int(row["id"])),
             )
             claimed = connection.execute("SELECT * FROM native_coding_jobs WHERE id = ?", (int(row["id"]),)).fetchone()
-        return _from_row(claimed)
+        job = _from_row(claimed)
+        self._record_event(
+            "coding_job.delivery_claimed",
+            {"job_id": job.id, "worker_id": worker, "delivery_attempts": job.delivery_attempts},
+            fingerprint=f"coding_job:delivery_claimed:{job.id}:{worker}",
+        )
+        return job
 
     def mark_delivery_sent(self, job_id: int, *, worker_id: str) -> NativeCodingJob:
-        return self._finish_delivery(job_id, worker_id=worker_id, delivered=True)
+        job = self._finish_delivery(job_id, worker_id=worker_id, delivered=True)
+        self._record_event(
+            "coding_job.delivered",
+            {"job_id": job.id, "worker_id": worker_id, "delivery_status": job.delivery_status},
+            fingerprint=f"coding_job:delivered:{job.id}",
+        )
+        return job
 
     def release_delivery(self, job_id: int, *, worker_id: str) -> NativeCodingJob:
-        return self._finish_delivery(job_id, worker_id=worker_id, delivered=False)
+        job = self._finish_delivery(job_id, worker_id=worker_id, delivered=False)
+        self._record_event(
+            "coding_job.delivery_released",
+            {"job_id": job.id, "worker_id": worker_id, "delivery_status": job.delivery_status},
+            fingerprint=f"coding_job:delivery_released:{job.id}:{worker_id}",
+        )
+        return job
 
     def _finish(
         self,
@@ -340,7 +374,20 @@ class NativeCodingJobStore:
             if result.rowcount != 1:
                 raise PermissionError("Coding job lease lost or belongs to another worker.")
             row = connection.execute("SELECT * FROM native_coding_jobs WHERE id = ?", (int(job_id),)).fetchone()
-        return _from_row(row)
+        job = _from_row(row)
+        self._record_event(
+            f"coding_job.{status}",
+            {
+                "job_id": job.id,
+                "mode": job.mode,
+                "worker_id": worker_id,
+                "status": job.status,
+                "result_chars": len(str(result_text or "")),
+                "error": _optional(error, 500),
+            },
+            fingerprint=f"coding_job:{status}:{job.id}",
+        )
+        return job
 
     def _initialize(self) -> None:
         with self._connect() as connection:
@@ -391,6 +438,20 @@ class NativeCodingJobStore:
 
     def _connect(self) -> sqlite3.Connection:
         return open_personal_os_database(self.database_path, autocommit=True)
+
+    def _record_event(
+        self,
+        event_type: str,
+        payload: dict[str, Any],
+        *,
+        fingerprint: str,
+    ) -> None:
+        if self._event_store is None:
+            return
+        try:
+            self._event_store.record(event_type, "coding_jobs", payload, fingerprint=fingerprint)
+        except Exception:
+            logger.exception("Could not record coding job event %s", event_type)
 
     def _finish_delivery(self, job_id: int, *, worker_id: str, delivered: bool) -> NativeCodingJob:
         with self._connect() as connection:

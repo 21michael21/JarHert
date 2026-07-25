@@ -160,6 +160,9 @@ def test_native_api_exposes_compact_plan_trace_and_tool_discovery(tmp_path: Path
 
     assert trace["next"] == {"key": "action-1", "type": "task.create", "title": "Проверить релиз"}
     assert trace["pending"] == 1
+    assert trace["recent_events"] == [
+        {"event_type": "action_plan.create", "source": "action_plans", "status": "recorded"}
+    ]
     assert 1 <= len(catalog["items"]) <= 4
     assert all("input_contract" in item and "output_contract" in item for item in catalog["items"])
 

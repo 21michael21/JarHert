@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import urllib.error
 
 import pytest
 
+from hermes.native_tools import monitors
 from hermes.native_tools.events import EventStore
 from hermes.native_tools.mcp_api import NativeToolsAPI
 from hermes.native_tools.monitors import (
@@ -234,3 +236,31 @@ def test_monitor_schedule_update_validates_and_can_clear_quiet_hours(tmp_path) -
 
     assert scheduled["source_config"]["quiet_hours"] == "22:30-08:30"
     assert cleared["source_config"].get("quiet_hours") is None
+
+
+def test_monitor_fetch_bytes_retries_transient_network_errors(monkeypatch) -> None:
+    calls = 0
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _limit: int) -> bytes:
+            return b"ok"
+
+    def urlopen(_request, *, timeout):
+        nonlocal calls
+        calls += 1
+        assert timeout == 10
+        if calls < 3:
+            raise urllib.error.URLError("temporary")
+        return Response()
+
+    monkeypatch.setattr(monitors, "_RETRY_DELAYS", (0, 0))
+    monkeypatch.setattr(monitors.urllib.request, "urlopen", urlopen)
+
+    assert monitors._fetch_bytes("https://api.example.test/state", {}, 10) == b"ok"
+    assert calls == 3

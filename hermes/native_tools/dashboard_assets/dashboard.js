@@ -2,12 +2,12 @@ const $ = (id) => document.getElementById(id);
 const telegram = window.Telegram?.WebApp;
 const state = {
   activeView: "today", snapshot: null, tasks: {items: [], lists: [], priorities: []}, calendar: {items: []},
-  coding: {items: []}, notes: {items: []}, knowledge: {items: []}, subscriptions: {items: []}, digest: {items: []}, expenses: {items: []}, expensesMonthly: {items: []}, commitments: {items: []}, trips: {items: []}, projects: {items: []}, projectStatus: null, searchQuery: "", searchResults: null, noteQuery: "", taskQuery: "", taskFilter: "Все", taskMenu: null, quickType: "task", edit: null, plan: null, codingDraft: null, clip: null, architectureScenario: "plan", lastUpdatedAt: null, pendingActions: [], limits: null, limitsLoading: false,
+  coding: {items: []}, notes: {items: []}, knowledge: {items: []}, subscriptions: {items: []}, digest: {items: []}, noteQuery: "", taskQuery: "", taskFilter: "Все", taskMenu: null, quickType: "task", edit: null, plan: null, codingDraft: null, clip: null, architectureScenario: "plan", lastUpdatedAt: null,
   calendarDay: null, toastTimer: null, toastUndo: null, voiceRecognition: null, nowTimer: null,
 };
-const VIEWS = new Set(["today", "tasks", "calendar", "money", "code", "memory", "limits"]);
 const RING_RADIUS = 31;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+const VIEWS = new Set(["today", "tasks", "calendar", "code", "memory"]);
 const ARCHITECTURE_SCENARIOS = {
   question: {
     eyebrow: "СЦЕНАРИЙ · ВОПРОС", title: "Короткий ответ без лишнего круга", summary: "Обычный вопрос не трогает внешние сервисы: JarHert понимает контекст и отвечает в чате.",
@@ -74,7 +74,7 @@ function icon(name, className = "") {
 function button(label, className, click, accessibleName = "", iconName = "") {
   const element = node("button", className);
   element.type = "button";
-  if (iconName) element.append(icon(iconName, "icon-sm"));
+  if (iconName) element.append(icon(iconName));
   if (label) element.append(document.createTextNode(label));
   if (accessibleName) element.setAttribute("aria-label", accessibleName);
   element.addEventListener("click", click);
@@ -100,18 +100,16 @@ async function request(url, options = {}) {
   return response.json();
 }
 
-async function refresh({silent = false} = {}) {
-  const refreshButton = $("refresh");
-  if (!silent) {
-    showNotice("Обновляю…");
-    refreshButton.disabled = true;
-    refreshButton.classList.add("is-loading");
-  }
+async function refresh() {
+  const control = $("refresh");
+  control?.classList.add("is-loading");
+  if (control) control.disabled = true;
+  showNotice("Обновляю…");
   try {
     const snapshot = await request("/api/snapshot");
     const noteUrl = state.noteQuery ? `/api/notes?query=${encodeURIComponent(state.noteQuery)}` : "/api/notes";
-    const [taskResult, calendarResult, codingResult, noteResult, knowledgeResult, subscriptionResult, digestResult, expenseResult, monthlyResult, commitmentResult, tripResult, projectResult] = await Promise.allSettled([
-      request("/api/tasks"), request("/api/calendar"), request("/api/coding/jobs"), request(noteUrl), request("/api/knowledge/sources"), request("/api/subscriptions"), request("/api/monitors/digest"), request("/api/expenses"), request("/api/expenses/monthly"), request("/api/commitments"), request("/api/trips"), request("/api/projects"),
+    const [taskResult, calendarResult, codingResult, noteResult, knowledgeResult, subscriptionResult, digestResult] = await Promise.allSettled([
+      request("/api/tasks"), request("/api/calendar"), request("/api/coding/jobs"), request(noteUrl), request("/api/knowledge/sources"), request("/api/subscriptions"), request("/api/monitors/digest"),
     ]);
     state.snapshot = snapshot;
     state.tasks = taskResult.status === "fulfilled" ? taskResult.value : {items: [], lists: [], priorities: []};
@@ -121,76 +119,24 @@ async function refresh({silent = false} = {}) {
     state.knowledge = knowledgeResult.status === "fulfilled" ? knowledgeResult.value : {items: []};
     state.subscriptions = subscriptionResult.status === "fulfilled" ? subscriptionResult.value : {items: []};
     state.digest = digestResult.status === "fulfilled" ? digestResult.value : {items: []};
-    state.expenses = expenseResult.status === "fulfilled" ? expenseResult.value : {items: []};
-    state.expensesMonthly = monthlyResult.status === "fulfilled" ? monthlyResult.value : {items: []};
-    state.commitments = commitmentResult.status === "fulfilled" ? commitmentResult.value : {items: []};
-    state.trips = tripResult.status === "fulfilled" ? tripResult.value : {items: []};
-    state.projects = projectResult.status === "fulfilled" ? projectResult.value : {items: []};
     state.lastUpdatedAt = new Date();
-    render();
-    if (!silent) showNotice("");
+    render(); showNotice("");
   } finally {
-    if (!silent) {
-      refreshButton.disabled = false;
-      refreshButton.classList.remove("is-loading");
-    }
-  }
-}
-
-async function refreshTasks() {
-  const [snapshotResult, taskResult] = await Promise.allSettled([request("/api/snapshot"), request("/api/tasks")]);
-  if (snapshotResult.status === "fulfilled") state.snapshot = snapshotResult.value;
-  if (taskResult.status === "fulfilled") state.tasks = taskResult.value;
-  state.lastUpdatedAt = new Date();
-  render();
-}
-
-async function completeTask(task) {
-  const title = task?.title;
-  if (!title) return;
-  const items = state.tasks.items || [];
-  const index = items.findIndex((item) => item.title === title);
-  const removed = index >= 0 ? items.splice(index, 1)[0] : null;
-  const priorities = state.snapshot?.today?.priorities || [];
-  const priorityIndex = priorities.findIndex((item) => field(item, "title", "text", "subject") === title);
-  const removedPriority = priorityIndex >= 0 ? priorities.splice(priorityIndex, 1)[0] : null;
-  haptic("notification", "success");
-  render();
-  try {
-    const plan = await request("/api/plans", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({request_id: requestId(), actions: [{type: "task.done", payload: {title}}]})});
-    await request(`/api/plans/${plan.id}/execute`, {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({plan_token: plan.plan_token})});
-    showNotice("Задача закрыта");
-    await refreshTasks();
-  } catch (error) {
-    if (removed) items.splice(index, 0, removed);
-    if (removedPriority) priorities.splice(priorityIndex, 0, removedPriority);
-    haptic("notification", "error");
-    showNotice(friendlyError(error));
-    render();
+    control?.classList.remove("is-loading");
+    if (control) control.disabled = false;
   }
 }
 
 function render() {
   const snapshot = state.snapshot || {};
-  const modeLabel = workModeLabel(snapshot.work_mode);
-  const chip = $("mode-chip");
-  $("mode-chip-label").textContent = modeLabel;
-  chip.hidden = modeLabel === "Быстро";
+  $("mode-chip-label").textContent = workModeLabel(snapshot.work_mode);
   $("last-sync").textContent = state.lastUpdatedAt ? `Обновлено ${formatTime(state.lastUpdatedAt)}` : "Собираю твой контур";
-  $("refresh").title = state.lastUpdatedAt ? `Обновлено ${formatTime(state.lastUpdatedAt)}` : "Обновить данные";
-  renderView(state.activeView);
+  renderToday(snapshot);
+  renderTasks();
+  renderCalendar();
+  renderCode();
+  renderMemory(snapshot);
   setView(state.activeView);
-}
-
-function renderView(view) {
-  const snapshot = state.snapshot || {};
-  if (view === "today") renderToday(snapshot);
-  else if (view === "tasks") renderTasks();
-  else if (view === "calendar") renderCalendar();
-  else if (view === "money") renderMoney();
-  else if (view === "code") renderCode();
-  else if (view === "memory") renderMemory(snapshot);
-  else if (view === "limits") renderLimits();
 }
 
 function renderToday(snapshot) {
@@ -201,7 +147,7 @@ function renderToday(snapshot) {
   $("focus-state").textContent = focus ? "Фокус" : "Свободно";
   $("focus-done").disabled = !focus;
   $("focus-move").disabled = !focus;
-  $("focus-done").onclick = () => focus && completeTask(focus);
+  $("focus-done").onclick = () => focus && preparePlan([{type: "task.done", payload: {title: focus.title}}]);
   $("focus-move").onclick = () => focus && openTaskMove(focus);
   renderFocusRing(snapshot);
   renderMomentum(snapshot);
@@ -255,7 +201,7 @@ function focusRow(task) {
   const copy = node("div", "row-copy");
   copy.append(node("strong", "row-title", task.title), node("span", "row-meta", taskMeta(task)));
   const actions = node("div", "row-actions");
-  actions.append(button("Готово", "row-button", () => completeTask(task), "", "check"));
+  actions.append(button("Готово", "row-button", () => preparePlan([{type: "task.done", payload: {title: task.title}}]), "", "check"));
   row.append(copy, actions); return row;
 }
 
@@ -282,42 +228,9 @@ function taskRow(task) {
   const meta = node("span", "row-meta", taskMeta(task));
   copy.append(title, meta);
   const actions = node("div", "row-actions");
-  actions.append(button("Готово", "row-button task-complete", () => completeTask(task), "", "check"));
+  actions.append(button("Готово", "row-button task-complete", () => preparePlan([{type: "task.done", payload: {title: task.title}}]), "", "check"));
   actions.append(button("", "task-menu-button", () => openTaskMenu(task), `Другие действия с задачей: ${task.title}`, "more-horizontal"));
-  row.append(copy, actions);
-  return swipeableTaskRow(row, task);
-}
-
-function swipeableTaskRow(row, task) {
-  const wrap = node("div", "swipe-wrap");
-  const under = node("div", "swipe-under");
-  under.append(node("span", "swipe-label done", "Готово"), node("span", "swipe-label move", "Перенести"));
-  wrap.append(under, row);
-  let startX = 0; let startY = 0; let deltaX = 0; let tracking = false;
-  row.addEventListener("touchstart", (event) => {
-    const touch = event.touches[0];
-    startX = touch.clientX; startY = touch.clientY; deltaX = 0; tracking = true;
-    row.style.transition = "none";
-  }, {passive: true});
-  row.addEventListener("touchmove", (event) => {
-    if (!tracking) return;
-    const touch = event.touches[0];
-    const dx = touch.clientX - startX; const dy = touch.clientY - startY;
-    if (!deltaX && Math.abs(dy) > Math.abs(dx)) { tracking = false; return; }
-    deltaX = dx;
-    row.style.transform = `translateX(${deltaX}px)`;
-    wrap.dataset.swipe = deltaX > 72 ? "done" : deltaX < -72 ? "move" : "";
-  }, {passive: true});
-  row.addEventListener("touchend", () => {
-    if (!tracking && !deltaX) return;
-    tracking = false;
-    row.style.transition = ""; row.style.transform = "";
-    const action = wrap.dataset.swipe || "";
-    wrap.dataset.swipe = ""; deltaX = 0;
-    if (action === "done") completeTask(task);
-    else if (action === "move") openTaskMove(task);
-  });
-  return wrap;
+  row.append(copy, actions); return row;
 }
 
 function renderCalendar() {
@@ -469,344 +382,18 @@ function compactEventRow(event) {
 }
 
 function renderCode() {
-  renderRunnerStatus();
   list("coding-jobs", state.coding.items || [], codingJobRow, "Кодовых задач пока нет. Добавь первую одной фразой.");
-}
-
-function renderLimits() {
-  if (!state.limits && !state.limitsLoading) loadLimits().catch((error) => showNotice(friendlyError(error)));
-  paintLimits();
-}
-
-async function loadLimits(force = false) {
-  state.limitsLoading = true;
-  paintLimits();
-  try {
-    state.limits = await request(force ? "/api/limits?refresh=1" : "/api/limits");
-  } catch (error) {
-    state.limits = {available: false, reason: "error", detail: friendlyError(error)};
-    showNotice(friendlyError(error));
-  } finally {
-    state.limitsLoading = false;
-    paintLimits();
-  }
-}
-
-function paintLimits() {
-  const box = $("limits-list");
-  const status = $("limits-status");
-  const errorsSection = $("limits-errors-section");
-  box.replaceChildren();
-  errorsSection.hidden = true;
-  if (state.limitsLoading && !state.limits) {
-    status.hidden = false;
-    status.dataset.tone = "muted";
-    status.textContent = "Спрашиваю caut о лимитах…";
-    const skeleton = node("div", "loading-skeletons");
-    skeleton.append(node("span"), node("span"), node("span"));
-    box.append(skeleton);
-    return;
-  }
-  const data = state.limits;
-  if (!data) return;
-  if (!data.available) {
-    status.hidden = false;
-    if (data.reason === "caut_not_installed") {
-      status.dataset.tone = "warn";
-      status.textContent = "caut не найден на сервере. Установи caut, чтобы видеть лимиты провайдеров.";
-    } else if (data.reason === "timeout") {
-      status.dataset.tone = "warn";
-      status.textContent = "caut не ответил вовремя. Попробуй обновить.";
-    } else if (data.reason === "no_sources") {
-      status.dataset.tone = "warn";
-      const detail = String(data.detail || "");
-      status.textContent = detail.includes("not_installed")
-        ? "caut и codex не найдены на сервере. Установи хотя бы один, чтобы видеть лимиты."
-        : `Нет данных о лимитах: ${shorten(detail, 180) || "оба источника недоступны"}`;
-    } else {
-      status.dataset.tone = "danger";
-      status.textContent = `Не удалось получить лимиты${data.detail ? `: ${shorten(data.detail, 160)}` : "."}`;
-    }
-    $("limits-summary").textContent = "";
-    return;
-  }
-  status.hidden = !(state.limitsLoading || data.stale);
-  if (state.limitsLoading) {
-    status.dataset.tone = "muted";
-    status.textContent = "Обновляю лимиты…";
-  } else if (data.stale) {
-    status.dataset.tone = "warn";
-    status.textContent = "Данные присланы с другого устройства и могли устареть.";
-  }
-  const stamp = data.source === "snapshot" ? data.receivedAt || data.generatedAt : data.generatedAt;
-  const ago = formatUpdatedAgo(stamp);
-  $("limits-summary").textContent = ago ? `Обновлено: ${ago}` : "";
-  const providers = data.providers || [];
-  if (!providers.length) box.append(node("p", "empty", "caut не вернул ни одного провайдера."));
-  providers.forEach((provider) => box.append(limitCard(provider)));
-  const errors = data.errors || [];
-  errorsSection.hidden = !errors.length;
-  $("limits-errors-count").textContent = String(errors.length);
-  list("limits-errors", errors, (item) => {
-    const row = node("article", "work-row");
-    const copy = node("div", "row-copy");
-    copy.append(node("strong", "row-title", field(item, "provider", "source")), node("span", "row-meta danger", field(item, "message", "error", "detail")));
-    row.append(copy);
-    return row;
-  }, "Ошибок нет.");
-}
-
-function limitCard(provider) {
-  const card = node("article", "limit-card");
-  const head = node("div", "limit-card-head");
-  head.append(node("strong", "row-title", field(provider, "provider", "name")));
-  if (provider.status && provider.status !== "ok") head.append(node("span", "count-pill", text(provider.status)));
-  card.append(head);
-  const meta = [provider.account, provider.plan, provider.source].map(text).filter(Boolean).join(" · ");
-  if (meta) card.append(node("p", "row-meta", meta));
-  const usage = provider.usage || {};
-  ["primary", "secondary", "tertiary"].forEach((key) => {
-    const window_ = usage[key];
-    if (!window_ || typeof window_ !== "object") return;
-    card.append(limitWindow(limitWindowLabel(key, window_), window_));
-  });
-  if (provider.resetCredits) card.append(node("p", "row-meta", `Сбросов кредитов доступно: ${provider.resetCredits}`));
-  if (provider.credits !== null && provider.credits !== undefined) {
-    const raw = typeof provider.credits === "object"
-      ? provider.credits.remaining ?? provider.credits.balance ?? provider.credits.total
-      : provider.credits;
-    if (raw !== null && raw !== undefined) card.append(node("p", "row-meta", `Кредиты: ${raw}`));
-  }
-  return card;
-}
-
-function limitWindowLabel(key, window_) {
-  const minutes = Number(window_?.windowMinutes);
-  if (Number.isFinite(minutes) && minutes > 0) {
-    if (minutes <= 360) return minutes >= 270 && minutes <= 330 ? "5 часов" : "Сессия";
-    if (minutes >= 10080) return minutes > 10080 ? `${Math.round(minutes / 10080)} нед.` : "Неделя";
-    if (minutes % 1440 === 0) return `${minutes / 1440}д`;
-    return `${Math.round(minutes / 60)}ч`;
-  }
-  return {primary: "Сессия", secondary: "Неделя", tertiary: "Дополнительно"}[key] || "Окно";
-}
-
-function limitWindow(label, window_) {
-  const wrap = node("div", "limit-window");
-  const top = node("div", "limit-window-top");
-  const percent = limitRemainingPercent(window_);
-  top.append(
-    node("span", "", label),
-    node("span", "", percent === null ? "нет данных" : `осталось ${Math.round(percent)}%`),
-  );
-  wrap.append(top);
-  if (percent !== null) {
-    const track = node("span", "limit-track");
-    const tone = percent <= 10 ? "danger" : percent <= 30 ? "warn" : "";
-    track.append(Object.assign(node("span", `limit-fill ${tone}`.trim()), {style: `width:${Math.max(0, Math.min(100, percent))}%`}));
-    wrap.append(track);
-  }
-  const reset = formatReset(window_.resetsAt);
-  if (reset) wrap.append(node("span", "row-meta", reset));
-  return wrap;
-}
-
-function limitRemainingPercent(window_) {
-  if (typeof window_.remainingPercent === "number") return window_.remainingPercent;
-  if (typeof window_.usedPercent === "number") return 100 - window_.usedPercent;
-  const used = Number(window_.used);
-  const limit = Number(window_.limit);
-  if (Number.isFinite(used) && Number.isFinite(limit) && limit > 0) return Math.max(0, 100 - (used / limit) * 100);
-  return null;
-}
-
-function formatUpdatedAgo(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const diffMs = Date.now() - date.getTime();
-  if (diffMs < 60 * 1000) return diffMs < 0 ? `сегодня ${formatTime(date)}` : "только что";
-  const minutes = Math.floor(diffMs / 60000);
-  if (minutes < 60) return `${minutes} ${plural(minutes, "минуту", "минуты", "минут")} назад`;
-  if (date.toDateString() === new Date().toDateString()) return `сегодня ${formatTime(date)}`;
-  return `${date.toLocaleDateString("ru-RU", {day: "numeric", month: "short"})} ${formatTime(date)}`;
-}
-
-function formatReset(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const diffMs = date.getTime() - Date.now();
-  if (diffMs <= 0) return "сброс уже должен был пройти";
-  const minutes = Math.round(diffMs / 60000);
-  if (minutes < 60) return `сброс через ${minutes}м`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 48) return `сброс через ${hours}ч${minutes % 60 ? ` ${minutes % 60}м` : ""}`;
-  return `сброс ${date.toLocaleDateString("ru-RU", {day: "numeric", month: "short"})} в ${formatTime(date)}`;
-}
-
-function renderMoney() {
-  const monthlyItems = state.expensesMonthly.items || [];
-  const currencies = [...new Set(monthlyItems.map((item) => item.currency))];
-  const totalsByCurrency = currencies.map((currency) => {
-    const total = monthlyItems.filter((item) => item.currency === currency).reduce((sum, item) => sum + item.total, 0);
-    return `${formatAmount(total)} ${currency}`;
-  });
-  const subscriptions = state.subscriptions.items || [];
-  const expenses = state.expenses.items || [];
-  const weekTotal = renderMoneyWeek();
-  $("money-summary").textContent = monthlyItems.length
-    ? `В этом месяце: ${totalsByCurrency.join(" · ")}`
-    : "Трат пока нет — добавь первую кнопкой «Добавить трату».";
-  $("money-bars-section").hidden = !monthlyItems.length;
-  $("money-week-section").hidden = !weekTotal;
-  $("subscriptions-section").hidden = !subscriptions.length;
-  $("expenses-section").hidden = !expenses.length;
-  const maxTotal = Math.max(1, ...monthlyItems.map((item) => item.total));
-  const bars = $("money-bars");
-  bars.replaceChildren();
-  for (const item of monthlyItems) {
-    const row = node("div", "money-bar-row");
-    const width = Math.max(6, Math.round((item.total / maxTotal) * 100));
-    row.append(
-      node("span", "money-bar-label", item.category || "без категории"),
-      Object.assign(node("span", "money-bar-track"), {append: Object.assign(node("span", "money-bar-fill"), {style: `width:${width}%`})}),
-      node("span", "money-bar-value", `${formatAmount(item.total)} ${item.currency}`),
-    );
-    bars.append(row);
-  }
-  $("subscriptions-total").textContent = state.subscriptions.monthly_totals
-    ? Object.entries(state.subscriptions.monthly_totals).map(([currency, total]) => `${total} ${currency}/мес`).join(" · ")
-    : "";
-  list("subscriptions", subscriptions, subscriptionRow, "Подписок нет.");
-  $("expense-count").textContent = String(expenses.length);
-  list("expenses", expenses, expenseRow, "Трат пока нет. Одна запись — два тапа.");
-}
-
-function formatAmount(value) {
-  const number = Number(value) || 0;
-  return number.toLocaleString("ru-RU", {maximumFractionDigits: 2});
-}
-
-function subscriptionRow(item) {
-  const row = node("article", "work-row");
-  const copy = node("div", "row-copy");
-  copy.append(node("strong", "row-title", field(item, "name")));
-  copy.append(node("span", "row-meta", `${item.amount} ${item.currency} · следующее списание ${formatDate(item.next_charge_at)}`));
-  row.append(copy);
-  return row;
-}
-
-function expenseRow(item) {
-  const row = node("article", "work-row");
-  const copy = node("div", "row-copy");
-  copy.append(node("strong", "row-title", field(item, "text")));
-  const meta = [`${formatAmount(item.amount)} ${item.currency}`];
-  if (item.category) meta.push(item.category);
-  meta.push(formatDate(item.spent_at));
-  copy.append(node("span", "row-meta", meta.join(" · ")));
-  row.append(copy);
-  return row;
-}
-
-function openExpenseDialog() {
-  $("expense-form").reset();
-  $("expense-dialog").showModal();
-}
-
-async function submitExpense(event) {
-  event.preventDefault();
-  const payload = {
-    request_id: crypto.randomUUID().replaceAll("-", "").slice(0, 24),
-    text: $("expense-text").value.trim(),
-    amount: Number($("expense-amount").value),
-    currency: $("expense-currency").value,
-    category: $("expense-category").value.trim() || null,
-    project: $("expense-project").value.trim() || null,
-  };
-  if (!payload.text || !(payload.amount > 0)) return;
-  await request("/api/expenses", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(payload)});
-  $("expense-dialog").close();
-  haptic("notificationOccurred", "success");
-  showNotice("Трата записана");
-  await refresh();
-}
-
-async function submitNote(event) {
-  event.preventDefault();
-  const payload = {
-    subject: $("note-subject").value.trim(),
-    content: $("note-content").value.trim(),
-    project: $("note-project").value.trim() || null,
-  };
-  if (!payload.subject || !payload.content) return;
-  await request("/api/notes", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(payload)});
-  $("note-dialog").close();
-  haptic("notificationOccurred", "success");
-  showNotice("Заметка сохранена");
-  await refresh();
-}
-
-async function submitReminder(event) {
-  event.preventDefault();
-  const at = $("reminder-at").value;
-  const payload = {
-    request_id: crypto.randomUUID().replaceAll("-", "").slice(0, 24),
-    text: $("reminder-text").value.trim(),
-    remind_at: at ? at.replace("T", " ") : "",
-    recurrence: $("reminder-recurrence").value,
-  };
-  if (!payload.text || !payload.remind_at) return;
-  await request("/api/reminders", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(payload)});
-  $("reminder-dialog").close();
-  haptic("notificationOccurred", "success");
-  showNotice("Напоминание создано");
-  await refresh();
-}
-
-function renderRunnerStatus() {
-  const box = $("runner-status");
-  if (!box) return;
-  const queue = state.snapshot?.status?.coding_queue || {};
-  if (!queue.available) {
-    box.textContent = "Очередь кодинга недоступна";
-    box.dataset.tone = "muted";
-    return;
-  }
-  const states = {busy: "в работе", attention: "требует внимания", idle: "ждёт задачи", unknown: "статус неизвестен"};
-  const heartbeatAt = queue.last_heartbeat_at ? new Date(String(queue.last_heartbeat_at).replace(" ", "T")) : null;
-  const heartbeat = heartbeatAt && !Number.isNaN(heartbeatAt.getTime()) ? ` · heartbeat ${formatTime(heartbeatAt)}` : "";
-  box.textContent = `Раннер: ${states[queue.worker_state] || queue.worker_state}${heartbeat} · в очереди ${queue.queued || 0}`;
-  box.dataset.tone = {attention: "danger", busy: "warn", idle: "good"}[queue.worker_state] || "muted";
 }
 
 function codingJobRow(job) {
   const row = node("article", "work-row code-row");
   const copy = node("div", "row-copy");
   const status = codingStatus(job.status);
-  const title = job.source_label ? `${job.source_label}: ${field(job, "prompt")}` : field(job, "prompt");
-  copy.append(node("strong", "row-title", shorten(title, 90)));
-  const when = job.created_at ? ` · ${formatDate(job.created_at)}` : "";
-  copy.append(node("span", `row-meta ${status.tone}`, `${status.label} · ${job.mode === "research" ? "исследование" : "sandbox-код"}${when}`));
+  copy.append(node("strong", "row-title", field(job, "prompt")), node("span", `row-meta ${status.tone}`, `${status.label} · ${job.mode === "research" ? "исследование" : "sandbox-код"}`));
   const actions = node("div", "row-actions");
   if (job.repository_url) actions.append(button("Проект", "row-button", () => openExternal(job.repository_url), "", "github"));
   if (job.result_text || job.last_error) actions.append(button("Отчёт", "row-button", () => openReport(job), "", "file-text"));
   row.append(copy, actions); return row;
-}
-
-function shorten(value, limit) {
-  const clean = String(value || "").replace(/\s+/g, " ").trim();
-  return clean.length <= limit ? clean : `${clean.slice(0, limit - 1).trimEnd()}…`;
-}
-
-function formatDate(value) {
-  const date = new Date(String(value).replace(" ", "T"));
-  if (Number.isNaN(date.getTime())) return "";
-  const today = new Date();
-  const sameDay = date.toDateString() === today.toDateString();
-  return sameDay
-    ? date.toLocaleTimeString("ru-RU", {hour: "2-digit", minute: "2-digit"})
-    : date.toLocaleDateString("ru-RU", {day: "numeric", month: "short"});
 }
 
 function codingStatus(value) {
@@ -892,7 +479,6 @@ function showArchitectureScenario(key) {
     item.setAttribute("aria-pressed", String(selected));
   });
   renderArchitectureNodes(scenario);
-  haptic("selection");
   playArchitectureFlow();
 }
 
@@ -903,157 +489,7 @@ function openArchitecture() {
   showArchitectureScenario("plan");
 }
 
-function commitmentRow(item) {
-  const row = node("article", "work-row");
-  const copy = node("div", "row-copy");
-  copy.append(node("strong", "row-title", field(item, "subject")));
-  copy.append(node("span", "row-meta", `${field(item, "content")}${item.due_at ? ` · срок ${formatDate(item.due_at)}` : ""}`));
-  const actions = node("div", "row-actions");
-  actions.append(button("Выполнено", "row-button", () => completeCommitment(item)));
-  row.append(copy, actions);
-  return row;
-}
-
-async function completeCommitment(item) {
-  await request(`/api/commitments/${item.id}/complete`, {method: "POST"});
-  haptic("notificationOccurred", "success");
-  showNotice("Обещание закрыто");
-  await refresh();
-}
-
-function tripRow(item) {
-  const row = node("article", "work-row");
-  const copy = node("div", "row-copy");
-  copy.append(node("strong", "row-title", field(item, "name")));
-  const progress = item.total_items ? ` · чеклист ${item.total_items - (item.open_items || 0)}/${item.total_items}` : "";
-  copy.append(node("span", "row-meta", `${field(item, "destination")}${item.starts_at ? ` · ${formatDate(item.starts_at)}` : ""}${progress}`));
-  row.append(copy);
-  return row;
-}
-
-function renderProjectStatus() {
-  const select = $("project-select");
-  const projects = state.projects.items || [];
-  if (select.options.length !== projects.length + 1) {
-    select.replaceChildren(node("option", "", "Выбери проект", {value: ""}));
-    for (const project of projects) select.append(node("option", "", field(project, "name"), {value: field(project, "name")}));
-  }
-  const report = state.projectStatus;
-  const box = $("project-status");
-  box.replaceChildren();
-  if (!report) {
-    box.append(node("p", "empty", "Выбери проект — соберу карточку для пересылки."));
-    $("project-copy").disabled = true;
-    return;
-  }
-  $("project-copy").disabled = false;
-  const lines = [];
-  lines.push(node("strong", "row-title", `Статус: ${report.project}`));
-  for (const item of (report.open_commitments || []).slice(0, 3)) lines.push(node("span", "row-meta", `Обещание: ${field(item, "subject")} — ${field(item, "content")}`));
-  for (const item of (report.notes || []).slice(0, 3)) lines.push(node("span", "row-meta", `Заметка: ${field(item, "subject")}`));
-  const tasksText = String(report.open_tasks_text || "").trim();
-  if (tasksText) lines.push(node("span", "row-meta", `Задачи: ${shorten(tasksText.split("\n")[0], 80)}`));
-  box.append(node("article", "work-row", node("div", "row-copy", ...lines)));
-}
-
-function projectStatusText() {
-  const report = state.projectStatus;
-  if (!report) return "";
-  const parts = [`Статус: ${report.project}`];
-  for (const item of (report.open_commitments || []).slice(0, 5)) parts.push(`• ${field(item, "subject")}: ${field(item, "content")}`);
-  for (const item of (report.notes || []).slice(0, 5)) parts.push(`• ${field(item, "subject")}`);
-  const tasksText = String(report.open_tasks_text || "").trim();
-  if (tasksText) parts.push("", "Задачи:", tasksText);
-  return parts.join("\n");
-}
-
-async function loadProjectStatus(name) {
-  state.projectStatus = name ? await request(`/api/projects/status?project=${encodeURIComponent(name)}`) : null;
-  renderProjectStatus();
-}
-
-function renderSearch() {
-  const box = $("search-results");
-  box.replaceChildren();
-  const results = state.searchResults;
-  if (!state.searchQuery) {
-    box.append(node("p", "empty", "Начни печатать — ищу по заметкам, знаниям и задачам."));
-    return;
-  }
-  if (!results) {
-    box.append(node("p", "empty", "Ищу…"));
-    return;
-  }
-  const rows = [];
-  for (const item of results.notes || []) rows.push(node("div", "preview-row", `Заметка · ${field(item, "subject")} — ${shorten(field(item, "content"), 80)}`));
-  for (const item of results.knowledge || []) rows.push(node("div", "preview-row", `Знания · ${field(item, "title", "url")}`));
-  for (const task of searchTasks(state.searchQuery).slice(0, 3)) rows.push(node("div", "preview-row", `Задача · ${task.title}`));
-  if (!rows.length) rows.push(node("p", "empty", "Ничего не нашлось."));
-  box.append(...rows);
-}
-
-function searchTasks(query) {
-  const clean = query.toLowerCase();
-  return (state.tasks.items || []).filter((task) => String(task.title || "").toLowerCase().includes(clean));
-}
-
-let searchTimer = 0;
-function scheduleGlobalSearch(query) {
-  state.searchQuery = query.trim();
-  state.searchResults = null;
-  renderSearch();
-  window.clearTimeout(searchTimer);
-  if (!state.searchQuery) return;
-  searchTimer = window.setTimeout(async () => {
-    try {
-      state.searchResults = await request(`/api/search?query=${encodeURIComponent(state.searchQuery)}`);
-    } catch {
-      state.searchResults = {notes: [], knowledge: []};
-    }
-    renderSearch();
-  }, 350);
-}
-
-function renderMoneyWeek() {
-  const box = $("money-week");
-  box.replaceChildren();
-  const days = [];
-  const today = new Date();
-  for (let index = 6; index >= 0; index--) {
-    const day = new Date(today);
-    day.setDate(today.getDate() - index);
-    days.push(day);
-  }
-  const expenses = state.expenses.items || [];
-  const mainCurrency = (state.expensesMonthly.items || [])[0]?.currency || "RUB";
-  const totals = days.map((day) => {
-    const key = day.toISOString().slice(0, 10);
-    return expenses
-      .filter((item) => String(item.spent_at || "").slice(0, 10) === key && item.currency === mainCurrency)
-      .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
-  });
-  const weekTotal = totals.reduce((sum, value) => sum + value, 0);
-  $("week-total").textContent = weekTotal ? `${formatAmount(weekTotal)} ${mainCurrency}` : "";
-  const maxTotal = Math.max(1, ...totals);
-  days.forEach((day, index) => {
-    const column = node("div", "money-week-day");
-    const height = totals[index] ? Math.max(8, Math.round((totals[index] / maxTotal) * 100)) : 0;
-    column.append(
-      Object.assign(node("span", "money-week-bar"), {style: `height:${height}%`, title: `${formatAmount(totals[index])} ${mainCurrency}`}),
-      node("span", "money-week-label", day.toLocaleDateString("ru-RU", {weekday: "short"})),
-    );
-    box.append(column);
-  });
-  return weekTotal;
-}
-
 function renderMemory(snapshot) {
-  renderSearch();
-  const commitments = state.commitments.items || [];
-  $("commitment-count").textContent = String(commitments.length);
-  list("commitments", commitments, commitmentRow, "Открытых обещаний нет.");
-  list("trips", state.trips.items || [], tripRow, "Активных поездок нет.");
-  renderProjectStatus();
   const reminders = snapshot.today?.reminders || [];
   $("reminder-count").textContent = reminders.length;
   list("reminders", reminders, reminderRow, "Напоминаний нет. И это тоже хорошая новость.");
@@ -1077,7 +513,7 @@ function reminderRow(item) {
   copy.append(node("strong", "row-title", field(item, "text", "title")), node("span", "row-meta", `${formatDayTime(item.remind_at)} · ${relativeTime(item.remind_at)}`));
   const actions = node("div", "row-actions");
   actions.append(button("Править", "row-button", () => openReminderEditor(item), "", "pencil"));
-  actions.append(button("", "icon-action danger", () => cancelReminder(item), `Удалить напоминание: ${field(item, "text", "title")}`, "trash-2"));
+  actions.append(button("", "icon-action danger", () => cancelReminder(item), `Отменить напоминание: ${field(item, "text", "title")}`, "trash-2"));
   row.append(copy, actions); return row;
 }
 
@@ -1135,7 +571,12 @@ function openRadarSchedule(item) {
 }
 
 function statusRow(label, value, good) {
-  const row = node("div", "status-row"); row.append(node("span", "", label), node("b", good ? "good" : "warn", value)); return row;
+  const icons = {JarHert: "sparkles", Gateway: "radio", Trello: "list-todo", Calendar: "calendar-days", GitHub: "github", Runner: "terminal-square", Backup: "archive"};
+  const row = node("div", "status-row");
+  const title = node("span", "status-label");
+  title.append(icon(icons[label] || "radio"), document.createTextNode(label));
+  row.append(title, node("b", good ? "good" : "warn", value));
+  return row;
 }
 
 function githubMcpLabel(state) {
@@ -1190,13 +631,12 @@ function plural(value, one, few, many) { const mod10 = value % 10; const mod100 
 
 function setView(view, {syncHistory = true, hapticFeedback = false} = {}) {
   const nextView = VIEWS.has(view) ? view : "today";
-  const switched = state.activeView !== nextView;
+  const changed = state.activeView !== nextView;
   state.activeView = nextView;
-  if (switched) renderView(nextView);
   document.querySelectorAll(".view").forEach((item) => {
     const isVisible = item.id === `view-${nextView}`;
     item.hidden = !isVisible;
-    if (isVisible && switched) {
+    if (isVisible && changed) {
       item.classList.remove("is-entering");
       void item.offsetWidth;
       item.classList.add("is-entering");
@@ -1207,11 +647,8 @@ function setView(view, {syncHistory = true, hapticFeedback = false} = {}) {
     item.classList.toggle("is-active", isActive);
     item.setAttribute("aria-current", isActive ? "page" : "false");
   });
-  const moreActive = ["code", "memory", "limits"].includes(nextView);
-  $("more-nav").classList.toggle("is-active", moreActive);
-  $("more-nav").setAttribute("aria-current", moreActive ? "page" : "false");
   if (syncHistory && window.location.hash !== `#${nextView}`) history.replaceState(null, "", `#${nextView}`);
-  if (switched && hapticFeedback) haptic("selection");
+  if (changed && hapticFeedback) haptic("selection");
   telegram?.BackButton?.hide();
 }
 
@@ -1230,11 +667,7 @@ function scheduleNoteSearch(value) {
 function openQuick(type = "task") { state.quickType = type; updateQuickForm(); haptic("impact", "light"); $("quick-dialog").showModal(); window.setTimeout(() => $("quick-text").focus(), 0); }
 function updateQuickForm() {
   const type = state.quickType;
-  document.querySelectorAll("[data-quick-type]").forEach((item) => {
-    const selected = item.dataset.quickType === type;
-    item.classList.toggle("is-active", selected);
-    item.setAttribute("aria-pressed", String(selected));
-  });
+  document.querySelectorAll("[data-quick-type]").forEach((item) => item.classList.toggle("is-active", item.dataset.quickType === type));
   const labels = {
     task: ["Новая задача", "Что сделать", "Задача попадёт в Inbox без приоритета. Это можно изменить позже."],
     event: ["Новая встреча", "Название", "Выбери время ниже — всё остальное можно поправить потом."],
@@ -1269,28 +702,6 @@ async function preparePlan(actions) {
   } catch (error) { showNotice(friendlyError(error)); haptic("notification", "error"); }
 }
 
-function queueAction(action) {
-  state.pendingActions.push(action);
-  renderPendingPlan();
-  haptic("impactOccurred", "light");
-  showNotice(`В плане ${state.pendingActions.length} ${plural(state.pendingActions.length, "действие", "действия", "действий")} — жми «Применить», когда будешь готов`);
-}
-
-function renderPendingPlan() {
-  const count = state.pendingActions.length;
-  $("pending-plan").hidden = !count;
-  $("pending-count").textContent = `${count} ${plural(count, "действие", "действия", "действий")}`;
-}
-
-async function clearPendingPlan() {
-  const count = state.pendingActions.length;
-  if (!count) return;
-  if (count > 1 && !await confirmAction(`Сбросить ${count} ${plural(count, "действие", "действия", "действий")} из плана?`)) return;
-  state.pendingActions = [];
-  renderPendingPlan();
-  showNotice("");
-}
-
 function renderPlan(plan) { list("plan-preview", plan.preview || [], (line) => node("div", "preview-row", line), "В плане нет действий."); }
 async function executePlan(event) {
   event.preventDefault(); if (!state.plan && !state.codingDraft) return; const control = $("plan-execute"); control.disabled = true;
@@ -1306,7 +717,7 @@ async function executePlan(event) {
       $("quick-text").value = "";
       showNotice("Готово");
     }
-    $("plan-dialog").close(); state.plan = null; state.codingDraft = null; state.pendingActions = []; renderPendingPlan(); haptic("notification", "success"); await refresh();
+    $("plan-dialog").close(); state.plan = null; state.codingDraft = null; haptic("notification", "success"); await refresh();
   }
   catch (error) { haptic("notification", "error"); showNotice(friendlyError(error)); }
   finally { control.disabled = false; }
@@ -1388,48 +799,45 @@ async function saveEdit(event) {
     if (kind === "reminder") { const remindAt = toIso($("edit-date").value); if (!remindAt) throw new Error("Укажи время"); await request(`/api/reminders/${item.id}/reschedule`, {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({remind_at: remindAt, recurrence: $("edit-recurrence").value})}); $("edit-dialog").close(); showNotice("Напоминание обновлено"); await refresh(); }
     else if (kind === "note") { const content = $("edit-value").value.trim(); if (!content) throw new Error("Текст заметки пустой"); await request(`/api/notes/${item.id}`, {method: "PUT", headers: {"content-type": "application/json"}, body: JSON.stringify({content})}); $("edit-dialog").close(); showNotice("Заметка обновлена"); await refresh(); }
     else if (kind === "monitor") { const quietHours = $("edit-value").value.trim(); if (quietHours && !/^\d{2}:\d{2}-\d{2}:\d{2}$/.test(quietHours)) throw new Error("Формат: 23:00-08:00"); await request(`/api/monitors/${item.id}/schedule`, {method: "PUT", headers: {"content-type": "application/json"}, body: JSON.stringify({quiet_hours: quietHours, timezone: item.source_config?.timezone || "Europe/Moscow"})}); $("edit-dialog").close(); showNotice(quietHours ? "Радар перейдёт в digest в тихие часы" : "Тихие часы отключены"); await refresh(); }
-    else { let action; if (kind === "task.move") action = {type: kind, payload: {title: item.title, target_list: $("edit-choice").value}}; if (kind === "task.priority") action = {type: kind, payload: {title: item.title, priority: $("edit-choice").value}}; if (kind === "calendar.move") { const start = toIso($("edit-date").value); const end = toIso($("edit-end").value); if (!start || !end || end <= start) throw new Error("Укажи корректное время"); action = {type: kind, payload: {title: item.title, start, end}}; } $("edit-dialog").close(); queueAction(action); }
+    else { let action; if (kind === "task.move") action = {type: kind, payload: {title: item.title, target_list: $("edit-choice").value}}; if (kind === "task.priority") action = {type: kind, payload: {title: item.title, priority: $("edit-choice").value}}; if (kind === "calendar.move") { const start = toIso($("edit-date").value); const end = toIso($("edit-end").value); if (!start || !end || end <= start) throw new Error("Укажи корректное время"); action = {type: kind, payload: {title: item.title, start, end}}; } $("edit-dialog").close(); await preparePlan([action]); }
   } catch (error) { haptic("notification", "error"); showNotice(friendlyError(error)); }
   finally { control.disabled = false; }
 }
 
-function cancelReminder(item) {
-  const reminders = state.snapshot?.today?.reminders || [];
-  const index = reminders.findIndex((entry) => entry.id === item.id);
-  const removed = index >= 0 ? reminders.splice(index, 1)[0] : null;
-  renderView("memory");
-  showUndoToast(`Напоминание «${field(item, "text", "title")}» отменено`, {
-    onUndo: () => { if (removed) reminders.splice(index, 0, removed); renderView("memory"); },
-    onCommit: () => request(`/api/reminders/${item.id}/cancel`, {method: "POST"}),
-  });
+async function cancelReminder(item) {
+  try {
+    await request(`/api/reminders/${item.id}/cancel`, {method: "POST"});
+    haptic("notification", "success");
+    await refresh();
+    showToast(`Напоминание «${field(item, "text", "title")}» отменено`, "Отменить", async () => {
+      try {
+        await request(`/api/reminders/${item.id}/reschedule`, {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({remind_at: item.remind_at, recurrence: "keep"})});
+        haptic("notification", "success");
+        await refresh();
+      } catch (error) { showNotice(friendlyError(error)); }
+    });
+  } catch (error) { showNotice(friendlyError(error)); }
 }
-function deleteNote(item) {
-  const items = state.notes.items || [];
-  const index = items.findIndex((entry) => entry.id === item.id);
-  const removed = index >= 0 ? items.splice(index, 1)[0] : null;
-  renderView("memory");
-  showUndoToast(`Заметка «${field(item, "subject")}» удалена`, {
-    onUndo: () => { if (removed) items.splice(index, 0, removed); renderView("memory"); },
-    onCommit: () => request(`/api/notes/${item.id}`, {method: "DELETE"}),
-  });
+
+async function deleteNote(item) {
+  const subject = field(item, "subject");
+  const content = text(item.content);
+  const project = item.project || null;
+  try {
+    await request(`/api/notes/${item.id}`, {method: "DELETE"});
+    haptic("notification", "success");
+    await refresh();
+    showToast(`Заметка «${subject}» удалена`, "Вернуть", async () => {
+      try {
+        const plan = await request("/api/plans", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({request_id: requestId(), actions: [{type: "note.save", payload: {subject, content, project}}]})});
+        await request(`/api/plans/${plan.id}/execute`, {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({plan_token: plan.plan_token})});
+        haptic("notification", "success");
+        await refresh();
+      } catch (error) { showNotice(friendlyError(error)); }
+    });
+  } catch (error) { haptic("notification", "error"); showNotice(friendlyError(error)); }
 }
-function showUndoToast(message, {onUndo, onCommit}) {
-  const offset = document.querySelectorAll(".undo-toast").length;
-  const toast = node("div", "undo-toast");
-  toast.setAttribute("role", "status");
-  toast.style.bottom = `calc(${150 + offset * 56}px + env(safe-area-inset-bottom))`;
-  let settled = false;
-  toast.append(node("span", "undo-toast-text", message), button("Отменить", "text-button", () => { settled = true; toast.remove(); onUndo(); }));
-  document.body.append(toast);
-  window.setTimeout(async () => {
-    if (settled) return;
-    settled = true;
-    toast.remove();
-    try { await onCommit(); haptic("notification", "success"); await refresh({silent: true}); }
-    catch (error) { haptic("notification", "error"); onUndo(); showNotice(friendlyError(error)); }
-  }, 5000);
-}
-function confirmAction(message) { if (telegram?.showConfirm) return new Promise((resolve) => telegram.showConfirm(message, resolve)); return Promise.resolve(window.confirm(message)); }
+
 function openExternal(url) { if (telegram?.openLink) telegram.openLink(url); else window.open(url, "_blank", "noopener"); }
 function requestId() { return window.crypto?.randomUUID?.().replaceAll("-", "") || `quick${Date.now()}${Math.random().toString(36).slice(2)}`; }
 function friendlyError(error) { return error.message === "session" ? "Telegram-сессия истекла. Открой кабинет снова." : error.message || "Не удалось выполнить действие"; }
@@ -1541,6 +949,38 @@ function upcomingChargesPerDay(subscriptions, days) {
   return buckets;
 }
 
+function showToast(message, actionLabel, actionFn) {
+  const toast = $("toast");
+  const actionButton = $("toast-action");
+  window.clearTimeout(state.toastTimer);
+  state.toastUndo = null;
+  $("toast-text").textContent = message;
+  if (actionLabel && typeof actionFn === "function") {
+    actionButton.hidden = false;
+    actionButton.textContent = actionLabel;
+    state.toastUndo = actionFn;
+    actionButton.onclick = () => {
+      const undo = state.toastUndo;
+      hideToast();
+      if (undo) undo();
+    };
+  } else {
+    actionButton.hidden = true;
+    actionButton.onclick = null;
+  }
+  toast.hidden = false;
+  requestAnimationFrame(() => toast.classList.add("is-visible"));
+  state.toastTimer = window.setTimeout(hideToast, 5000);
+}
+
+function hideToast() {
+  const toast = $("toast");
+  toast.classList.remove("is-visible");
+  window.clearTimeout(state.toastTimer);
+  state.toastUndo = null;
+  window.setTimeout(() => { if (!toast.classList.contains("is-visible")) toast.hidden = true; }, 200);
+}
+
 function applyTelegramTheme() {
   const params = telegram?.themeParams;
   if (!params) return;
@@ -1602,7 +1042,7 @@ function initPullToRefresh() {
     indicator.style.opacity = "0";
     indicator.classList.remove("is-ready");
     startY = null;
-    if (ready) { haptic("impact", "light"); refresh({silent: true}).catch(() => {}); }
+    if (ready) { haptic("impact", "light"); refresh().catch(() => {}); }
   }, {passive: true});
 }
 
@@ -1629,7 +1069,7 @@ function initSwipeToComplete() {
     row.classList.remove("is-swiping");
     if (delta > 70) {
       const title = row.querySelector(".task-title")?.title || row.querySelector(".task-title")?.textContent;
-      if (title) completeTask({title});
+      if (title) { haptic("notification", "success"); preparePlan([{type: "task.done", payload: {title}}]); }
     }
   }, {passive: true});
 }
@@ -1650,25 +1090,10 @@ function init() {
   $("refresh").addEventListener("click", () => { haptic("impact", "light"); refresh().catch((error) => showNotice(friendlyError(error))); });
   document.querySelectorAll("[data-view]").forEach((item) => item.addEventListener("click", () => setView(item.dataset.view, {hapticFeedback: true})));
   document.querySelectorAll("[data-open-view]").forEach((item) => item.addEventListener("click", () => setView(item.dataset.openView, {hapticFeedback: true})));
-  $("more-nav").addEventListener("click", () => { haptic("impact", "light"); $("more-nav").setAttribute("aria-expanded", "true"); $("more-dialog").showModal(); });
-  $("more-dialog").addEventListener("close", () => $("more-nav").setAttribute("aria-expanded", "false"));
-  document.querySelectorAll("[data-more-view]").forEach((item) => item.addEventListener("click", () => { $("more-dialog").close(); setView(item.dataset.moreView, {hapticFeedback: true}); }));
   $("quick-add").addEventListener("click", () => openQuick()); $("quick-cancel").addEventListener("click", () => $("quick-dialog").close());
   document.querySelectorAll("[data-quick-type]").forEach((item) => item.addEventListener("click", () => { state.quickType = item.dataset.quickType; haptic("selection"); updateQuickForm(); }));
-  $("quick-form").addEventListener("submit", (event) => { event.preventDefault(); try { const action = quickAction(); $("quick-dialog").close(); $("quick-text").value = ""; queueAction(action); } catch (error) { showNotice(friendlyError(error)); } });
-  $("pending-apply").addEventListener("click", () => { if (state.pendingActions.length && !$("plan-dialog").open) preparePlan(state.pendingActions); });
-  $("pending-clear").addEventListener("click", () => clearPendingPlan());
+  $("quick-form").addEventListener("submit", (event) => { event.preventDefault(); try { const action = quickAction(); $("quick-dialog").close(); preparePlan([action]); } catch (error) { showNotice(friendlyError(error)); } });
   $("coding-add").addEventListener("click", openCoding); $("coding-cancel").addEventListener("click", () => $("coding-dialog").close()); $("coding-mode").addEventListener("change", updateCodingForm); $("coding-form").addEventListener("submit", previewCoding);
-  $("expense-add").addEventListener("click", openExpenseDialog); $("expense-cancel").addEventListener("click", () => $("expense-dialog").close()); $("expense-form").addEventListener("submit", (event) => submitExpense(event).catch((error) => showNotice(friendlyError(error))));
-  $("note-add").addEventListener("click", () => { $("note-form").reset(); $("note-dialog").showModal(); }); $("note-cancel").addEventListener("click", () => $("note-dialog").close()); $("note-form").addEventListener("submit", (event) => submitNote(event).catch((error) => showNotice(friendlyError(error))));
-  $("reminder-add").addEventListener("click", () => { $("reminder-form").reset(); $("reminder-dialog").showModal(); }); $("reminder-cancel").addEventListener("click", () => $("reminder-dialog").close()); $("reminder-form").addEventListener("submit", (event) => submitReminder(event).catch((error) => showNotice(friendlyError(error))));
-  $("project-select").addEventListener("change", (event) => loadProjectStatus(event.target.value).catch((error) => showNotice(friendlyError(error))));
-  $("project-copy").addEventListener("click", async () => {
-    await navigator.clipboard.writeText(projectStatusText());
-    haptic("notificationOccurred", "success");
-    showNotice("Статус скопирован");
-  });
-  $("global-search").addEventListener("input", (event) => scheduleGlobalSearch(event.target.value));
   $("edit-form").addEventListener("submit", saveEdit); $("dialog-cancel").addEventListener("click", () => $("edit-dialog").close());
   $("plan-form").addEventListener("submit", executePlan); $("plan-cancel").addEventListener("click", cancelPlan);
   $("task-search").addEventListener("input", (event) => { state.taskQuery = event.target.value; renderTasks(); });
@@ -1679,14 +1104,11 @@ function init() {
   $("note-search").addEventListener("input", (event) => scheduleNoteSearch(event.target.value));
   $("knowledge-add").addEventListener("click", openKnowledgeClip); $("clip-form").addEventListener("submit", previewKnowledgeClip); $("clip-execute").addEventListener("click", executeKnowledgeClip); $("clip-cancel").addEventListener("click", () => $("clip-dialog").close());
   $("architecture-open").addEventListener("click", openArchitecture); $("architecture-open-home").addEventListener("click", openArchitecture);
-  document.querySelectorAll("[data-architecture-scenario]").forEach((item) => item.addEventListener("click", () => showArchitectureScenario(item.dataset.architectureScenario)));
+  document.querySelectorAll("[data-architecture-scenario]").forEach((item) => item.addEventListener("click", () => { haptic("selection"); showArchitectureScenario(item.dataset.architectureScenario); }));
   $("architecture-dialog").addEventListener("close", () => window.clearTimeout(architecturePlaybackTimer));
   $("open-trello").addEventListener("click", () => openExternal(state.tasks.board_url || "https://trello.com/")); $("open-calendar").addEventListener("click", () => openExternal("https://calendar.google.com/"));
-  $("limits-refresh").addEventListener("click", () => loadLimits(true).catch((error) => showNotice(friendlyError(error))));
   window.addEventListener("hashchange", () => setView(window.location.hash.slice(1), {syncHistory: false}));
   if (VIEWS.has(window.location.hash.slice(1))) state.activeView = window.location.hash.slice(1);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden && state.snapshot) refresh({silent: true}).catch((error) => showNotice(friendlyError(error))); });
-  window.setInterval(() => { if (!document.hidden && state.snapshot) refresh({silent: true}).catch((error) => showNotice(friendlyError(error))); }, 60000);
   startTelegramSession();
 }
 init();

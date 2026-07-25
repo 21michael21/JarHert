@@ -5,6 +5,7 @@ import ipaddress
 import re
 import socket
 import sqlite3
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ FetchBytes = Callable[[str, dict[str, str], float], bytes]
 _MAX_PAGE_BYTES = 1_000_000
 _MAX_TEXT_CHARS = 200_000
 _MAX_SNAPSHOTS_PER_SOURCE = 20
+_RETRY_DELAYS = (0.05, 0.2)
 _SEARCH_TOKEN = re.compile(r"[\w-]{2,}", re.UNICODE)
 
 
@@ -274,6 +276,23 @@ def validate_archive_url(url: str) -> str:
 
 
 def _fetch_web_bytes(url: str, headers: dict[str, str], timeout: float) -> bytes:
+    for attempt in range(len(_RETRY_DELAYS) + 1):
+        try:
+            return _fetch_web_bytes_once(url, headers, timeout)
+        except urllib.error.HTTPError as error:
+            if 300 <= error.code < 400:
+                raise ValueError("Редирект не разрешён: укажи финальный HTTPS URL.") from error
+            if not _retryable_http_status(error.code) or attempt == len(_RETRY_DELAYS):
+                raise ValueError(f"Страница вернула HTTP {error.code}.") from error
+            time.sleep(_RETRY_DELAYS[attempt])
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            if attempt == len(_RETRY_DELAYS):
+                raise ValueError(f"Страница временно недоступна: {type(error).__name__}.") from error
+            time.sleep(_RETRY_DELAYS[attempt])
+    raise RuntimeError("unreachable")
+
+
+def _fetch_web_bytes_once(url: str, headers: dict[str, str], timeout: float) -> bytes:
     host = urlparse(url).hostname
     if not host:
         raise ValueError("URL не содержит host.")
@@ -282,18 +301,17 @@ def _fetch_web_bytes(url: str, headers: dict[str, str], timeout: float) -> bytes
         raise ValueError("URL ведёт во внутреннюю сеть.")
     request = urllib.request.Request(url, headers=headers)
     opener = urllib.request.build_opener(_NoRedirect())
-    try:
-        with opener.open(request, timeout=timeout) as response:
-            if not 200 <= int(response.status) < 300:
-                raise ValueError(f"Страница вернула HTTP {response.status}.")
-            content_type = str(response.headers.get("Content-Type") or "").casefold()
-            if not content_type.startswith(("text/html", "text/plain")):
-                raise ValueError("Архив поддерживает только HTML или текстовые страницы.")
-            return response.read(_MAX_PAGE_BYTES + 1)
-    except urllib.error.HTTPError as error:
-        if 300 <= error.code < 400:
-            raise ValueError("Редирект не разрешён: укажи финальный HTTPS URL.") from error
-        raise ValueError(f"Страница вернула HTTP {error.code}.") from error
+    with opener.open(request, timeout=timeout) as response:
+        if not 200 <= int(response.status) < 300:
+            raise ValueError(f"Страница вернула HTTP {response.status}.")
+        content_type = str(response.headers.get("Content-Type") or "").casefold()
+        if not content_type.startswith(("text/html", "text/plain")):
+            raise ValueError("Архив поддерживает только HTML или текстовые страницы.")
+        return response.read(_MAX_PAGE_BYTES + 1)
+
+
+def _retryable_http_status(status: int) -> bool:
+    return status == 429 or 500 <= status < 600
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):

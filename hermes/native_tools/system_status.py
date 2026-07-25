@@ -45,6 +45,7 @@ def collect_system_status(
         "provider": _model_config(profile / "config.yaml"),
         "github_mcp": github_mcp_status(profile_home=profile),
         "coding_queue": coding_queue,
+        "event_log": _event_log_status(database),
         "runtime": _runtime_health(gateway_active=active, coding_queue=coding_queue, zombies=zombies),
         "personal_summaries": _personal_summary_status(database),
         "automation": {
@@ -219,6 +220,37 @@ def _personal_summary_status(database: Path) -> dict[str, dict[str, str | None] 
     for summary_type, status, updated_at in rows:
         if summary_type in {"daily", "weekly"}:
             result[str(summary_type)] = {"status": str(status), "updated_at": str(updated_at)}
+    return result
+
+
+def _event_log_status(database: Path) -> dict[str, object]:
+    result: dict[str, object] = {"available": False, "recent": [], "pending": 0}
+    if not database.is_file():
+        return result
+    try:
+        with sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True) as connection:
+            pending = connection.execute("SELECT COUNT(*) FROM events WHERE status = 'pending'").fetchone()
+            rows = connection.execute(
+                """
+                SELECT event_type, source, status, created_at
+                FROM events
+                ORDER BY id DESC
+                LIMIT 8
+                """
+            ).fetchall()
+    except (OSError, sqlite3.Error):
+        return result
+    result["available"] = True
+    result["pending"] = int(pending[0]) if pending else 0
+    result["recent"] = [
+        {
+            "event_type": str(event_type),
+            "source": str(source),
+            "status": str(status),
+            "created_at": str(created_at),
+        }
+        for event_type, source, status, created_at in rows
+    ]
     return result
 
 

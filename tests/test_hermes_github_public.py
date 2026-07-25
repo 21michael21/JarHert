@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import urllib.error
 
 import pytest
 
+from hermes.native_tools import github_public
 from hermes.native_tools.github_public import GitHubPublicReader, parse_github_repository_url
 from hermes.native_tools.mcp_api import NativeToolsAPI
 
@@ -91,3 +93,54 @@ def test_profile_exposes_the_public_fallback_without_expanding_official_mcp_perm
     assert "--lockdown-mode" in config
     assert "mcp_jarhert_native_github_public_repository" in skill
     assert "cannot inspect private repositories" in skill
+
+
+def test_public_github_fetch_retries_transient_network_errors(monkeypatch) -> None:
+    calls = 0
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _limit: int) -> bytes:
+            return b'{"ok": true}'
+
+    def urlopen(_request, *, timeout):
+        nonlocal calls
+        calls += 1
+        assert timeout == 10
+        if calls < 3:
+            raise urllib.error.URLError("temporary")
+        return Response()
+
+    monkeypatch.setattr(github_public, "_RETRY_DELAYS", (0, 0))
+    monkeypatch.setattr(github_public.urllib.request, "urlopen", urlopen)
+
+    assert github_public._fetch_json("https://api.github.com/repos/acme/reader", {}, 10) == {"ok": True}
+    assert calls == 3
+
+
+def test_public_github_fetch_does_not_retry_readme_404(monkeypatch) -> None:
+    calls = 0
+
+    def urlopen(_request, *, timeout):
+        nonlocal calls
+        calls += 1
+        raise urllib.error.HTTPError(
+            "https://api.github.com/repos/acme/reader/readme",
+            404,
+            "Not Found",
+            hdrs=None,
+            fp=None,
+        )
+
+    monkeypatch.setattr(github_public, "_RETRY_DELAYS", (0, 0))
+    monkeypatch.setattr(github_public.urllib.request, "urlopen", urlopen)
+
+    assert github_public._fetch_json("https://api.github.com/repos/acme/reader/readme", {}, 10) is None
+    assert calls == 1

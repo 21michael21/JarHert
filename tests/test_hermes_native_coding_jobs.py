@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from hermes.native_tools.coding_jobs import NativeCodingJobStore, dispatch_completed_coding_jobs
+from hermes.native_tools.events import EventStore
 from hermes.native_tools.mcp_api import NativeToolsAPI
 
 
@@ -223,3 +224,29 @@ def test_failed_coding_step_cancels_followups_and_delivers_one_failure(tmp_path)
         "failed": 0,
     }
     assert sent == [f"Задача #{jobs[0].id} не выполнилась. Попробуй ещё раз."]
+
+
+def test_native_coding_queue_records_structured_lifecycle_events(tmp_path) -> None:
+    events = EventStore(tmp_path / "personal-os.sqlite3")
+    store = NativeCodingJobStore(tmp_path / "personal-os.sqlite3", event_store=events)
+    job = store.enqueue(
+        tg_user_id=566055009,
+        mode="research",
+        prompt="Проверь репу",
+        idempotency_key="telegram:events:coding",
+    )
+
+    claimed = store.claim_next(worker_id="mac")
+    assert claimed.id == job.id
+    store.complete(job.id, worker_id="mac", result_text="Готово")
+    delivery = store.claim_completed_for_delivery(worker_id="dispatcher")
+    assert delivery.id == job.id
+    store.mark_delivery_sent(job.id, worker_id="dispatcher")
+
+    assert [event.event_type for event in events.list_events()] == [
+        "coding_job.queued",
+        "coding_job.claimed",
+        "coding_job.succeeded",
+        "coding_job.delivery_claimed",
+        "coding_job.delivered",
+    ]

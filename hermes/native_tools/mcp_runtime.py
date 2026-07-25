@@ -279,6 +279,7 @@ async def tool_catalog_invoke(
         payload=payload,
         ctx=ctx,
         forbidden_names=frozenset({"tool_catalog_invoke", "tool_catalog_discover"}),
+        event_store=api._events(),
     )
 
 

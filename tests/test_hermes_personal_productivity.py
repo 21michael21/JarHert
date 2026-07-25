@@ -7,6 +7,7 @@ from pathlib import Path
 from hermes.native_tools.mcp_api import NativeToolsAPI
 from hermes.native_tools.contacts import ContactStore
 from hermes.native_tools.delivery import dispatch_due_messages, dispatch_due_reminders
+from hermes.native_tools.events import EventStore
 from hermes.native_tools.personal_productivity import PersonalProductivityStore
 from hermes.native_tools.personal_crm import PersonalCRMStore
 
@@ -200,6 +201,29 @@ def test_due_reminders_are_delivered_once_and_recurring_item_advances(tmp_path: 
     ]
 
 
+def test_due_reminders_record_delivery_events(tmp_path: Path) -> None:
+    database_path = tmp_path / "personal-os.sqlite3"
+    store = PersonalProductivityStore(database_path)
+    events = EventStore(database_path)
+    store.create_reminder(
+        text="читать",
+        remind_at="2030-01-05T09:00:00+00:00",
+        idempotency_key="delivery:event",
+    )
+
+    dispatch_due_reminders(
+        store,
+        lambda _chat_id, _text: "telegram:1",
+        chat_id=566055009,
+        now="2030-01-05T10:00:00+00:00",
+        event_store=events,
+    )
+
+    recorded = events.list_events()
+    assert [event.event_type for event in recorded] == ["telegram.reminder.sent"]
+    assert recorded[0].payload["chat_id"] == 566055009
+
+
 def test_hermes_profile_exposes_productivity_tools_and_natural_workflows() -> None:
     config = (ROOT / "hermes" / "config.yaml").read_text(encoding="utf-8")
     soul = (ROOT / "hermes" / "SOUL.md").read_text(encoding="utf-8")
@@ -301,6 +325,30 @@ def test_successful_scheduled_message_is_added_to_crm_timeline_once(tmp_path: Pa
 
     timeline = crm.list_interactions(contact="Илья")
     assert [(item.kind, item.summary) for item in timeline] == [("message", "Проверил OAuth")]
+
+
+def test_due_messages_record_delivery_events_without_raw_text(tmp_path: Path) -> None:
+    database_path = tmp_path / "personal-os.sqlite3"
+    contacts = ContactStore(database_path)
+    events = EventStore(database_path)
+    contacts.add_contact(name="Илья", telegram_chat_id=123, aliases=[])
+    plan = contacts.create_message_plan(
+        [{"contact": "Илья", "text": "Проверил OAuth", "send_at": "2030-01-05T09:00:00+00:00"}],
+        idempotency_key="telegram:message:event",
+    )
+    contacts.approve_message_plan(plan.id)
+
+    dispatch_due_messages(
+        contacts,
+        lambda _chat_id, _text: "telegram:42",
+        now="2030-01-05T10:00:00+00:00",
+        event_store=events,
+    )
+
+    recorded = events.list_events()
+    assert [event.event_type for event in recorded] == ["telegram.message.sent"]
+    assert recorded[0].payload["contact"] == "Илья"
+    assert "text" not in recorded[0].payload
 
 
 def test_existing_personal_os_database_gains_commitment_idempotency_column(tmp_path: Path) -> None:

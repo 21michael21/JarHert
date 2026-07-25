@@ -9,6 +9,7 @@ import pytest
 from hermes.native_tools import sandbox_worker
 from hermes.native_tools.sandbox_worker import (
     CodexWorkspaceWorker,
+    QwenWorkspaceWorker,
     SandboxTask,
     SandboxedHermesWorker,
     coding_worker_from_environment,
@@ -370,6 +371,172 @@ def test_coding_prompt_requires_terminal_evidence_from_a_writable_workspace() ->
     assert "/workspace и /workspace/task доступны для записи" in normalized
     assert "первым инструментом используй terminal" in normalized
     assert "не выдавай план или пример diff за выполненную работу" in normalized
+
+
+# ---------------------------------------------------------------------------
+# QwenWorkspaceWorker
+# ---------------------------------------------------------------------------
+
+
+def test_coding_runner_selects_qwen_worker(monkeypatch) -> None:
+    monkeypatch.setenv("HERMES_CODING_EXECUTOR", "qwen")
+    assert isinstance(coding_worker_from_environment(), QwenWorkspaceWorker)
+
+
+def test_coding_runner_rejects_unknown_executor(monkeypatch) -> None:
+    monkeypatch.setenv("HERMES_CODING_EXECUTOR", "gpt")
+    with pytest.raises(ValueError, match="codex, hermes или qwen"):
+        coding_worker_from_environment()
+
+
+def test_qwen_worker_prefers_a_user_local_install(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("HERMES_QWEN_BIN", raising=False)
+    local_binary = tmp_path / ".local" / "bin" / "qwen"
+    local_binary.parent.mkdir(parents=True)
+    local_binary.touch()
+    monkeypatch.setattr(sandbox_worker.Path, "home", lambda: tmp_path)
+
+    assert QwenWorkspaceWorker().qwen_binary == str(local_binary)
+
+
+def test_qwen_worker_honors_an_explicit_binary_path(monkeypatch) -> None:
+    monkeypatch.setenv("HERMES_QWEN_BIN", "/opt/qwen/bin/qwen")
+
+    assert QwenWorkspaceWorker().qwen_binary == "/opt/qwen/bin/qwen"
+
+
+def test_qwen_worker_runs_coding_task_in_ephemeral_workspace(tmp_path) -> None:
+    calls: list[tuple[list[str], Path]] = []
+
+    def execute(argv, *, cwd, **_kwargs):
+        calls.append((argv, Path(cwd)))
+        return subprocess.CompletedProcess(argv, 0, stdout="Готово: тесты прошли.", stderr="")
+
+    worker = QwenWorkspaceWorker(
+        qwen_binary="qwen",
+        execute=execute,
+        workspace_root=tmp_path,
+        allowed_research_hosts={"github.com"},
+    )
+    result = worker.run(
+        SandboxTask(
+            mode="coding",
+            prompt="Добавь тест",
+            repository_url="https://github.com/example/repository",
+        )
+    )
+
+    argv, workspace = calls[0]
+    assert result.output == "Готово: тесты прошли."
+    assert argv[0] == "qwen"
+    assert "-p" in argv
+    assert "-o" in argv
+    assert argv[argv.index("-o") + 1] == "text"
+    assert not workspace.exists()
+
+
+def test_qwen_worker_preflight_checks_version() -> None:
+    calls: list[list[str]] = []
+
+    def execute(argv, **_kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="0.21.0", stderr="")
+
+    worker = QwenWorkspaceWorker(qwen_binary="qwen", execute=execute)
+    worker.preflight()
+
+    assert calls[0] == ["qwen", "--version"]
+
+
+def test_qwen_worker_preflight_fails_when_binary_missing() -> None:
+    def execute(argv, **_kwargs):
+        raise OSError("not found")
+
+    worker = QwenWorkspaceWorker(qwen_binary="qwen", execute=execute)
+    with pytest.raises(RuntimeError, match="Qwen CLI недоступен"):
+        worker.preflight()
+
+
+def test_qwen_worker_forwards_api_key_env(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("BAILIAN_TOKEN_PLAN_API_KEY", "test-key-123")
+    captured_env: list[dict[str, str]] = []
+
+    def execute(argv, *, env, **_kwargs):
+        captured_env.append(env)
+        return subprocess.CompletedProcess(argv, 0, stdout="done", stderr="")
+
+    worker = QwenWorkspaceWorker(qwen_binary="qwen", execute=execute, workspace_root=tmp_path)
+    worker.run(
+        SandboxTask(
+            mode="coding",
+            prompt="Тест",
+            repository_url="https://github.com/example/repo",
+        )
+    )
+
+    assert captured_env[0]["BAILIAN_TOKEN_PLAN_API_KEY"] == "test-key-123"
+    assert "OPENAI_API_KEY" not in captured_env[0]
+
+
+def test_qwen_worker_rejects_empty_output(tmp_path) -> None:
+    def execute(argv, **_kwargs):
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    worker = QwenWorkspaceWorker(qwen_binary="qwen", execute=execute, workspace_root=tmp_path)
+    with pytest.raises(RuntimeError, match="без итогового отчёта"):
+        worker.run(
+            SandboxTask(
+                mode="coding",
+                prompt="Тест",
+                repository_url="https://github.com/example/repo",
+            )
+        )
+
+
+def test_qwen_coding_prompt_contains_workspace_instructions() -> None:
+    prompt = _qwen_prompt_for(
+        SandboxTask(
+            mode="coding",
+            prompt="Исправь баг",
+            repository_url="https://github.com/example/repo",
+        )
+    )
+
+    normalized = prompt.lower()
+    assert "клонируй" in normalized
+    assert "./repo" in normalized
+    assert "не читай файлы вне workspace" in normalized
+
+
+def test_qwen_research_prompt_uses_only_declared_sources() -> None:
+    prompt = _qwen_prompt_for(
+        SandboxTask(
+            mode="research",
+            prompt="Найди ограничения API",
+            source_urls=("https://docs.python.org/3/library/sqlite3.html",),
+        ),
+        allowed_hosts={"docs.python.org"},
+    )
+
+    assert "docs.python.org/3/library/sqlite3.html" in prompt
+    assert "не используй другие источники" in prompt.lower()
+
+
+def _qwen_prompt_for(task: SandboxTask, *, allowed_hosts: set[str] | None = None) -> str:
+    captured: list[list[str]] = []
+
+    def execute(argv, **_kwargs):
+        captured.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="done", stderr="")
+
+    worker = QwenWorkspaceWorker(
+        qwen_binary="qwen",
+        execute=execute,
+        workspace_root=Path("/tmp"),
+        allowed_research_hosts=allowed_hosts or {"github.com"},
+    )
+    worker.run(task)
+    return captured[0][captured[0].index("-p") + 1]
 
 
 def _prompt_for(task: SandboxTask) -> str:

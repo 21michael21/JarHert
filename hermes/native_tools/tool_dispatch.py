@@ -8,11 +8,16 @@ only after the model has discovered its exact contract.
 
 from __future__ import annotations
 
+import hashlib
 import inspect
+import json
+import uuid
 from collections.abc import Callable, Mapping
 from typing import Any, get_type_hints
 
 from pydantic import TypeAdapter, ValidationError
+
+from .events import EventStore
 
 
 def handler_parameter_contract(handler: Callable[..., object]) -> dict[str, object]:
@@ -44,6 +49,7 @@ async def invoke_catalog_handler(
     payload: Mapping[str, Any] | None,
     ctx: object,
     forbidden_names: frozenset[str] = frozenset(),
+    event_store: EventStore | None = None,
 ) -> object:
     """Call one registered handler while rejecting unknown and missing fields."""
     normalized_name = str(name or "").strip()
@@ -85,7 +91,51 @@ async def invoke_catalog_handler(
 
     if "ctx" in signature.parameters:
         values["ctx"] = ctx
-    result = handler(**values)
-    if inspect.isawaitable(result):
-        return await result
+    public_values = {key: value for key, value in values.items() if key != "ctx"}
+    invocation_id = uuid.uuid4().hex
+    payload_summary = _payload_summary(public_values)
+    _record_event(
+        event_store,
+        "tool.invoke_started",
+        {"invocation_id": invocation_id, "tool": name, **payload_summary},
+    )
+    try:
+        result = handler(**values)
+        if inspect.isawaitable(result):
+            result = await result
+    except Exception as error:
+        _record_event(
+            event_store,
+            "tool.invoke_failed",
+            {
+                "invocation_id": invocation_id,
+                "tool": name,
+                **payload_summary,
+                "error": str(error)[:500] or error.__class__.__name__,
+            },
+        )
+        raise
+    _record_event(
+        event_store,
+        "tool.invoke_succeeded",
+        {"invocation_id": invocation_id, "tool": name, **payload_summary},
+    )
     return result
+
+
+def _payload_summary(values: Mapping[str, Any]) -> dict[str, object]:
+    return {
+        "payload_keys": sorted(str(key) for key in values),
+        "payload_hash": hashlib.sha256(
+            json.dumps(values, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest(),
+    }
+
+
+def _record_event(event_store: EventStore | None, event_type: str, payload: dict[str, object]) -> None:
+    if event_store is None:
+        return
+    try:
+        event_store.record(event_type, "tool_dispatch", payload)
+    except Exception:
+        return

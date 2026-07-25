@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+
+from hermes.native_tools.action_plans import ActionPlanStore, execute_plan
 from hermes.native_tools.events import EventStore
+from hermes.native_tools.tool_dispatch import invoke_catalog_handler
 
 
 def make_store(tmp_path) -> EventStore:
@@ -104,3 +108,70 @@ def test_unknown_action_type_is_rejected(tmp_path) -> None:
         assert "allowlist" in str(error)
     else:
         raise AssertionError("unsafe event action was accepted")
+
+
+def test_structured_record_is_idempotent_and_sanitizes_payload(tmp_path) -> None:
+    store = make_store(tmp_path)
+
+    first = store.record(
+        "tool.invoke_started",
+        "tool_dispatch",
+        {"token": "secret-value", "prompt": "x" * 700},
+        fingerprint="tool:1",
+    )
+    replay = store.record(
+        "tool.invoke_started",
+        "tool_dispatch",
+        {"token": "changed", "prompt": "new"},
+        fingerprint="tool:1",
+    )
+
+    assert replay == first
+    events = store.list_events()
+    assert len(events) == 1
+    assert events[0].status == "recorded"
+    assert events[0].payload["token"] == "<redacted>"
+    assert len(events[0].payload["prompt"]) <= 500
+
+
+def test_tool_dispatch_records_started_and_succeeded_events(tmp_path) -> None:
+    store = make_store(tmp_path)
+
+    def echo(value: str) -> dict[str, str]:
+        return {"value": value}
+
+    result = asyncio.run(
+        invoke_catalog_handler({"echo": echo}, name="echo", payload={"value": "ok"}, ctx=object(), event_store=store)
+    )
+
+    assert result == {"value": "ok"}
+    events = store.list_events()
+    assert [event.event_type for event in events] == ["tool.invoke_started", "tool.invoke_succeeded"]
+    assert events[0].payload["tool"] == "echo"
+    assert events[0].payload["payload_keys"] == ["value"]
+    assert "payload_hash" in events[0].payload
+
+
+def test_action_plan_lifecycle_records_structured_events(tmp_path) -> None:
+    events = make_store(tmp_path)
+    plans = ActionPlanStore(tmp_path / "personal-os.sqlite3", event_store=events)
+
+    class Adapter:
+        def create_task(self, **_payload):
+            return "created task\ntrello_card_id=abc123"
+
+    plan = plans.create(
+        [{"type": "task.create", "payload": {"title": "Проверить лог"}}],
+        idempotency_key="plan:events",
+    )
+    approved = plans.approve(plan.id)
+    execute_plan(plans, approved.id, Adapter())
+
+    event_types = [event.event_type for event in events.list_events()]
+    assert event_types == [
+        "action_plan.create",
+        "action_plan.approve",
+        "action_plan.action_started",
+        "action_plan.action_succeeded",
+        "action_plan.finished",
+    ]

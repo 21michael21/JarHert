@@ -4,6 +4,8 @@ import json
 import ipaddress
 import re
 import sqlite3
+import time
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -20,6 +22,7 @@ from .events import EventStore
 
 ALLOWED_MONITOR_SOURCES = frozenset({"github_releases", "rss", "json_api", "allowed_url"})
 _GITHUB_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
+_RETRY_DELAYS = (0.05, 0.2)
 FetchBytes = Callable[[str, dict[str, str], float], bytes]
 
 
@@ -361,8 +364,19 @@ class MonitorRunner:
 
 def _fetch_bytes(url: str, headers: dict[str, str], timeout: float) -> bytes:
     request = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read(1_000_001)
+    for attempt in range(len(_RETRY_DELAYS) + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.read(1_000_001)
+        except urllib.error.HTTPError as error:
+            if not _retryable_http_status(error.code) or attempt == len(_RETRY_DELAYS):
+                raise
+            time.sleep(_RETRY_DELAYS[attempt])
+        except (urllib.error.URLError, TimeoutError, OSError):
+            if attempt == len(_RETRY_DELAYS):
+                raise
+            time.sleep(_RETRY_DELAYS[attempt])
+    raise RuntimeError("unreachable")
 
 
 def _small_fetch(fetcher: FetchBytes, url: str, *, accept: str) -> bytes:
@@ -370,6 +384,10 @@ def _small_fetch(fetcher: FetchBytes, url: str, *, accept: str) -> bytes:
     if len(raw) > 512_000:
         raise ValueError("Monitor payload превышает лимит 500 KB.")
     return raw
+
+
+def _retryable_http_status(status: int) -> bool:
+    return status == 429 or 500 <= status < 600
 
 
 def _allowed_url(config: dict[str, Any]) -> str:

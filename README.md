@@ -35,7 +35,8 @@ Mac coding runner -- SSH --> private native coding queue on the profile
 ```
 
 The tools never receive raw `.env` files, SSH keys, a Docker socket or general
-host-shell access. Coding work runs in a disposable Codex workspace by default;
+host-shell access. Coding work runs in a disposable Codex workspace by default
+(or a Qwen CLI workspace with `HERMES_CODING_EXECUTOR=qwen`);
 the older Hermes Docker sandbox is an explicit local fallback. Deployment always
 remains a separate approval.
 
@@ -212,9 +213,11 @@ unauthenticated public admin panel.
 ## Coding and research runner
 
 The VPS stores job metadata in Personal OS SQLite. A Mac claims work through
-SSH, runs it in a disposable local Codex workspace and posts the result back to
+SSH, runs it in a disposable local Codex workspace (or Qwen CLI workspace with
+`--executor qwen`) and posts the result back to
 the same queue. No HTTP port or service token is involved. Codex uses the
-ChatGPT login already present on the Mac; its normal API key is not required.
+ChatGPT login already present on the Mac; Qwen CLI reads its model and API key
+from `~/.qwen/settings.json`.
 
 ```bash
 .venv/bin/python scripts/setup_coding_profile.py
@@ -262,8 +265,9 @@ When the owner asks to read or summarize that export, Hermes can read a bounded
 sample from the temporary file and answer from its contents. When the owner asks
 for a deep analysis, Hermes shows one preview and queues the sample for the
 isolated Mac research runner. The raw sample is cleared from the queue when that
-job finishes. The runner may be configured to use Codex CLI, but that local CLI
-must be installed and healthy before it can execute queued work.
+job finishes. The runner may be configured to use Codex CLI or Qwen CLI, but
+the selected local CLI must be installed and healthy before it can execute
+queued work.
 
 Install the cleanup timer on the VPS:
 

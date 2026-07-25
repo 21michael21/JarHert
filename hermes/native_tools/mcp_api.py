@@ -1,10 +1,3 @@
-"""NativeToolsAPI facade: construction, store registry, and core methods.
-
-Domain methods live in focused mixins (api_plans, api_telegram, api_coding,
-api_personal, api_productivity, api_integrations). The public contract is
-unchanged; this module keeps one place for wiring and lazy stores.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -13,17 +6,10 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from .action_plans import ActionPlanStore
-from .api_coding import CodingJobsMixin
-from .api_integrations import IntegrationsMixin
-from .api_payload import value_payload
-from .api_personal import PersonalMixin
-from .api_plans import ActionPlansMixin, NativeActionAdapter
-from .api_productivity import ProductivityMixin
-from .api_telegram import TelegramExportMixin
 from .capabilities import CapabilityPolicyStore
 from .coding_jobs import NativeCodingJobStore
 from .contacts import ContactStore
-from .expenses import ExpenseStore
+from .events import EventStore
 from .github_public import FetchJson as GitHubPublicFetchJson
 from .github_public import GitHubPublicReader
 from .knowledge_archive import FetchBytes as KnowledgeFetchBytes
@@ -45,7 +31,7 @@ from .telegram_text_export import (
     run_telegram_export,
     run_telegram_file_download,
 )
-from .tool_catalog import ToolBundle, discover_tool_specs, tool_catalog_entry, tool_is_active
+from .tool_catalog import ToolBundle, discover_tool_specs, tool_catalog_entry
 from .trips import TripStore
 from .voice_inbox import VoiceVocabularyStore
 
@@ -67,14 +53,27 @@ def personal_os_database_path() -> Path:
     return home / "data" / "personal-os.sqlite3"
 
 
-class NativeToolsAPI(
-    ActionPlansMixin,
-    TelegramExportMixin,
-    CodingJobsMixin,
-    PersonalMixin,
-    ProductivityMixin,
-    IntegrationsMixin,
-):
+def _value_payload(value: Any) -> Any:
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if isinstance(value, tuple):
+        return [_value_payload(item) for item in value]
+    if isinstance(value, list):
+        return [_value_payload(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _value_payload(item) for key, item in value.items()}
+    if hasattr(value, "__dataclass_fields__"):
+        return {name: _value_payload(getattr(value, name)) for name in value.__dataclass_fields__}
+    return value
+
+
+from .mcp_api_plans import PlansMixin
+from .mcp_api_personal import PersonalMixin
+from .mcp_api_research import ResearchMixin
+from .mcp_api_coding import CodingMixin
+
+
+class NativeToolsAPI(PlansMixin, PersonalMixin, ResearchMixin, CodingMixin):
     def __init__(
         self,
         *,
@@ -129,8 +128,6 @@ class NativeToolsAPI(
         mode = self._capabilities().get_mode().name
         items = []
         for spec in discover_tool_specs(query, bundle=selected_bundle, limit=limit):
-            if not tool_is_active(spec, os.getenv("HERMES_TOOL_BUNDLES")):
-                continue
             decisions = [self._capabilities().decide(capability) for capability in spec.capabilities]
             if any(decision.decision == "deny" for decision in decisions):
                 continue
@@ -153,18 +150,11 @@ class NativeToolsAPI(
         self._capabilities().require("calendar.list")
         return self._task_calendar().dashboard_calendar(days=days)
 
-    def work_mode_get(self) -> dict[str, Any]:
-        return value_payload(self._capabilities().get_mode())
-
-    def work_mode_set(self, *, mode: str) -> dict[str, Any]:
-        self._capabilities().require("planner.control")
-        return value_payload(self._capabilities().set_mode(mode))
-
     def capability_decision(self, *, capability: str) -> dict[str, Any]:
-        return value_payload(self._capabilities().decide(capability))
+        return _value_payload(self._capabilities().decide(capability))
 
     def _plans(self) -> ActionPlanStore:
-        return self._store("plans", lambda: ActionPlanStore(self.database_path))
+        return self._store("plans", lambda: ActionPlanStore(self.database_path, event_store=self._events()))
 
     def _contacts(self) -> ContactStore:
         return self._store("contacts", lambda: ContactStore(self.database_path))
@@ -202,40 +192,25 @@ class NativeToolsAPI(
     def _shopping(self) -> ShoppingStore:
         return self._store("shopping", lambda: ShoppingStore(self.database_path))
 
-    def _expenses(self) -> ExpenseStore:
-        return self._store("expenses", lambda: ExpenseStore(self.database_path))
-
     def _trips(self) -> TripStore:
         return self._store("trips", lambda: TripStore(self.database_path))
 
     def _coding_jobs(self) -> NativeCodingJobStore:
-        return self._store("coding_jobs", lambda: NativeCodingJobStore(self.database_path))
+        return self._store("coding_jobs", lambda: NativeCodingJobStore(self.database_path, event_store=self._events()))
 
     def _voice_vocabulary(self) -> VoiceVocabularyStore:
         return self._store("voice_vocabulary", lambda: VoiceVocabularyStore(self.database_path))
 
-    def _coding_owner_id(self) -> int:
-        tg_user_id = int(os.getenv("HERMES_OWNER_TELEGRAM_CHAT_ID", "0") or 0)
-        if tg_user_id <= 0:
-            raise RuntimeError("HERMES_OWNER_TELEGRAM_CHAT_ID is required")
-        return tg_user_id
-
-    def _sync_subscriptions(self) -> None:
-        if self.subscription_sync is None:
-            return
-        try:
-            rows = [value_payload(item) for item in self._subscriptions().list()]
-            self.subscription_sync(rows)
-        except Exception:
-            logger.exception("Optional subscription sync failed")
-
     def _capabilities(self) -> CapabilityPolicyStore:
         return self._store("capabilities", lambda: CapabilityPolicyStore(self.database_path))
 
-    def _action_adapter(self) -> "NativeActionAdapter":
+    def _events(self) -> EventStore:
+        return self._store("events", lambda: EventStore(self.database_path))
+
+    def _action_adapter(self) -> "_NativeActionAdapter":
         return self._store(
             "action_adapter",
-            lambda: NativeActionAdapter(
+            lambda: _NativeActionAdapter(
                 self._task_calendar,
                 self._personal_os(),
                 self._productivity(),
@@ -251,3 +226,69 @@ class NativeToolsAPI(
         if self._task_calendar_adapter is None:
             self._task_calendar_adapter = self.adapter_factory()
         return self._task_calendar_adapter
+
+
+class _NativeActionAdapter:
+    def __init__(
+        self,
+        task_calendar_factory: AdapterFactory,
+        personal_os: PersonalOSStore,
+        productivity: PersonalProductivityStore,
+    ) -> None:
+        self.task_calendar_factory = task_calendar_factory
+        self._task_calendar: Any | None = None
+        self.personal_os = personal_os
+        self.productivity = productivity
+
+    def __getattr__(self, name: str) -> Any:
+        if self._task_calendar is None:
+            self._task_calendar = self.task_calendar_factory()
+        return getattr(self._task_calendar, name)
+
+    def execute_batch(self, actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if self._task_calendar is None:
+            self._task_calendar = self.task_calendar_factory()
+        handler = getattr(self._task_calendar, "execute_batch", None)
+        if callable(handler):
+            return handler(actions)
+        handlers = {
+            "task.create": "create_task",
+            "task.move": "move_task",
+            "task.priority": "set_task_priority",
+            "task.done": "complete_task",
+            "task.delete": "delete_task",
+            "calendar.create": "create_calendar_event",
+            "calendar.move": "move_calendar_event",
+            "calendar.delete": "delete_calendar_event",
+        }
+        results: list[dict[str, Any]] = []
+        for action in actions:
+            try:
+                result = getattr(self._task_calendar, handlers[str(action.get("type") or "")])(
+                    **action.get("payload", {})
+                )
+            except Exception as error:
+                results.append({"ok": False, "error": str(error) or type(error).__name__})
+            else:
+                results.append({"ok": True, "result": str(result)})
+        return results
+
+    def save_note(self, **payload: Any) -> str:
+        note = self.personal_os.upsert_memory_block(block_type="note", **payload)
+        return f"saved note\nnote_id={note.id}"
+
+    def create_commitment(self, **payload: Any) -> str:
+        commitment = self.personal_os.create_commitment(**payload)
+        if commitment.due_at:
+            self.productivity.create_reminder(
+                text=f"Срок обещания: {commitment.subject} — {commitment.content}",
+                remind_at=commitment.due_at,
+                idempotency_key=f"commitment:{commitment.id}:due",
+                source_type="commitment",
+                source_id=commitment.id,
+            )
+        return f"created commitment\ncommitment_id={commitment.id}"
+
+    def create_reminder(self, **payload: Any) -> str:
+        reminder = self.productivity.create_reminder(**payload)
+        return f"created reminder\nreminder_id={reminder.id}"

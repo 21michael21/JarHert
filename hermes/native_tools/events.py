@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,11 @@ from .database import open_personal_os_database
 
 
 ALLOWED_EVENT_ACTIONS = frozenset({"evaluate", "notify"})
+_MAX_PAYLOAD_KEYS = 32
+_MAX_LIST_ITEMS = 20
+_MAX_TEXT_CHARS = 500
+_MAX_DEPTH = 4
+_SENSITIVE_KEY_PARTS = ("token", "secret", "password", "api_key", "apikey", "authorization")
 
 
 @dataclass(frozen=True)
@@ -49,6 +55,39 @@ class EventStore:
         self.database_path = Path(database_path).expanduser()
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
+
+    def record(
+        self,
+        event_type: str,
+        source: str,
+        payload: dict[str, Any],
+        *,
+        status: str = "recorded",
+        fingerprint: str | None = None,
+    ) -> int:
+        """Append a structured operational event without entering the dispatch queue."""
+        clean_type = _required(event_type, "Event type")
+        clean_source = _required(source, "Event source")
+        clean_status = _required(status, "Event status")
+        if not isinstance(payload, dict):
+            raise ValueError("Event payload должен быть JSON-объектом.")
+        safe_payload = _sanitize_payload(payload)
+        key = fingerprint.strip() if isinstance(fingerprint, str) and fingerprint.strip() else _unique_fingerprint()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                INSERT INTO events(event_type, source, payload_json, fingerprint, status)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(fingerprint) DO NOTHING
+                RETURNING id
+                """,
+                (clean_type, clean_source, _canonical_json(safe_payload), key[:300], clean_status[:80]),
+            ).fetchone()
+            if row is None:
+                row = connection.execute("SELECT id FROM events WHERE fingerprint = ?", (key[:300],)).fetchone()
+            connection.commit()
+        return int(row["id"] if isinstance(row, sqlite3.Row) else row[0])
 
     def check_monitor(self, *, name: str, source_type: str, payload: dict[str, Any]) -> MonitorCheck:
         monitor_name = _required(name, "Monitor name")
@@ -326,3 +365,42 @@ def _required(value: str, label: str) -> str:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _unique_fingerprint() -> str:
+    return f"record:{uuid.uuid4().hex}"
+
+
+def _sanitize_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return _sanitize_value(payload, depth=0)
+
+
+def _sanitize_value(value: Any, *, depth: int) -> Any:
+    if depth > _MAX_DEPTH:
+        return "<truncated>"
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= _MAX_PAYLOAD_KEYS:
+                result["<truncated_keys>"] = True
+                break
+            clean_key = str(key)[:120]
+            if any(part in clean_key.casefold() for part in _SENSITIVE_KEY_PARTS):
+                result[clean_key] = "<redacted>"
+            else:
+                result[clean_key] = _sanitize_value(item, depth=depth + 1)
+        return result
+    if isinstance(value, (list, tuple)):
+        result = [_sanitize_value(item, depth=depth + 1) for item in list(value)[:_MAX_LIST_ITEMS]]
+        if len(value) > _MAX_LIST_ITEMS:
+            result.append("<truncated_items>")
+        return result
+    if isinstance(value, str):
+        return _bounded(value, _MAX_TEXT_CHARS)
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+    return _bounded(str(value), _MAX_TEXT_CHARS)
+
+
+def _bounded(value: str, limit: int) -> str:
+    return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"

@@ -9,8 +9,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from .validation import bounded
-
 
 class TaskCalendarError(RuntimeError):
     pass
@@ -229,14 +227,14 @@ class TaskCalendarAdapter:
         output = (result.stdout or "").strip()
         if result.returncode != 0:
             detail = (result.stderr or output or f"exit={result.returncode}").strip()
-            raise TaskCalendarError(bounded(detail, 500))
-        return bounded(output or "Готово.", max_output_chars)
+            raise TaskCalendarError(_bounded(detail, 500))
+        return _bounded(output or "Готово.", max_output_chars)
 
     def _probe(self, argv: list[str]) -> tuple[bool, str]:
         try:
             return True, self._run(argv)
         except TaskCalendarError as error:
-            return False, bounded(str(error), 300)
+            return False, _bounded(str(error), 300)
 
 
 def _required(value: str, label: str) -> str:
@@ -261,262 +259,22 @@ def _normalize_calendar_datetime(value: str) -> str:
     return parsed.strftime("%Y-%m-%d %H:%M")
 
 
-_CALENDAR_HEALTH_SCRIPT = """
-from pathlib import Path
-from src.config import load_config
-from src.google_calendar_client import GoogleCalendarClient
-config = load_config(Path('.'))
-calendar = GoogleCalendarClient(config, Path('.'))
-calendar.validate_setup()
-print(f'calendar_ok events_today={len(calendar.list_today_events())}')
-""".strip()
+def _bounded(value: str, limit: int) -> str:
+    return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"
 
 
-_CALENDAR_LIST_SCRIPT = """
-import json, sys
-from datetime import date, datetime, time, timedelta
-from pathlib import Path
-from zoneinfo import ZoneInfo
-from src.config import load_config
-from src.formatter import format_event
-from src.google_calendar_client import GoogleCalendarClient, _event_start
-payload = json.loads(sys.argv[1])
-config = load_config(Path('.'))
-calendar = GoogleCalendarClient(config, Path('.'))
-when = str(payload.get('when') or 'today').strip().lower()
-tz = ZoneInfo(config.timezone)
-day = date.today() + (timedelta(days=1) if when in {'tomorrow', 'завтра'} else timedelta())
-start = datetime.combine(day, time.min, tz)
-end = start + timedelta(days=1)
-if config.mock:
-    events = [event for event in calendar._load_store()['events'] if _event_start(event) and start <= _event_start(event) < end]
-else:
-    events = list(calendar.authenticate().events().list(calendarId=config.google_calendar_id, timeMin=start.isoformat(), timeMax=end.isoformat(), singleEvents=True, orderBy='startTime').execute().get('items', []))
-print('No events found.' if not events else '\\n'.join(format_event(event) for event in events))
-""".strip()
+_SCRIPTS_DIR = Path(__file__).resolve().parent / "tcc_scripts"
 
 
-_CALENDAR_MOVE_SCRIPT = """
-import json, sys
-from pathlib import Path
-from src.config import load_config
-from src.date_parser import parse_datetime
-from src.formatter import format_event
-from src.google_calendar_client import GoogleCalendarClient
-from src.models import CalendarEventInput
-payload = json.loads(sys.argv[1]); config = load_config(Path('.')); calendar = GoogleCalendarClient(config, Path('.'))
-event = calendar.find_event_by_title(payload['title'])
-body = calendar.build_event_body(CalendarEventInput(title=str(event.get('summary') or payload['title']), start=parse_datetime(payload['start'], config.timezone), end=parse_datetime(payload['end'], config.timezone), reminder_minutes=None, description=str(event.get('description') or '')))
-event_id = str(event['id'])
-if config.mock:
-    store = calendar._load_store(); moved = next((item for item in store['events'] if str(item.get('id')) == event_id), None)
-    if moved is None: raise SystemExit('Calendar event not found.')
-    moved.update(body); moved['id'] = event_id; moved['htmlLink'] = event.get('htmlLink'); calendar._save_store(store)
-else:
-    moved = calendar.authenticate().events().update(calendarId=config.google_calendar_id, eventId=event_id, body=body).execute()
-print(format_event(moved)); print(f"calendar_event_id={moved.get('id')}")
-if moved.get('htmlLink'): print(moved.get('htmlLink'))
-""".strip()
+def _load_script(name: str) -> str:
+    return (_SCRIPTS_DIR / f"{name}.py").read_text(encoding="utf-8").strip()
 
 
-_CALENDAR_DELETE_SCRIPT = """
-import json, sys
-from pathlib import Path
-from src.config import load_config
-from src.formatter import format_event
-from src.google_calendar_client import GoogleCalendarClient
-payload = json.loads(sys.argv[1]); config = load_config(Path('.')); calendar = GoogleCalendarClient(config, Path('.'))
-event = calendar.delete_event_by_title(payload['title'])
-print(format_event(event)); print(f"calendar_event_id={event.get('id')}")
-if event.get('htmlLink'): print(event.get('htmlLink'))
-""".strip()
-
-
-_TASK_DASHBOARD_SCRIPT = """
-import json
-from pathlib import Path
-from src.config import load_config
-from src.trello_client import TrelloClient
-
-config = load_config(Path('.'))
-trello = TrelloClient(config, Path('.'))
-cards = trello.list_cards()
-items = []
-for card in cards[:150]:
-    labels = [str(item.get('name')) for item in card.get('labels', []) if isinstance(item, dict) and item.get('name')]
-    priority = next((name for name in labels if name in config.priorities), None)
-    items.append({
-        'id': str(card.get('id') or ''),
-        'title': str(card.get('name') or ''),
-        'list_name': str(card.get('listName') or ''),
-        'priority': priority,
-        'labels': labels,
-        'due': card.get('due'),
-        'url': card.get('shortUrl') or card.get('url'),
-    })
-board = trello.get_board()
-print(json.dumps({'items': items, 'lists': [str(item.get('name')) for item in trello.get_lists()], 'priorities': list(config.priorities), 'board_url': board.get('url')}, ensure_ascii=False))
-""".strip()
-
-
-_CALENDAR_DASHBOARD_SCRIPT = """
-import json, sys
-from datetime import datetime, timedelta
-from pathlib import Path
-from zoneinfo import ZoneInfo
-from src.config import load_config
-from src.google_calendar_client import GoogleCalendarClient, _event_start
-
-payload = json.loads(sys.argv[1])
-config = load_config(Path('.'))
-calendar = GoogleCalendarClient(config, Path('.'))
-days = max(1, min(int(payload.get('days') or 7), 31))
-tz = ZoneInfo(config.timezone)
-start = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
-end = start + timedelta(days=days)
-if config.mock:
-    events = [event for event in calendar._load_store()['events'] if _event_start(event) and start <= _event_start(event) < end]
-else:
-    events = list(calendar.authenticate().events().list(calendarId=config.google_calendar_id, timeMin=start.isoformat(), timeMax=end.isoformat(), singleEvents=True, orderBy='startTime').execute().get('items', []))
-items = []
-for event in events[:150]:
-    start_value = event.get('start', {}).get('dateTime') or event.get('start', {}).get('date')
-    end_value = event.get('end', {}).get('dateTime') or event.get('end', {}).get('date')
-    items.append({'id': str(event.get('id') or ''), 'title': str(event.get('summary') or ''), 'start': start_value, 'end': end_value, 'url': event.get('htmlLink')})
-print(json.dumps({'items': items, 'days': days}, ensure_ascii=False))
-""".strip()
-
-
-_TASK_PRIORITY_SCRIPT = """
-import json, sys
-from pathlib import Path
-from src.config import load_config
-from src.formatter import format_card
-from src.trello_client import TrelloClient
-
-payload = json.loads(sys.argv[1])
-config = load_config(Path('.'))
-priority = str(payload['priority'])
-if priority not in config.priorities:
-    raise SystemExit('Unknown priority.')
-trello = TrelloClient(config, Path('.'))
-card = trello.find_card_by_name(payload['title'])
-priority_names = set(config.priorities)
-existing_labels = card.get('labels') or []
-remaining = [item for item in existing_labels if not (isinstance(item, dict) and str(item.get('name')) in priority_names)]
-new_label = next(item for item in trello.get_labels() if str(item.get('name')) == priority)
-labels = [*remaining, new_label]
-if config.mock:
-    updated = trello.update_card(card, labels=labels)
-else:
-    updated = trello.update_card(card, idLabels=','.join(str(item['id']) for item in labels))
-print(format_card(updated))
-print('trello_card_id=' + str(updated.get('id') or card.get('id')))
-if updated.get('shortUrl') or updated.get('url'):
-    print(str(updated.get('shortUrl') or updated.get('url')))
-""".strip()
-
-
-_BATCH_SCRIPT = """
-import json, sys
-from pathlib import Path
-from src.config import load_config
-from src.date_parser import parse_date, parse_datetime
-from src.google_calendar_client import GoogleCalendarClient
-from src.models import CalendarEventInput, TaskCardInput
-from src.trello_client import TrelloClient
-
-payload = json.loads(sys.argv[1])
-config = load_config(Path('.'))
-trello = None
-calendar = None
-
-def get_trello():
-    global trello
-    if trello is None:
-        trello = TrelloClient(config, Path('.'))
-    return trello
-
-def get_calendar():
-    global calendar
-    if calendar is None:
-        calendar = GoogleCalendarClient(config, Path('.'))
-        if not config.mock:
-            service = calendar.authenticate()
-            calendar.authenticate = lambda: service
-    return calendar
-
-def task_result(card):
-    parts = [f"trello_card_id={card.get('id')}"]
-    if card.get('shortUrl') or card.get('url'):
-        parts.append(str(card.get('shortUrl') or card.get('url')))
-    return "\\n".join(parts)
-
-def calendar_result(event):
-    parts = [f"calendar_event_id={event.get('id')}"]
-    if event.get('htmlLink'):
-        parts.append(str(event.get('htmlLink')))
-    return "\\n".join(parts)
-
-results = []
-for action in payload['actions']:
-    kind = action['type']; data = action['payload']
-    try:
-        if kind == 'task.create':
-            card = get_trello().create_card(TaskCardInput(
-                title=data['title'], project=data.get('project'), priority=data.get('priority'),
-                list_name=data.get('list_name') or 'Inbox', due=parse_date(data.get('due')),
-                description=data.get('description') or '', criteria=[],
-            ))
-            result = task_result(card)
-        elif kind == 'task.move':
-            client = get_trello(); result = task_result(client.move_card(client.find_card_by_name(data['title']), data['target_list']))
-        elif kind == 'task.priority':
-            client = get_trello(); card = client.find_card_by_name(data['title'])
-            priority = str(data['priority'])
-            if priority not in config.priorities: raise ValueError('Unknown priority.')
-            priority_names = set(config.priorities)
-            remaining = [item for item in (card.get('labels') or []) if not (isinstance(item, dict) and str(item.get('name')) in priority_names)]
-            new_label = next(item for item in client.get_labels() if str(item.get('name')) == priority)
-            labels = [*remaining, new_label]
-            if config.mock:
-                updated = client.update_card(card, labels=labels)
-            else:
-                updated = client.update_card(card, idLabels=','.join(str(item['id']) for item in labels))
-            result = task_result(updated)
-        elif kind == 'task.done':
-            client = get_trello(); card = client.find_card_by_name(data['title'])
-            client.add_comment(card, f"Done summary: {data.get('summary') or 'Готово.'}")
-            result = task_result(client.move_card(card, 'Done'))
-        elif kind == 'task.delete':
-            client = get_trello(); card = client.find_card_by_name(data['title']); client.delete_card(card)
-            result = task_result(card)
-        elif kind == 'calendar.create':
-            event = get_calendar().create_event(CalendarEventInput(
-                title=data['title'], start=parse_datetime(data['start'], config.timezone),
-                end=parse_datetime(data['end'], config.timezone), reminder_minutes=data.get('reminder_minutes'),
-                description=data.get('description') or '',
-            ))
-            result = calendar_result(event)
-        elif kind == 'calendar.move':
-            client = get_calendar(); event = client.find_event_by_title(data['title']); event_id = str(event['id'])
-            body = client.build_event_body(CalendarEventInput(
-                title=str(event.get('summary') or data['title']), start=parse_datetime(data['start'], config.timezone),
-                end=parse_datetime(data['end'], config.timezone), reminder_minutes=None,
-                description=str(event.get('description') or ''),
-            ))
-            if config.mock:
-                store = client._load_store(); moved = next(item for item in store['events'] if str(item.get('id')) == event_id)
-                moved.update(body); moved['id'] = event_id; moved['htmlLink'] = event.get('htmlLink'); client._save_store(store)
-            else:
-                moved = client.authenticate().events().update(calendarId=config.google_calendar_id, eventId=event_id, body=body).execute()
-            result = calendar_result(moved)
-        elif kind == 'calendar.delete':
-            result = calendar_result(get_calendar().delete_event_by_title(data['title']))
-        else:
-            raise ValueError(f"Unsupported action: {kind}")
-        results.append({'ok': True, 'result': result})
-    except Exception as error:
-        results.append({'ok': False, 'error': str(error)[:500] or type(error).__name__})
-print(json.dumps(results, ensure_ascii=False, separators=(',', ':')))
-""".strip()
+_CALENDAR_HEALTH_SCRIPT = _load_script("calendar_health")
+_CALENDAR_LIST_SCRIPT = _load_script("calendar_list")
+_CALENDAR_MOVE_SCRIPT = _load_script("calendar_move")
+_CALENDAR_DELETE_SCRIPT = _load_script("calendar_delete")
+_TASK_DASHBOARD_SCRIPT = _load_script("task_dashboard")
+_CALENDAR_DASHBOARD_SCRIPT = _load_script("calendar_dashboard")
+_TASK_PRIORITY_SCRIPT = _load_script("task_priority")
+_BATCH_SCRIPT = _load_script("batch")

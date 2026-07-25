@@ -20,6 +20,7 @@ _REPOSITORY_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
 _MAX_RESPONSE_BYTES = 512_000
 _MAX_README_CHARS = 4_000
 _CACHE_TTL_SECONDS = 300.0
+_RETRY_DELAYS = (0.05, 0.2)
 
 
 class GitHubPublicReader:
@@ -89,21 +90,33 @@ def parse_github_repository_url(url: str) -> tuple[str, str]:
 
 def _fetch_json(url: str, headers: dict[str, str], timeout: float) -> object:
     request = urllib.request.Request(url, headers=headers)
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            if not 200 <= int(response.status) < 300:
-                raise ValueError(f"GitHub вернул HTTP {response.status}.")
-            raw = response.read(_MAX_RESPONSE_BYTES + 1)
-    except urllib.error.HTTPError as error:
-        if error.code == 404 and url.endswith("/readme"):
-            return None
-        raise ValueError(f"GitHub вернул HTTP {error.code}.") from error
+    for attempt in range(len(_RETRY_DELAYS) + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                if not 200 <= int(response.status) < 300:
+                    raise ValueError(f"GitHub вернул HTTP {response.status}.")
+                raw = response.read(_MAX_RESPONSE_BYTES + 1)
+                break
+        except urllib.error.HTTPError as error:
+            if error.code == 404 and url.endswith("/readme"):
+                return None
+            if not _retryable_http_status(error.code) or attempt == len(_RETRY_DELAYS):
+                raise ValueError(f"GitHub вернул HTTP {error.code}.") from error
+            time.sleep(_RETRY_DELAYS[attempt])
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            if attempt == len(_RETRY_DELAYS):
+                raise ValueError(f"GitHub временно недоступен: {type(error).__name__}.") from error
+            time.sleep(_RETRY_DELAYS[attempt])
     if len(raw) > _MAX_RESPONSE_BYTES:
         raise ValueError("Ответ GitHub превышает лимит 512 KB.")
     try:
         return json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ValueError("GitHub вернул некорректный JSON.") from error
+
+
+def _retryable_http_status(status: int) -> bool:
+    return status == 429 or 500 <= status < 600
 
 
 def _headers() -> dict[str, str]:

@@ -114,9 +114,9 @@ def main() -> int:
     parser.add_argument("--remote-python", default="/home/deploy/.hermes/hermes-agent/venv/bin/python")
     parser.add_argument(
         "--executor",
-        choices=("codex", "hermes"),
+        choices=("codex", "hermes", "qwen"),
         default=os.getenv("HERMES_CODING_EXECUTOR", "codex"),
-        help="Local executor: Codex workspace sandbox by default, or the legacy Hermes Docker profile.",
+        help="Local executor: Codex workspace sandbox by default, Qwen CLI, or the legacy Hermes Docker profile.",
     )
     args = parser.parse_args()
     args.queue_ssh = require_personal_queue(args.queue_ssh)

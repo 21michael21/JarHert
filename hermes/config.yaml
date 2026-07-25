@@ -1,6 +1,6 @@
 model:
-  provider: openai-api
-  default: gpt-5-nano
+  provider: alibaba
+  default: qwen3.8-max-preview
 
 agent:
   reasoning_effort: low

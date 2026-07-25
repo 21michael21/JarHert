@@ -9,7 +9,7 @@ JarHert — личный профиль Hermes. Это не набор отде�
 ```text
 Telegram
   -> Hermes gateway
-  -> Codex backend + SOUL
+  -> Qwen Cloud (alibaba) backend + SOUL
   -> Tool Catalog / подходящий bundle
   -> Native MCP
   -> Personal OS или внешний адаптер
@@ -19,9 +19,10 @@ Telegram
 1. **Telegram gateway** принимает текст, голос, callback кнопки и вложения.
    Он единственный владелец bot token и не конкурирует с отдельным старым
    gateway.
-2. **Hermes + Codex backend** понимают запрос и формируют ответ. На живом
-   профиле основной transport — `openai-codex`; API-модель остаётся fallback.
-   Это не то же самое, что отдельный бинарник `codex` в shell.
+2. **Hermes + Qwen Cloud backend** понимают запрос и формируют ответ. На живом
+   профиле основной transport — `alibaba` (Qwen Cloud, OpenAI-compatible);
+   API-модель OpenAI остаётся fallback.
+   Это не то же самое, что отдельный бинарник `qwen` в shell.
 3. **SOUL** задаёт русский тон, краткость, честные уточнения и формат результата.
    Он не хранит личные данные и не превращает стиль в имитацию другого человека.
 4. **Tool Catalog** открывает не весь набор инструментов, а только нужный
@@ -87,16 +88,21 @@ Task Command Center остаётся внешним prerequisite: JarHert не �
 | Memory consolidation | Объединяет подтверждённые факты | Ночным batch, не на каждый чат |
 | Coding queue | Передаёт работу отдельному runner | По явной кодовой задаче |
 
-## Код и Codex CLI
+## Код и Coding CLI
 
-Разговорный Hermes уже использует Codex transport через OAuth-профиль. Прямой
-Codex CLI нужен не для каждого сообщения, а для coding/research runner: он
-получает изолированный workspace, репозиторий, задачу и критерий готовности,
+Разговорный Hermes уже использует Qwen Cloud transport через OpenAI-compatible
+API. Прямой CLI нужен не для каждого сообщения, а для coding/research runner:
+он получает изолированный workspace, репозиторий, задачу и критерий готовности,
 после чего возвращает diff, тесты и итог. Он не должен иметь доступ к `.env`,
 Docker socket, deploy или чужим каталогам.
 
+Доступные экзекуторы (`HERMES_CODING_EXECUTOR`):
+- `codex` — Codex CLI с workspace-write sandbox (по умолчанию);
+- `qwen` — Qwen CLI в non-interactive prompt mode;
+- `hermes` — legacy Hermes Docker profile.
+
 На VDS runner не обязателен: сервер хранит очередь, а Mac или выделенный
-изолированный runner выполняет код. Перед тем как считать Codex CLI рабочим,
+изолированный runner выполняет код. Перед тем как считать CLI рабочим,
 нужен отдельный `scripts/coding_runner.py --check` с авторизованным CLI.
 
 ## Где смотреть состояние

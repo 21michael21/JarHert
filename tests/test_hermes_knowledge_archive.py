@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import urllib.error
 
 import pytest
 
+from hermes.native_tools import knowledge_archive
 from hermes.native_tools.knowledge_archive import KnowledgeArchive, validate_archive_url
 from hermes.native_tools.mcp_api import NativeToolsAPI
 
@@ -150,3 +152,40 @@ def test_knowledge_tools_are_in_the_profile_and_skill_guides_one_page_only() -> 
     assert "never crawl" in skill.casefold()
     assert "mcp_jarhert_native_knowledge_archive_url_confirmed" in skill
     assert "mcp_jarhert_native_knowledge_source_excerpt" in skill
+
+
+def test_knowledge_fetch_retries_transient_network_errors_after_url_safety(monkeypatch) -> None:
+    calls = 0
+
+    class Response:
+        status = 200
+        headers = {"Content-Type": "text/html; charset=utf-8"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _limit: int) -> bytes:
+            return b"<title>Guide</title><p>Useful text.</p>"
+
+    class Opener:
+        def open(self, _request, *, timeout):
+            nonlocal calls
+            calls += 1
+            assert timeout == 12
+            if calls == 1:
+                raise urllib.error.URLError("temporary")
+            return Response()
+
+    monkeypatch.setattr(knowledge_archive, "_RETRY_DELAYS", (0,))
+    monkeypatch.setattr(
+        knowledge_archive.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [(None, None, None, None, ("93.184.216.34", 443))],
+    )
+    monkeypatch.setattr(knowledge_archive.urllib.request, "build_opener", lambda *_args: Opener())
+
+    assert knowledge_archive._fetch_web_bytes("https://docs.example.test/page", {}, 12).startswith(b"<title>")
+    assert calls == 2

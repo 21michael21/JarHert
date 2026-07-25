@@ -17,3 +17,4 @@ dev/model_holdout/*.json
 *.log
 *.pid
 *.sqlite3
+.qwen/

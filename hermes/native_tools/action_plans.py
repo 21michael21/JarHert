@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
 from dataclasses import dataclass
@@ -8,13 +9,14 @@ from pathlib import Path
 from typing import Any
 
 from .database import open_personal_os_database
-from .validation import bounded
+from .events import EventStore
 
 
 class ActionPlanError(RuntimeError):
     pass
 
 
+logger = logging.getLogger(__name__)
 ACTION_SCHEMAS: dict[str, tuple[str, ...]] = {
     "note.save": ("subject", "content"),
     "commitment.create": ("subject", "content"),
@@ -67,9 +69,10 @@ class ActionPlan:
 
 
 class ActionPlanStore:
-    def __init__(self, database_path: str | Path) -> None:
+    def __init__(self, database_path: str | Path, *, event_store: EventStore | None = None) -> None:
         self.database_path = Path(database_path).expanduser()
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self._event_store = event_store
         self._initialize()
 
     def create(self, actions: list[dict[str, Any]], *, idempotency_key: str) -> ActionPlan:
@@ -104,7 +107,13 @@ class ActionPlanStore:
                     (plan_id, position, f"action-{position + 1}", item["type"], _json(payload)),
                 )
             connection.commit()
-            return self._get(connection, plan_id)
+            plan = self._get(connection, plan_id)
+        self._record_event(
+            "action_plan.create",
+            {"plan_id": plan.id, "status": plan.status, "action_count": len(plan.actions)},
+            fingerprint=f"action_plan:create:{plan.id}",
+        )
+        return plan
 
     def create_dag(self, nodes: list[dict[str, Any]], *, idempotency_key: str) -> ActionPlan:
         """Create an ordered dependency graph without changing flat-plan semantics."""
@@ -148,7 +157,13 @@ class ActionPlanStore:
                 )
                 action_ids[item["key"]] = action_id
             connection.commit()
-            return self._get(connection, plan_id)
+            plan = self._get(connection, plan_id)
+        self._record_event(
+            "action_plan.create",
+            {"plan_id": plan.id, "status": plan.status, "action_count": len(plan.actions), "dag": True},
+            fingerprint=f"action_plan:create:{plan.id}",
+        )
+        return plan
 
     def get(self, plan_id: int) -> ActionPlan:
         with self._connect() as connection:
@@ -168,7 +183,13 @@ class ActionPlanStore:
             elif row["status"] != "approved":
                 raise ActionPlanError(f"Plan нельзя подтвердить в статусе {row['status']}.")
             connection.commit()
-            return self._get(connection, plan_id)
+            plan = self._get(connection, plan_id)
+        self._record_event(
+            "action_plan.approve",
+            {"plan_id": plan.id, "status": plan.status},
+            fingerprint=f"action_plan:approve:{plan.id}",
+        )
+        return plan
 
     def cancel(self, plan_id: int) -> ActionPlan:
         with self._connect() as connection:
@@ -178,39 +199,29 @@ class ActionPlanStore:
             )
             if cursor.rowcount != 1:
                 raise ActionPlanError("Можно отменить только draft plan.")
-        return self.get(plan_id)
+        plan = self.get(plan_id)
+        self._record_event(
+            "action_plan.cancel",
+            {"plan_id": plan.id, "status": plan.status},
+            fingerprint=f"action_plan:cancel:{plan.id}",
+        )
+        return plan
 
     def pause(self, plan_id: int) -> ActionPlan:
         with self._connect() as connection:
             cursor = connection.execute(
-                "UPDATE action_plans SET status = 'paused' WHERE id = ? AND status IN ('draft', 'approved', 'running')",
+                "UPDATE action_plans SET status = 'paused' WHERE id = ? AND status IN ('draft', 'approved')",
                 (plan_id,),
             )
             if cursor.rowcount != 1:
-                raise ActionPlanError("Можно приостановить только draft, approved или выполняющийся plan.")
-        return self.get(plan_id)
-
-    def claim_execution(self, plan_id: int) -> bool:
-        """Atomically move approved -> running; False when another executor holds it."""
-        with self._connect() as connection:
-            cursor = connection.execute(
-                "UPDATE action_plans SET status = 'running', started_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'approved'",
-                (plan_id,),
-            )
-        return cursor.rowcount == 1
-
-    def recover_stale_execution(self, plan_id: int, *, stale_minutes: int = 15) -> bool:
-        """Return a plan stuck in running (crashed executor) back to approved."""
-        with self._connect() as connection:
-            cursor = connection.execute(
-                """
-                UPDATE action_plans SET status = 'approved'
-                WHERE id = ? AND status = 'running'
-                  AND COALESCE(started_at, approved_at, created_at) <= datetime('now', ?)
-                """,
-                (plan_id, f"-{max(1, int(stale_minutes))} minutes"),
-            )
-        return cursor.rowcount == 1
+                raise ActionPlanError("Можно приостановить только draft или approved plan.")
+        plan = self.get(plan_id)
+        self._record_event(
+            "action_plan.pause",
+            {"plan_id": plan.id, "status": plan.status},
+            fingerprint=f"action_plan:pause:{plan.id}",
+        )
+        return plan
 
     def resume(self, plan_id: int) -> ActionPlan:
         with self._connect() as connection:
@@ -220,7 +231,13 @@ class ActionPlanStore:
             )
             if cursor.rowcount != 1:
                 raise ActionPlanError("Можно продолжить только paused plan.")
-        return self.get(plan_id)
+        plan = self.get(plan_id)
+        self._record_event(
+            "action_plan.resume",
+            {"plan_id": plan.id, "status": plan.status},
+            fingerprint=f"action_plan:resume:{plan.id}",
+        )
+        return plan
 
     def compact_trace(self, plan_id: int) -> dict[str, Any]:
         """Return a stable, small status summary suitable for a chat reply."""
@@ -240,7 +257,7 @@ class ActionPlanStore:
             **counts,
             "next": _trace_action(next_action) if next_action else None,
             "problems": [
-                {**_trace_action(action), "error": bounded(str(action.error or ""), 180)}
+                {**_trace_action(action), "error": _bounded(str(action.error or ""), 180)}
                 for action in plan.actions
                 if action.status == "failed"
             ],
@@ -252,6 +269,11 @@ class ActionPlanStore:
                 "UPDATE plan_actions SET status = 'running' WHERE id = ? AND status = 'pending'",
                 (action_id,),
             )
+        self._record_event(
+            "action_plan.action_started",
+            {"action_id": int(action_id)},
+            fingerprint=f"action_plan:action_started:{int(action_id)}",
+        )
 
     def mark_succeeded(self, action_id: int, result: str) -> None:
         with self._connect() as connection:
@@ -260,22 +282,37 @@ class ActionPlanStore:
                 UPDATE plan_actions SET status = 'succeeded', result = ?, result_meta_json = ?, error = NULL
                 WHERE id = ? AND status = 'running'
                 """,
-                (bounded(result, 3000), _json(_extract_result_meta(result)), action_id),
+                (_bounded(result, 3000), _json(_extract_result_meta(result)), action_id),
             )
+        self._record_event(
+            "action_plan.action_succeeded",
+            {"action_id": int(action_id), "result_chars": len(str(result or ""))},
+            fingerprint=f"action_plan:action_succeeded:{int(action_id)}",
+        )
 
     def mark_failed(self, action_id: int, error: str) -> None:
         with self._connect() as connection:
             connection.execute(
                 "UPDATE plan_actions SET status = 'failed', error = ? WHERE id = ? AND status = 'running'",
-                (bounded(error, 500), action_id),
+                (_bounded(error, 500), action_id),
             )
+        self._record_event(
+            "action_plan.action_failed",
+            {"action_id": int(action_id), "error": _bounded(str(error or ""), 500)},
+            fingerprint=f"action_plan:action_failed:{int(action_id)}",
+        )
 
     def mark_blocked(self, action_id: int, error: str) -> None:
         with self._connect() as connection:
             connection.execute(
                 "UPDATE plan_actions SET status = 'failed', error = ? WHERE id = ? AND status = 'pending'",
-                (bounded(error, 500), action_id),
+                (_bounded(error, 500), action_id),
             )
+        self._record_event(
+            "action_plan.action_failed",
+            {"action_id": int(action_id), "blocked": True, "error": _bounded(str(error or ""), 500)},
+            fingerprint=f"action_plan:action_failed:{int(action_id)}",
+        )
 
     def finish(self, plan_id: int) -> ActionPlan:
         plan = self.get(plan_id)
@@ -286,7 +323,13 @@ class ActionPlanStore:
                 "UPDATE action_plans SET status = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (final, plan_id),
             )
-        return self.get(plan_id)
+        plan = self.get(plan_id)
+        self._record_event(
+            "action_plan.finished",
+            {"plan_id": plan.id, "status": plan.status},
+            fingerprint=f"action_plan:finished:{plan.id}:{plan.status}",
+        )
+        return plan
 
     def _get(self, connection: sqlite3.Connection, plan_id: int) -> ActionPlan:
         row = connection.execute("SELECT * FROM action_plans WHERE id = ?", (plan_id,)).fetchone()
@@ -337,33 +380,33 @@ class ActionPlanStore:
                 connection.execute("UPDATE plan_actions SET node_key = 'action-' || (position + 1) WHERE node_key = ''")
             if "depends_on_json" not in columns:
                 connection.execute("ALTER TABLE plan_actions ADD COLUMN depends_on_json TEXT NOT NULL DEFAULT '[]'")
-            plan_columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(action_plans)")}
-            if "started_at" not in plan_columns:
-                connection.execute("ALTER TABLE action_plans ADD COLUMN started_at TEXT")
 
     def _connect(self) -> sqlite3.Connection:
         return open_personal_os_database(self.database_path, timeout_seconds=5)
+
+    def _record_event(
+        self,
+        event_type: str,
+        payload: dict[str, Any],
+        *,
+        fingerprint: str,
+    ) -> None:
+        if self._event_store is None:
+            return
+        try:
+            self._event_store.record(event_type, "action_plans", payload, fingerprint=fingerprint)
+        except Exception:
+            logger.exception("Could not record action plan event %s", event_type)
 
 
 def execute_plan(store: ActionPlanStore, plan_id: int, adapter: Any) -> ActionPlan:
     plan = store.get(plan_id)
     if plan.status in {"succeeded", "partial", "failed"}:
         return plan
-    if plan.status == "running":
-        if not store.recover_stale_execution(plan_id):
-            # Another executor is genuinely working on it; never run actions twice.
-            return store.get(plan_id)
-    if plan.status != "approved" and plan.status != "running":
+    if plan.status != "approved":
         raise ActionPlanError("Plan должен быть подтверждён перед выполнением.")
-    if not store.claim_execution(plan_id):
-        return store.get(plan_id)
+    actions = list(plan.actions)
     while True:
-        current = store.get(plan_id)
-        if current.status != "running":
-            # Paused (или другой внешний сдвиг статуса) во время выполнения:
-            # останавливаемся без финального статуса; resume продолжит с pending.
-            return current
-        actions = list(current.actions)
         pending = [action for action in actions if action.status == "pending"]
         if not pending:
             return store.finish(plan_id)
@@ -398,6 +441,7 @@ def execute_plan(store: ActionPlanStore, plan_id: int, adapter: Any) -> ActionPl
                         store.mark_succeeded(item.id, str(result.get("result") or "Готово."))
                     else:
                         store.mark_failed(item.id, str(result.get("error") or "Batch action failed"))
+            actions = list(store.get(plan_id).actions)
             continue
         store.mark_running(action.id)
         try:
@@ -406,6 +450,7 @@ def execute_plan(store: ActionPlanStore, plan_id: int, adapter: Any) -> ActionPl
             store.mark_failed(action.id, str(error) or type(error).__name__)
         else:
             store.mark_succeeded(action.id, result)
+        actions = list(store.get(plan_id).actions)
 
 
 def _execute_action(adapter: Any, action_type: str, payload: dict[str, Any]) -> str:
@@ -449,7 +494,7 @@ def _trace_action(action: PlannedAction | None) -> dict[str, str] | None:
     if action is None:
         return None
     title = str(action.payload.get("title") or action.payload.get("subject") or action.payload.get("text") or "без названия")
-    return {"key": action.node_key, "type": action.action_type, "title": bounded(title, 160)}
+    return {"key": action.node_key, "type": action.action_type, "title": _bounded(title, 160)}
 
 
 def _validate_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -499,6 +544,10 @@ def _required(value: str, field: str) -> str:
     if not clean:
         raise ActionPlanError(f"{field} не должен быть пустым.")
     return clean
+
+
+def _bounded(value: str, limit: int) -> str:
+    return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"
 
 
 def _json(value: Any) -> str:

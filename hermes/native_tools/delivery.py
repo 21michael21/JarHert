@@ -9,6 +9,7 @@ from collections.abc import Callable
 from datetime import datetime
 
 from .contacts import ContactStore, ScheduledMessage
+from .events import EventStore
 from .personal_productivity import PersonalProductivityStore
 
 
@@ -24,6 +25,7 @@ def dispatch_due_messages(
     now: str | datetime | None = None,
     limit: int = 20,
     on_sent: SentHook | None = None,
+    event_store: EventStore | None = None,
 ) -> dict[str, int]:
     current = datetime.fromisoformat(now.replace("Z", "+00:00")) if isinstance(now, str) else now
     messages = store.claim_due_messages(now=current, limit=limit)
@@ -33,9 +35,33 @@ def dispatch_due_messages(
             external_id = sender(message.telegram_chat_id, message.text)
         except Exception as error:  # One failed recipient must not block the rest.
             store.mark_message_failed(message.id, error=str(error) or error.__class__.__name__)
+            _record_event(
+                event_store,
+                "telegram.message.failed",
+                {
+                    "message_id": message.id,
+                    "chat_id": message.telegram_chat_id,
+                    "contact": message.contact_name,
+                    "text_chars": len(message.text),
+                    "error": str(error) or error.__class__.__name__,
+                },
+                fingerprint=f"telegram:message:failed:{message.id}",
+            )
             counts["failed"] += 1
             continue
         store.mark_message_sent(message.id, external_id=external_id)
+        _record_event(
+            event_store,
+            "telegram.message.sent",
+            {
+                "message_id": message.id,
+                "chat_id": message.telegram_chat_id,
+                "contact": message.contact_name,
+                "text_chars": len(message.text),
+                "external_id": external_id,
+            },
+            fingerprint=f"telegram:message:sent:{message.id}",
+        )
         if on_sent is not None:
             try:
                 on_sent(message, external_id)
@@ -52,6 +78,7 @@ def dispatch_due_reminders(
     chat_id: int,
     now: str | datetime | None = None,
     limit: int = 20,
+    event_store: EventStore | None = None,
 ) -> dict[str, int]:
     reminders = store.claim_due_reminders(now=now, limit=limit)
     counts = {"claimed": len(reminders), "sent": 0, "failed": 0}
@@ -60,9 +87,26 @@ def dispatch_due_reminders(
             sender(int(chat_id), reminder.text)
         except Exception as error:
             store.release_failed_reminder(reminder.id, error=str(error) or error.__class__.__name__)
+            _record_event(
+                event_store,
+                "telegram.reminder.failed",
+                {
+                    "reminder_id": reminder.id,
+                    "chat_id": int(chat_id),
+                    "text_chars": len(reminder.text),
+                    "error": str(error) or error.__class__.__name__,
+                },
+                fingerprint=f"telegram:reminder:failed:{reminder.id}",
+            )
             counts["failed"] += 1
             continue
         store.mark_reminder_delivered(reminder.id, now=now)
+        _record_event(
+            event_store,
+            "telegram.reminder.sent",
+            {"reminder_id": reminder.id, "chat_id": int(chat_id), "text_chars": len(reminder.text)},
+            fingerprint=f"telegram:reminder:sent:{reminder.id}",
+        )
         counts["sent"] += 1
     return counts
 
@@ -106,3 +150,18 @@ def _command_argv(value: str | list[str] | tuple[str, ...]) -> tuple[str, ...]:
     if not command or not all(part.strip() for part in command):
         raise ValueError("HERMES_NATIVE_SEND_COMMAND must contain a command.")
     return command
+
+
+def _record_event(
+    event_store: EventStore | None,
+    event_type: str,
+    payload: dict[str, object],
+    *,
+    fingerprint: str,
+) -> None:
+    if event_store is None:
+        return
+    try:
+        event_store.record(event_type, "delivery", payload, fingerprint=fingerprint)
+    except Exception:
+        logger.exception("Could not record delivery event %s", event_type)

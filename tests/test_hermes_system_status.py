@@ -51,6 +51,18 @@ def test_system_status_reports_operational_facts_without_personal_content(tmp_pa
             );
             INSERT INTO personal_summary_deliveries VALUES (1, 'daily', 'sent', '2030-01-01T08:00:00+00:00');
             INSERT INTO personal_summary_deliveries VALUES (2, 'weekly', 'failed', '2030-01-01T18:00:00+00:00');
+            CREATE TABLE events (
+                id INTEGER PRIMARY KEY, event_type TEXT, source TEXT, payload_json TEXT,
+                fingerprint TEXT, status TEXT, created_at TEXT, dispatched_at TEXT
+            );
+            INSERT INTO events VALUES (
+                1, 'coding_job.failed', 'coding_jobs', '{"prompt":"private"}',
+                'event:1', 'recorded', '2030-01-01T19:00:00+00:00', NULL
+            );
+            INSERT INTO events VALUES (
+                2, 'monitor.changed', 'github', '{}',
+                'event:2', 'pending', '2030-01-01T20:00:00+00:00', NULL
+            );
             """
         )
     backup = tmp_path / "backups"
@@ -90,6 +102,24 @@ def test_system_status_reports_operational_facts_without_personal_content(tmp_pa
         "available": True,
         "daily": {"status": "sent", "updated_at": "2030-01-01T08:00:00+00:00"},
         "weekly": {"status": "failed", "updated_at": "2030-01-01T18:00:00+00:00"},
+    }
+    assert status["event_log"] == {
+        "available": True,
+        "pending": 1,
+        "recent": [
+            {
+                "event_type": "monitor.changed",
+                "source": "github",
+                "status": "pending",
+                "created_at": "2030-01-01T20:00:00+00:00",
+            },
+            {
+                "event_type": "coding_job.failed",
+                "source": "coding_jobs",
+                "status": "recorded",
+                "created_at": "2030-01-01T19:00:00+00:00",
+            },
+        ],
     }
     assert status["resources"]["zombie_children"] == [124]
     assert status["resources"]["memory_used_percent"] == 75.0
